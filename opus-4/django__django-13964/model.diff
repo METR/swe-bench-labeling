@@ -1,0 +1,162 @@
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+index 899ae8efe8..c1d54982c1 100644
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -961,6 +961,19 @@ class ForeignKey(ForeignObject):
+         if isinstance(field_default, self.remote_field.model):
+             return getattr(field_default, self.target_field.attname)
+         return field_default
++    
++    def pre_save(self, model_instance, add):
++        """Return field's value just before saving."""
++        # Check if there's a cached related object
++        if self.is_cached(model_instance):
++            related_obj = self.get_cached_value(model_instance)
++            if related_obj is not None:
++                # Update the foreign key field with the related object's current PK value
++                # This ensures that if the related object's PK was set after assignment,
++                # we use the updated value
++                pk_val = getattr(related_obj, self.target_field.attname)
++                setattr(model_instance, self.attname, pk_val)
++        return super().pre_save(model_instance, add)
+ 
+     def get_db_prep_save(self, value, connection):
+         if value is None or (value == '' and
+diff --git a/test_fk_char_pk_issue.py b/test_fk_char_pk_issue.py
+new file mode 100644
+index 0000000000..8ff5393d6d
+--- /dev/null
++++ b/test_fk_char_pk_issue.py
+@@ -0,0 +1,132 @@
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
++        INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++        SECRET_KEY='test',
++    )
++    django.setup()
++
++from django.db import models, transaction
++from django.test import TestCase
++
++
++class Product(models.Model):
++    sku = models.CharField(primary_key=True, max_length=50)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class Order(models.Model):
++    product = models.ForeignKey(Product, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class TestCharPrimaryKeyForeignKey(TestCase):
++    def test_empty_instance_then_set_pk(self):
++        """Test the issue: setting PK after assignment doesn't update FK field"""
++        with transaction.atomic():
++            order = Order()
++            order.product = Product()
++            order.product.sku = "foo"
++            order.product.save()
++            order.save()
++            
++            # This shouldn't succeed but it does in the bug
++            assert not Order.objects.filter(product_id="").exists(), "Order saved with empty product_id!"
++            # This should succeed
++            assert Order.objects.filter(product=order.product).exists(), "Order not found with correct product!"
++            
++    def test_pk_set_before_assignment(self):
++        """Test that setting PK before assignment works correctly"""
++        with transaction.atomic():
++            order = Order()
++            order.product = Product(sku="foo")
++            order.product.save()
++            order.save()
++            
++            # This should succeed
++            assert Order.objects.filter(product=order.product).exists(), "Order not found!"
++            assert Order.objects.filter(product_id="foo").exists(), "Order not found by product_id!"
++
++
++if __name__ == "__main__":
++    # Quick test to reproduce the issue
++    import django
++    from django.conf import settings
++    
++    if not settings.configured:
++        settings.configure(
++            DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
++            INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++            SECRET_KEY='test',
++        )
++        django.setup()
++    
++    from django.db import connection
++    
++    # Create tables
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Product)
++        schema_editor.create_model(Order)
++    
++    # Disable foreign key checks to see the actual data
++    with connection.cursor() as cursor:
++        cursor.execute("PRAGMA foreign_keys=OFF")
++    
++    # Run the problematic case
++    print("Testing problematic case...")
++    try:
++        order = Order()
++        order.product = Product()
++        order.product.sku = "foo"
++        order.product.save()
++        
++        print(f"Before save - Order product_id: '{order.product_id}'")
++        print(f"Before save - Order product.pk: '{order.product.pk}'")
++        print(f"Before save - Order product.sku: '{order.product.sku}'")
++        
++        # Check if we have a cached product
++        print(f"Has cached product: {hasattr(order, '_product_cache')}")
++        if hasattr(order, '_product_cache'):
++            print(f"Cached product: {order._product_cache}")
++        
++        order.save()
++        
++        print(f"After save - Order product_id: '{order.product_id}'")
++        
++        # Check database
++        orders = Order.objects.all()
++        for o in orders:
++            print(f"DB Order id={o.id}, product_id='{o.product_id}'")
++            
++        # The issue: empty product_id
++        empty_orders = Order.objects.filter(product_id="")
++        print(f"\nOrders with empty product_id: {empty_orders.count()}")
++        
++        # Try with correct approach
++        print("\n\nTesting correct approach...")
++        Order.objects.all().delete()
++        Product.objects.all().delete()
++        
++        order2 = Order()
++        order2.product = Product(sku="bar")
++        order2.product.save()
++        
++        print(f"Before save - Order2 product_id: '{order2.product_id}'")
++        order2.save()
++        print(f"After save - Order2 product_id: '{order2.product_id}'")
++        
++        orders2 = Order.objects.all()
++        for o in orders2:
++            print(f"DB Order2 id={o.id}, product_id='{o.product_id}'")
++                
++    except Exception as e:
++        print(f"Error: {e}")
++        import traceback
++        traceback.print_exc()

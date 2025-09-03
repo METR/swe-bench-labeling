@@ -1,0 +1,169 @@
+diff --git a/demo_fix.py b/demo_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+index d517d7269b..c2aea9c730 100644
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -914,7 +914,7 @@ class ForeignKey(ForeignObject):
+             return
+ 
+         using = router.db_for_read(self.remote_field.model, instance=model_instance)
+-        qs = self.remote_field.model._default_manager.using(using).filter(
++        qs = self.remote_field.model._base_manager.using(using).filter(
+             **{self.remote_field.field_name: value}
+         )
+         qs = qs.complex_filter(self.get_limit_choices_to())
+diff --git a/test_foreignkey_validation.py b/test_foreignkey_validation.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_validation.py b/test_validation.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/tests/foreignkey_validation_test.py b/tests/foreignkey_validation_test.py
+new file mode 100644
+index 0000000000..20adec410a
+--- /dev/null
++++ b/tests/foreignkey_validation_test.py
+@@ -0,0 +1,54 @@
++from django.core.exceptions import ValidationError
++from django.db import models
++from django.test import TestCase
++
++
++class ArticleManager(models.Manager):
++    def get_queryset(self):
++        qs = super().get_queryset()
++        return qs.filter(archived=False)
++
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    archived = models.BooleanField(default=False)
++    # Don't include archived articles by default.
++    objects = ArticleManager()
++    
++    class Meta:
++        app_label = 'foreignkey_validation_test'
++
++
++class FavoriteArticles(models.Model):
++    article = models.ForeignKey(Article, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'foreignkey_validation_test'
++
++
++class ForeignKeyValidationTest(TestCase):
++    def test_foreignkey_validation_with_custom_manager(self):
++        """Test that ForeignKey validation works with filtered default managers."""
++        # Create test data
++        normal_article = Article.objects.create(title="Normal Article", archived=False)
++        archived_article = Article(title="Archived Article", archived=True)
++        # We need to use save directly to bypass the manager filtering
++        archived_article.save()
++        
++        # Normal article should validate successfully
++        fav1 = FavoriteArticles(article=normal_article)
++        fav1.full_clean()  # Should not raise
++        
++        # Archived article should also validate successfully with the fix
++        # This currently fails because validate() uses _default_manager
++        fav2 = FavoriteArticles(article=archived_article)
++        with self.assertRaises(ValidationError) as cm:
++            fav2.full_clean()
++        
++        # The error should mention the invalid value
++        self.assertIn(str(archived_article.id), str(cm.exception))
++        
++        # Direct field validation should also fail currently
++        field = FavoriteArticles._meta.get_field('article')
++        with self.assertRaises(ValidationError):
++            field.validate(archived_article.id, None)
+diff --git a/tests/model_fields/test_foreignkey_base_manager.py b/tests/model_fields/test_foreignkey_base_manager.py
+new file mode 100644
+index 0000000000..53481ab23d
+--- /dev/null
++++ b/tests/model_fields/test_foreignkey_base_manager.py
+@@ -0,0 +1,78 @@
++from django.core.exceptions import ValidationError
++from django.db import models
++from django.test import TestCase
++
++
++class ArticleManager(models.Manager):
++    def get_queryset(self):
++        qs = super().get_queryset()
++        return qs.filter(archived=False)
++
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    archived = models.BooleanField(default=False)
++    # Don't include archived articles by default.
++    objects = ArticleManager()
++
++
++class FavoriteArticles(models.Model):
++    article = models.ForeignKey(Article, on_delete=models.CASCADE)
++
++
++class FavoriteArticlesWithLimit(models.Model):
++    # Test limit_choices_to still works
++    article = models.ForeignKey(Article, on_delete=models.CASCADE, limit_choices_to={'archived': False})
++
++
++class ForeignKeyBaseManagerTest(TestCase):
++    def test_foreignkey_validation_with_custom_manager(self):
++        """
++        ForeignKey validation should use base manager instead of default manager.
++        
++        This test verifies that ForeignKey validation works correctly when
++        the related model has a custom default manager that filters out
++        some objects.
++        """
++        # Create test data
++        normal_article = Article.objects.create(title="Normal Article", archived=False)
++        archived_article = Article(title="Archived Article", archived=True)
++        # We need to use save directly to bypass the manager filtering
++        archived_article.save()
++        
++        # Verify the setup - default manager only shows non-archived
++        self.assertEqual(Article.objects.count(), 1)
++        self.assertEqual(Article._base_manager.count(), 2)
++        
++        # Normal article should validate successfully
++        fav1 = FavoriteArticles(article=normal_article)
++        fav1.full_clean()  # Should not raise
++        
++        # With the fix, archived article should now validate successfully
++        # because ForeignKey.validate() uses _base_manager instead of _default_manager
++        fav2 = FavoriteArticles(article=archived_article)
++        fav2.full_clean()  # Should not raise after the fix
++        
++        # Direct field validation should also pass now
++        field = FavoriteArticles._meta.get_field('article')
++        field.validate(archived_article.id, None)  # Should not raise
++    
++    def test_foreignkey_validation_with_limit_choices_to(self):
++        """Test that limit_choices_to still works properly with base manager."""
++        # Create test data
++        normal_article = Article.objects.create(title="Normal Article", archived=False)
++        archived_article = Article(title="Archived Article", archived=True)
++        archived_article.save()
++        
++        # Normal article should validate successfully
++        fav1 = FavoriteArticlesWithLimit(article=normal_article)
++        fav1.full_clean()  # Should not raise
++        
++        # Archived article should fail validation due to limit_choices_to
++        fav2 = FavoriteArticlesWithLimit(article=archived_article)
++        with self.assertRaises(ValidationError) as cm:
++            fav2.full_clean()
++        
++        # The error should mention that the article doesn't exist
++        self.assertIn('article instance with id', str(cm.exception))
++        self.assertIn('does not exist', str(cm.exception))

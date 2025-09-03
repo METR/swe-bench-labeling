@@ -1,0 +1,475 @@
+diff --git a/lib/matplotlib/contour.py b/lib/matplotlib/contour.py
+index 3f84250b64..68419c5a39 100644
+--- a/lib/matplotlib/contour.py
++++ b/lib/matplotlib/contour.py
+@@ -1,439 +1,13 @@
+ """
+-Classes to support contour plotting and labelling for the Axes class.
+-"""
+-
+-import functools
+-import math
+-from numbers import Integral
+-
+-import numpy as np
+-from numpy import ma
+-
+-import matplotlib as mpl
+-from matplotlib import _api, _docstring
+-from matplotlib.backend_bases import MouseButton
+-from matplotlib.lines import Line2D
+-from matplotlib.path import Path
+-from matplotlib.text import Text
+-import matplotlib.ticker as ticker
+-import matplotlib.cm as cm
+-import matplotlib.colors as mcolors
+-import matplotlib.collections as mcoll
+-import matplotlib.font_manager as font_manager
+-import matplotlib.cbook as cbook
+-import matplotlib.patches as mpatches
+-import matplotlib.transforms as mtransforms
+-
+-
+-@_api.deprecated("3.7", alternative="Text.set_transform_rotates_text")
+-class ClabelText(Text):
+-    """
+-    Unlike the ordinary text, the get_rotation returns an updated
+-    angle in the pixel coordinate assuming that the input rotation is
+-    an angle in data coordinate (or whatever transform set).
+-    """
+-
+-    def get_rotation(self):
+-        new_angle, = self.get_transform().transform_angles(
+-            [super().get_rotation()], [self.get_position()])
+-        return new_angle
+-
+-
+-def _contour_labeler_event_handler(cs, inline, inline_spacing, event):
+-    canvas = cs.axes.figure.canvas
+-    is_button = event.name == "button_press_event"
+-    is_key = event.name == "key_press_event"
+-    # Quit (even if not in infinite mode; this is consistent with
+-    # MATLAB and sometimes quite useful, but will require the user to
+-    # test how many points were actually returned before using data).
+-    if (is_button and event.button == MouseButton.MIDDLE
+-            or is_key and event.key in ["escape", "enter"]):
+-        canvas.stop_event_loop()
+-    # Pop last click.
+-    elif (is_button and event.button == MouseButton.RIGHT
+-          or is_key and event.key in ["backspace", "delete"]):
+-        # Unfortunately, if one is doing inline labels, then there is currently
+-        # no way to fix the broken contour - once humpty-dumpty is broken, he
+-        # can't be put back together.  In inline mode, this does nothing.
+-        if not inline:
+-            cs.pop_label()
+-            canvas.draw()
+-    # Add new click.
+-    elif (is_button and event.button == MouseButton.LEFT
+-          # On macOS/gtk, some keys return None.
+-          or is_key and event.key is not None):
+-        if cs.axes.contains(event)[0]:
+-            cs.add_label_near(event.x, event.y, transform=False,
+-                              inline=inline, inline_spacing=inline_spacing)
+-            canvas.draw()
+-
+-
+-class ContourLabeler:
+-    """Mixin to provide labelling capability to `.ContourSet`."""
+-
+-    def clabel(self, levels=None, *,
+-               fontsize=None, inline=True, inline_spacing=5, fmt=None,
+-               colors=None, use_clabeltext=False, manual=False,
+-               rightside_up=True, zorder=None):
+-        """
+-        Label a contour plot.
+-
+-        Adds labels to line contours in this `.ContourSet` (which inherits from
+-        this mixin class).
+-
+-        Parameters
+-        ----------
+-        levels : array-like, optional
+-            A list of level values, that should be labeled. The list must be
+-            a subset of ``cs.levels``. If not given, all levels are labeled.
+-
+-        fontsize : str or float, default: :rc:`font.size`
+-            Size in points or relative size e.g., 'smaller', 'x-large'.
+-            See `.Text.set_size` for accepted string values.
+-
+-        colors : color or colors or None, default: None
+-            The label colors:
+-
+-            - If *None*, the color of each label matches the color of
+-              the corresponding contour.
+-
+-            - If one string color, e.g., *colors* = 'r' or *colors* =
+-              'red', all labels will be plotted in this color.
+-
+-            - If a tuple of colors (string, float, RGB, etc), different labels
+-              will be plotted in different colors in the order specified.
+-
+-        inline : bool, default: True
+-            If ``True`` the underlying contour is removed where the label is
+-            placed.
+-
+-        inline_spacing : float, default: 5
+-            Space in pixels to leave on each side of label when placing inline.
+-
+-            This spacing will be exact for labels at locations where the
+-            contour is straight, less so for labels on curved contours.
+-
+-        fmt : `.Formatter` or str or callable or dict, optional
+-            How the levels are formatted:
+-
+-            - If a `.Formatter`, it is used to format all levels at once, using
+-              its `.Formatter.format_ticks` method.
+-            - If a str, it is interpreted as a %-style format string.
+-            - If a callable, it is called with one level at a time and should
+-              return the corresponding label.
+-            - If a dict, it should directly map levels to labels.
+-
+-            The default is to use a standard `.ScalarFormatter`.
+-
+-        manual : bool or iterable, default: False
+-            If ``True``, contour labels will be placed manually using
+-            mouse clicks. Click the first button near a contour to
+-            add a label, click the second button (or potentially both
+-            mouse buttons at once) to finish adding labels. The third
+-            button can be used to remove the last label added, but
+-            only if labels are not inline. Alternatively, the keyboard
+-            can be used to select label locations (enter to end label
+-            placement, delete or backspace act like the third mouse button,
+-            and any other key will select a label location).
+-
+-            *manual* can also be an iterable object of (x, y) tuples.
+-            Contour labels will be created as if mouse is clicked at each
+-            (x, y) position.
+-
+-        rightside_up : bool, default: True
+-            If ``True``, label rotations will always be plus
+-            or minus 90 degrees from level.
+-
+-        use_clabeltext : bool, default: False
+-            If ``True``, use `.Text.set_transform_rotates_text` to ensure that
+-            label rotation is updated whenever the axes aspect changes.
+-
+-        zorder : float or None, default: ``(2 + contour.get_zorder())``
+-            zorder of the contour labels.
+-
+-        Returns
+-        -------
+-        labels
+-            A list of `.Text` instances for the labels.
+         """
+-
+-        # clabel basically takes the input arguments and uses them to
+-        # add a list of "label specific" attributes to the ContourSet
+-        # object.  These attributes are all of the form label* and names
+-        # should be fairly self explanatory.
+-        #
+-        # Once these attributes are set, clabel passes control to the
+-        # labels method (case of automatic label placement) or
+-        # `BlockingContourLabeler` (case of manual label placement).
+-
+-        if fmt is None:
+-            fmt = ticker.ScalarFormatter(useOffset=False)
+-            fmt.create_dummy_axis()
+-        self.labelFmt = fmt
+-        self._use_clabeltext = use_clabeltext
+-        # Detect if manual selection is desired and remove from argument list.
+-        self.labelManual = manual
+-        self.rightside_up = rightside_up
+-        self._clabel_zorder = 2 + self.get_zorder() if zorder is None else zorder
+-
+-        if levels is None:
+-            levels = self.levels
+-            indices = list(range(len(self.cvalues)))
+-        else:
+-            levlabs = list(levels)
+-            indices, levels = [], []
+-            for i, lev in enumerate(self.levels):
+-                if lev in levlabs:
+-                    indices.append(i)
+-                    levels.append(lev)
+-            if len(levels) < len(levlabs):
+-                raise ValueError(f"Specified levels {levlabs} don't match "
+-                                 f"available levels {self.levels}")
+-        self.labelLevelList = levels
+-        self.labelIndiceList = indices
+-
+-        self._label_font_props = font_manager.FontProperties(size=fontsize)
+-
+-        if colors is None:
+-            self.labelMappable = self
+-            self.labelCValueList = np.take(self.cvalues, self.labelIndiceList)
+-        else:
+-            cmap = mcolors.ListedColormap(colors, N=len(self.labelLevelList))
+-            self.labelCValueList = list(range(len(self.labelLevelList)))
+-            self.labelMappable = cm.ScalarMappable(cmap=cmap,
+-                                                   norm=mcolors.NoNorm())
+-
+-        self.labelXYs = []
+-
+-        if np.iterable(manual):
+-            for x, y in manual:
+-                self.add_label_near(x, y, inline, inline_spacing)
+-        elif manual:
+-            print('Select label locations manually using first mouse button.')
+-            print('End manual selection with second mouse button.')
+-            if not inline:
+-                print('Remove last label by clicking third mouse button.')
+-            mpl._blocking_input.blocking_input_loop(
+-                self.axes.figure, ["button_press_event", "key_press_event"],
+-                timeout=-1, handler=functools.partial(
+-                    _contour_labeler_event_handler,
+-                    self, inline, inline_spacing))
+-        else:
+-            self.labels(inline, inline_spacing)
+-
+-        return cbook.silent_list('text.Text', self.labelTexts)
+-
+-    @_api.deprecated("3.7", alternative="cs.labelTexts[0].get_font()")
+-    @property
+-    def labelFontProps(self):
+-        return self._label_font_props
+-
+-    @_api.deprecated("3.7", alternative=(
+-        "[cs.labelTexts[0].get_font().get_size()] * len(cs.labelLevelList)"))
+-    @property
+-    def labelFontSizeList(self):
+-        return [self._label_font_props.get_size()] * len(self.labelLevelList)
+-
+-    @_api.deprecated("3.7", alternative="cs.labelTexts")
+-    @property
+-    def labelTextsList(self):
+-        return cbook.silent_list('text.Text', self.labelTexts)
+-
+-    def print_label(self, linecontour, labelwidth):
+-        """Return whether a contour is long enough to hold a label."""
+-        return (len(linecontour) > 10 * labelwidth
+-                or (len(linecontour)
+-                    and (np.ptp(linecontour, axis=0) > 1.2 * labelwidth).any()))
+-
+-    def too_close(self, x, y, lw):
+-        """Return whether a label is already near this location."""
+-        thresh = (1.2 * lw) ** 2
+-        return any((x - loc[0]) ** 2 + (y - loc[1]) ** 2 < thresh
+-                   for loc in self.labelXYs)
+-
+-    def _get_nth_label_width(self, nth):
+-        """Return the width of the *nth* label, in pixels."""
+-        fig = self.axes.figure
+-        renderer = fig._get_renderer()
+-        return (Text(0, 0,
+-                     self.get_text(self.labelLevelList[nth], self.labelFmt),
+-                     figure=fig, fontproperties=self._label_font_props)
+-                .get_window_extent(renderer).width)
+-
+-    @_api.deprecated("3.7", alternative="Artist.set")
+-    def set_label_props(self, label, text, color):
+-        """Set the label properties - color, fontsize, text."""
+-        label.set_text(text)
+-        label.set_color(color)
+-        label.set_fontproperties(self._label_font_props)
+-        label.set_clip_box(self.axes.bbox)
+-
+-    def get_text(self, lev, fmt):
+-        """Get the text of the label."""
+-        if isinstance(lev, str):
+-            return lev
+-        elif isinstance(fmt, dict):
+-            return fmt.get(lev, '%1.3f')
+-        elif callable(getattr(fmt, "format_ticks", None)):
+-            return fmt.format_ticks([*self.labelLevelList, lev])[-1]
+-        elif callable(fmt):
+-            return fmt(lev)
+-        else:
+-            return fmt % lev
+-
+-    def locate_label(self, linecontour, labelwidth):
+-        """
+-        Find good place to draw a label (relatively flat part of the contour).
+-        """
+-        ctr_size = len(linecontour)
+-        n_blocks = int(np.ceil(ctr_size / labelwidth)) if labelwidth > 1 else 1
+-        block_size = ctr_size if n_blocks == 1 else int(labelwidth)
+-        # Split contour into blocks of length ``block_size``, filling the last
+-        # block by cycling the contour start (per `np.resize` semantics).  (Due
+-        # to cycling, the index returned is taken modulo ctr_size.)
+-        xx = np.resize(linecontour[:, 0], (n_blocks, block_size))
+-        yy = np.resize(linecontour[:, 1], (n_blocks, block_size))
+-        yfirst = yy[:, :1]
+-        ylast = yy[:, -1:]
+-        xfirst = xx[:, :1]
+-        xlast = xx[:, -1:]
+-        s = (yfirst - yy) * (xlast - xfirst) - (xfirst - xx) * (ylast - yfirst)
+-        l = np.hypot(xlast - xfirst, ylast - yfirst)
+-        # Ignore warning that divide by zero throws, as this is a valid option
+-        with np.errstate(divide='ignore', invalid='ignore'):
+-            distances = (abs(s) / l).sum(axis=-1)
+-        # Labels are drawn in the middle of the block (``hbsize``) where the
+-        # contour is the closest (per ``distances``) to a straight line, but
+-        # not `too_close()` to a preexisting label.
+-        hbsize = block_size // 2
+-        adist = np.argsort(distances)
+-        # If all candidates are `too_close()`, go back to the straightest part
+-        # (``adist[0]``).
+-        for idx in np.append(adist, adist[0]):
+-            x, y = xx[idx, hbsize], yy[idx, hbsize]
+-            if not self.too_close(x, y, labelwidth):
+-                break
+-        return x, y, (idx * block_size + hbsize) % ctr_size
+-
+-    def _split_path_and_get_label_rotation(self, path, idx, screen_pos, lw, spacing=5):
+-        """
+-        Prepare for insertion of a label at index *idx* of *path*.
++        Set the paths of the contour set.
+ 
+         Parameters
+         ----------
+-        path : Path
+-            The path where the label will be inserted, in data space.
+-        idx : int
+-            The vertex index after which the label will be inserted.
+-        screen_pos : (float, float)
+-            The position where the label will be inserted, in screen space.
+-        lw : float
+-            The label width, in screen space.
+-        spacing : float
+-            Extra spacing around the label, in screen space.
+-
+-        Returns
+-        -------
+-        path : Path
+-            The path, broken so that the label can be drawn over it.
+-        angle : float
+-            The rotation of the label.
+-
+-        Notes
+-        -----
+-        Both tasks are done together to avoid calculating path lengths multiple times,
+-        which is relatively costly.
+-
+-        The method used here involves computing the path length along the contour in
+-        pixel coordinates and then looking (label width / 2) away from central point to
+-        determine rotation and then to break contour if desired.  The extra spacing is
+-        taken into account when breaking the path, but not when computing the angle.
++        paths : list of Path
++            The new paths for the contour set.
+         """
+-        if hasattr(self, "_old_style_split_collections"):
+-            del self._old_style_split_collections  # Invalidate them.
+-
+-        xys = path.vertices
+-        codes = path.codes
+-
+-        # Insert a vertex at idx/pos (converting back to data space), if there isn't yet
+-        # a vertex there.  With infinite precision one could also always insert the
+-        # extra vertex (it will get masked out by the label below anyways), but floating
+-        # point inaccuracies (the point can have undergone a data->screen->data
+-        # transform loop) can slightly shift the point and e.g. shift the angle computed
+-        # below from exactly zero to nonzero.
+-        pos = self.get_transform().inverted().transform(screen_pos)
+-        if not np.allclose(pos, xys[idx]):
+-            xys = np.insert(xys, idx, pos, axis=0)
+-            codes = np.insert(codes, idx, Path.LINETO)
+-
+-        # Find the connected component where the label will be inserted.  Note that a
+-        # path always starts with a MOVETO, and we consider there's an implicit
+-        # MOVETO (closing the last path) at the end.
+-        movetos = (codes == Path.MOVETO).nonzero()[0]
+-        start = movetos[movetos <= idx][-1]
+-        try:
+-            stop = movetos[movetos > idx][0]
+-        except IndexError:
+-            stop = len(codes)
+-
+-        # Restrict ourselves to the connected component.
+-        cc_xys = xys[start:stop]
+-        idx -= start
+-
+-        # If the path is closed, rotate it s.t. it starts at the label.
+-        is_closed_path = codes[stop - 1] == Path.CLOSEPOLY
+-        if is_closed_path:
+-            cc_xys = np.concatenate([xys[idx:-1], xys[:idx+1]])
+-            idx = 0
+-
+-        # Like np.interp, but additionally vectorized over fp.
+-        def interp_vec(x, xp, fp): return [np.interp(x, xp, col) for col in fp.T]
+-
+-        # Use cumulative path lengths ("cpl") as curvilinear coordinate along contour.
+-        screen_xys = self.get_transform().transform(cc_xys)
+-        path_cpls = np.insert(
+-            np.cumsum(np.hypot(*np.diff(screen_xys, axis=0).T)), 0, 0)
+-        path_cpls -= path_cpls[idx]
+-
+-        # Use linear interpolation to get end coordinates of label.
+-        target_cpls = np.array([-lw/2, lw/2])
+-        if is_closed_path:  # For closed paths, target from the other end.
+-            target_cpls[0] += (path_cpls[-1] - path_cpls[0])
+-        (sx0, sx1), (sy0, sy1) = interp_vec(target_cpls, path_cpls, screen_xys)
+-        angle = np.rad2deg(np.arctan2(sy1 - sy0, sx1 - sx0))  # Screen space.
+-        if self.rightside_up:  # Fix angle so text is never upside-down
+-            angle = (angle + 90) % 180 - 90
+-
+-        target_cpls += [-spacing, +spacing]  # Expand range by spacing.
+-
+-        # Get indices near points of interest; use -1 as out of bounds marker.
+-        i0, i1 = np.interp(target_cpls, path_cpls, range(len(path_cpls)),
+-                           left=-1, right=-1)
+-        i0 = math.floor(i0)
+-        i1 = math.ceil(i1)
+-        (x0, x1), (y0, y1) = interp_vec(target_cpls, path_cpls, cc_xys)
+-
+-        # Actually break contours (dropping zero-len parts).
+-        new_xy_blocks = []
+-        new_code_blocks = []
+-        if is_closed_path:
+-            if i0 != -1 and i1 != -1:
+-                new_xy_blocks.extend([[(x1, y1)], cc_xys[i1:i0+1], [(x0, y0)]])
+-                new_code_blocks.extend([[Path.MOVETO], [Path.LINETO] * (i0 + 2 - i1)])
+-        else:
+-            if i0 != -1:
+-                new_xy_blocks.extend([cc_xys[:i0 + 1], [(x0, y0)]])
+-                new_code_blocks.extend([[Path.MOVETO], [Path.LINETO] * (i0 + 1)])
+-            if i1 != -1:
+-                new_xy_blocks.extend([[(x1, y1)], cc_xys[i1:]])
+-                new_code_blocks.extend([
+-                    [Path.MOVETO], [Path.LINETO] * (len(cc_xys) - i1)])
+-
+-        # Back to the full path.
+-        xys = np.concatenate([xys[:start], *new_xy_blocks, xys[stop:]])
+-        codes = np.concatenate([codes[:start], *new_code_blocks, codes[stop:]])
+-
+-        return angle, Path(xys, codes)
++        self._paths = paths
+ 
+     @_api.deprecated("3.8")
+     def calc_label_rot_and_inline(self, slc, ind, lw, lc=None, spacing=5):
+@@ -943,6 +517,17 @@ class ContourSet(ContourLabeler, mcoll.Collection):
+     alpha = property(lambda self: self.get_alpha())
+     linestyles = property(lambda self: self._orig_linestyles)
+ 
++    def set_paths(self, paths):
++        """
++        Set the paths of the contour set.
++
++        Parameters
++        ----------
++        paths : list of Path
++            The new paths for the contour set.
++        """
++        self._paths = paths
++
+     @_api.deprecated("3.8")
+     @property
+     def collections(self):
+@@ -1379,6 +964,8 @@ class ContourSet(ContourLabeler, mcoll.Collection):
+ 
+         return idx_level_min, idx_vtx_min, proj_min
+ 
++        self._paths = paths
++
+     @_api.deprecated("3.8")
+     def find_nearest_contour(self, x, y, indices=None, pixel=True):
+         """

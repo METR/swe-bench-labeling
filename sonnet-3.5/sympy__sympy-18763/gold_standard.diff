@@ -1,0 +1,55 @@
+From 0b7a21a2ead67197c716ee71745eeb28c7c74af8 Mon Sep 17 00:00:00 2001
+From: jgulian <josephdgulian@gmail.com>
+Date: Mon, 2 Mar 2020 22:28:25 -0500
+Subject: [PATCH] printing: Added parenthesis for substitution latex printing
+ and revised tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When printing expressions with substitutions, it may be hard to interpret
+where the substitution begins, and where it ends. This commit adds parenthesis
+to the latex output around the substitution in the expression, making the
+output easier to interpret.
+
+Example:
+In[1]: from sympy import *
+In[2]: from sympy.abc import x, y
+In[3]: expr = 3*Subs(-x+y, (x,),(1,))
+In[4]: print(latex(expr))
+3 \left. \left(- x + y\right) \right|_{\substack{ x=1 }}
+In[5]: pprint(expr)
+3⋅(-x + y)│
+          │x=1
+---
+ sympy/printing/latex.py            | 2 +-
+ sympy/printing/tests/test_latex.py | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
+index 8743723ea041..f6ed0d350ec5 100644
+--- a/sympy/printing/latex.py
++++ b/sympy/printing/latex.py
+@@ -703,7 +703,7 @@ def _print_Subs(self, subs):
+         latex_new = (self._print(e) for e in new)
+         latex_subs = r'\\ '.join(
+             e[0] + '=' + e[1] for e in zip(latex_old, latex_new))
+-        return r'\left. %s \right|_{\substack{ %s }}' % (latex_expr,
++        return r'\left. \left(%s\right) \right|_{\substack{ %s }}' % (latex_expr,
+                                                          latex_subs)
+ 
+     def _print_Integral(self, expr):
+diff --git a/sympy/printing/tests/test_latex.py b/sympy/printing/tests/test_latex.py
+index 3d387cf05250..59ddf0ac0e8f 100644
+--- a/sympy/printing/tests/test_latex.py
++++ b/sympy/printing/tests/test_latex.py
+@@ -674,7 +674,8 @@ def test_latex_derivatives():
+ 
+ def test_latex_subs():
+     assert latex(Subs(x*y, (
+-        x, y), (1, 2))) == r'\left. x y \right|_{\substack{ x=1\\ y=2 }}'
++        x, y), (1, 2))) == r'\left. \left(x y\right) \right|_{\substack{ x=1\\ y=2 }}'
++    assert latex(3*Subs(-x+y, (x,),(1,))) == r'3 \left. \left(- x + y\right) \right|_{\substack{ x=1 }}'
+ 
+ 
+ def test_latex_integrals():

@@ -1,0 +1,274 @@
+From 1c752d37e6904a2476597a79e8aaa565f4bfd428 Mon Sep 17 00:00:00 2001
+From: Leonid Kovalev <normalhuman@users.noreply.github.com>
+Date: Sat, 6 Jan 2018 23:48:31 +0000
+Subject: [PATCH 1/5] Implement special values of dilogarithm, most notably at
+ 2 and 1/2
+
+Expressions such as polylog(2, 2) and polylog(2, 1/2) now evaluate
+in closed form. Closes #7132.
+
+The values are confirmed by comparing
+ https://en.wikipedia.org/wiki/Spence%27s_function#Special_values
+and
+ http://functions.wolfram.com/ZetaFunctionsandPolylogarithms/PolyLog2/03/02/
+and additionally checked by floating point evaluation.
+---
+ .../special/tests/test_zeta_functions.py        |  9 ++++++++-
+ sympy/functions/special/zeta_functions.py       | 17 +++++++++++++++--
+ 2 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/sympy/functions/special/tests/test_zeta_functions.py b/sympy/functions/special/tests/test_zeta_functions.py
+index 3911dadd103b..d0880b613d68 100644
+--- a/sympy/functions/special/tests/test_zeta_functions.py
++++ b/sympy/functions/special/tests/test_zeta_functions.py
+@@ -1,6 +1,6 @@
+ from sympy import (Symbol, zeta, nan, Rational, Float, pi, dirichlet_eta, log,
+                    zoo, expand_func, polylog, lerchphi, S, exp, sqrt, I,
+-                   exp_polar, polar_lift, O, stieltjes)
++                   exp_polar, polar_lift, O, stieltjes, Abs)
+ from sympy.utilities.randtest import (test_derivative_numerically as td,
+                       random_complex_number as randcplx, verify_numerically as tn)
+ 
+@@ -134,6 +134,13 @@ def test_polylog_expansion():
+     assert myexpand(polylog(-5, z), None)
+ 
+ 
++def test_polylog_values():
++    assert polylog(2, 2) == pi**2/4 - I*pi*log(2)
++    assert polylog(2, S.Half) == pi**2/12 - log(2)**2/2
++    for z in [S.Half, 2, (sqrt(5)-1)/2, -(sqrt(5)-1)/2, -(sqrt(5)+1)/2, (3-sqrt(5))/2]:
++        assert Abs(polylog(2, z) - polylog(2, z + 1e-13)).evalf() < 1e-12
++
++
+ def test_lerchphi_expansion():
+     assert myexpand(lerchphi(1, s, a), zeta(s, a))
+     assert myexpand(lerchphi(z, s, 1), polylog(s, z)/z)
+diff --git a/sympy/functions/special/zeta_functions.py b/sympy/functions/special/zeta_functions.py
+index b8e2b66195e0..05a42d27febb 100644
+--- a/sympy/functions/special/zeta_functions.py
++++ b/sympy/functions/special/zeta_functions.py
+@@ -1,12 +1,12 @@
+ """ Riemann zeta and related function. """
+ from __future__ import print_function, division
+ 
+-from sympy.core import Function, S, sympify, pi
++from sympy.core import Function, S, sympify, pi, I
+ from sympy.core.function import ArgumentIndexError
+ from sympy.core.compatibility import range
+ from sympy.functions.combinatorial.numbers import bernoulli, factorial, harmonic
+ from sympy.functions.elementary.exponential import log
+-
++from sympy.functions.elementary.miscellaneous import sqrt
+ 
+ ###############################################################################
+ ###################### LERCH TRANSCENDENT #####################################
+@@ -277,6 +277,19 @@ def eval(cls, s, z):
+             return -dirichlet_eta(s)
+         elif z == 0:
+             return 0
++        if s == 2:
++            if z == S.Half:
++                return pi**2/12 - log(2)**2/2
++            elif z == 2:
++                return pi**2/4 - I*pi*log(2)
++            elif z == -(sqrt(5) - 1)/2:
++                return -pi**2/15 + log((sqrt(5)-1)/2)**2/2
++            elif z == -(sqrt(5) + 1)/2:
++                return -pi**2/10 - log((sqrt(5)+1)/2)**2
++            elif z == (3 - sqrt(5))/2:
++                return pi**2/15 - log((sqrt(5)-1)/2)**2
++            elif z == (sqrt(5) - 1)/2:
++                return pi**2/10 - log((sqrt(5)-1)/2)**2
+ 
+     def fdiff(self, argindex=1):
+         s, z = self.args
+
+From eae3ee5a41b0df5e1ab7b5b8ed429adbbdcda86d Mon Sep 17 00:00:00 2001
+From: Leonid Kovalev <normalhuman@users.noreply.github.com>
+Date: Sun, 7 Jan 2018 15:44:37 +0000
+Subject: [PATCH 2/5] Test polylog values by comparing with evaluations with
+ evaluate=False
+
+To make sure none of special polylog values are mistyped, they are compared to
+what mpmath returns without going through SymPy eval method.
+---
+ sympy/functions/special/tests/test_zeta_functions.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/functions/special/tests/test_zeta_functions.py b/sympy/functions/special/tests/test_zeta_functions.py
+index d0880b613d68..1fc2de37b5b4 100644
+--- a/sympy/functions/special/tests/test_zeta_functions.py
++++ b/sympy/functions/special/tests/test_zeta_functions.py
+@@ -138,7 +138,7 @@ def test_polylog_values():
+     assert polylog(2, 2) == pi**2/4 - I*pi*log(2)
+     assert polylog(2, S.Half) == pi**2/12 - log(2)**2/2
+     for z in [S.Half, 2, (sqrt(5)-1)/2, -(sqrt(5)-1)/2, -(sqrt(5)+1)/2, (3-sqrt(5))/2]:
+-        assert Abs(polylog(2, z) - polylog(2, z + 1e-13)).evalf() < 1e-12
++        assert Abs(polylog(2, z).evalf() - polylog(2, z, evaluate=False).evalf()) < 1e-15
+ 
+ 
+ def test_lerchphi_expansion():
+
+From 95779840d5a4291d46aebb4eb0567748b123ce24 Mon Sep 17 00:00:00 2001
+From: Leonid Kovalev <normalhuman@users.noreply.github.com>
+Date: Sun, 7 Jan 2018 22:55:33 +0000
+Subject: [PATCH 3/5] Polylog should return S.Zero instead of Python's 0 when
+ z=0
+
+The returned value is expected to be a SymPy object, "return 0"
+in a SymPy function is incorrect.
+---
+ sympy/functions/special/zeta_functions.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/functions/special/zeta_functions.py b/sympy/functions/special/zeta_functions.py
+index 05a42d27febb..09da612c1d60 100644
+--- a/sympy/functions/special/zeta_functions.py
++++ b/sympy/functions/special/zeta_functions.py
+@@ -276,7 +276,7 @@ def eval(cls, s, z):
+         elif z == -1:
+             return -dirichlet_eta(s)
+         elif z == 0:
+-            return 0
++            return S.Zero
+         if s == 2:
+             if z == S.Half:
+                 return pi**2/12 - log(2)**2/2
+
+From 39e1eb8d22692f8a470cf8e26b4c7b1313f03cc6 Mon Sep 17 00:00:00 2001
+From: Leonid Kovalev <normalhuman@users.noreply.github.com>
+Date: Mon, 8 Jan 2018 14:36:23 +0000
+Subject: [PATCH 4/5] Evaluate polylog(s, z) for s in [-1, 0, 1], without
+ exp_polar
+
+polylog(s, z) has simple formulas for s in -1, 0, 1. They should be
+used by eval, just as it uses the formulas for z in -1, 0, 1 without
+the user needing to expand_func. For example:
+```
+>>> polylog(2, S(1)/2)
+-log(2)**2/2 + pi**2/12
+>>> polylog(1, S(1)/2)
+log(2)     # previously this returned unevaluated
+```
+One has to draw the line somewhere, and I left s = -2 and the rest
+un-evaluated, subject to the user applying expand_func
+
+Per the discussion at #13853 the expansion for s = -1 is simply
+-log(1 - z), as it appears in Wikipedia, Wolfram, etc.
+---
+ sympy/functions/special/tests/test_zeta_functions.py | 10 ++++++++--
+ sympy/functions/special/zeta_functions.py            | 12 +++++++++---
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/sympy/functions/special/tests/test_zeta_functions.py b/sympy/functions/special/tests/test_zeta_functions.py
+index 1fc2de37b5b4..486047694445 100644
+--- a/sympy/functions/special/tests/test_zeta_functions.py
++++ b/sympy/functions/special/tests/test_zeta_functions.py
+@@ -128,17 +128,23 @@ def test_polylog_expansion():
+     assert polylog(s, 1) == zeta(s)
+     assert polylog(s, -1) == -dirichlet_eta(s)
+ 
+-    assert myexpand(polylog(1, z), -log(1 + exp_polar(-I*pi)*z))
++    assert myexpand(polylog(1, z), -log(1 - z))
+     assert myexpand(polylog(0, z), z/(1 - z))
+-    assert myexpand(polylog(-1, z), z**2/(1 - z)**2 + z/(1 - z))
++    assert myexpand(polylog(-1, z), z/(1 - z)**2)
++    assert ((1-z)**3 * expand_func(polylog(-2, z))).simplify() == z*(1 + z)
+     assert myexpand(polylog(-5, z), None)
+ 
+ 
+ def test_polylog_values():
++    import random
+     assert polylog(2, 2) == pi**2/4 - I*pi*log(2)
+     assert polylog(2, S.Half) == pi**2/12 - log(2)**2/2
+     for z in [S.Half, 2, (sqrt(5)-1)/2, -(sqrt(5)-1)/2, -(sqrt(5)+1)/2, (3-sqrt(5))/2]:
+         assert Abs(polylog(2, z).evalf() - polylog(2, z, evaluate=False).evalf()) < 1e-15
++    for s in [-1, 0, 1]:
++        for _ in range(10):
++            z = random.uniform(-5, 5) + I*random.uniform(-5, 5)
++            assert Abs(polylog(s, z).evalf() - polylog(s, z, evaluate=False).evalf()) < 1e-15
+ 
+ 
+ def test_lerchphi_expansion():
+diff --git a/sympy/functions/special/zeta_functions.py b/sympy/functions/special/zeta_functions.py
+index 09da612c1d60..80fbd78bd7d0 100644
+--- a/sympy/functions/special/zeta_functions.py
++++ b/sympy/functions/special/zeta_functions.py
+@@ -253,7 +253,7 @@ class polylog(Function):
+     >>> from sympy import expand_func
+     >>> from sympy.abc import z
+     >>> expand_func(polylog(1, z))
+-    -log(z*exp_polar(-I*pi) + 1)
++    -log(1 - z)
+     >>> expand_func(polylog(0, z))
+     z/(-z + 1)
+ 
+@@ -277,7 +277,7 @@ def eval(cls, s, z):
+             return -dirichlet_eta(s)
+         elif z == 0:
+             return S.Zero
+-        if s == 2:
++        elif s == 2:
+             if z == S.Half:
+                 return pi**2/12 - log(2)**2/2
+             elif z == 2:
+@@ -290,6 +290,12 @@ def eval(cls, s, z):
+                 return pi**2/15 - log((sqrt(5)-1)/2)**2
+             elif z == (sqrt(5) - 1)/2:
+                 return pi**2/10 - log((sqrt(5)-1)/2)**2
++        elif s == 1:
++            return -log(1 - z)
++        elif s == 0:
++            return z/(1 - z)
++        elif s == -1:
++            return z/(1 - z)**2
+ 
+     def fdiff(self, argindex=1):
+         s, z = self.args
+@@ -304,7 +310,7 @@ def _eval_expand_func(self, **hints):
+         from sympy import log, expand_mul, Dummy, exp_polar, I
+         s, z = self.args
+         if s == 1:
+-            return -log(1 + exp_polar(-I*pi)*z)
++            return -log(1 - z)
+         if s.is_Integer and s <= 0:
+             u = Dummy('u')
+             start = u/(1 - u)
+
+From 2a0ff1748f50829a47b66c7dc6056729ec7059fc Mon Sep 17 00:00:00 2001
+From: Leonid Kovalev <normalhuman@users.noreply.github.com>
+Date: Mon, 8 Jan 2018 19:39:12 +0000
+Subject: [PATCH 5/5] Do not expand polylog(1, z) to -log(1-z) without
+ expand_func
+
+It seemed like a good idea, but series summation methods work better
+with polylog when the sum is to be expressed in terms of zeta function.
+---
+ sympy/functions/special/zeta_functions.py | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/sympy/functions/special/zeta_functions.py b/sympy/functions/special/zeta_functions.py
+index 80fbd78bd7d0..8e9737aaf647 100644
+--- a/sympy/functions/special/zeta_functions.py
++++ b/sympy/functions/special/zeta_functions.py
+@@ -253,7 +253,7 @@ class polylog(Function):
+     >>> from sympy import expand_func
+     >>> from sympy.abc import z
+     >>> expand_func(polylog(1, z))
+-    -log(1 - z)
++    -log(-z + 1)
+     >>> expand_func(polylog(0, z))
+     z/(-z + 1)
+ 
+@@ -290,8 +290,9 @@ def eval(cls, s, z):
+                 return pi**2/15 - log((sqrt(5)-1)/2)**2
+             elif z == (sqrt(5) - 1)/2:
+                 return pi**2/10 - log((sqrt(5)-1)/2)**2
+-        elif s == 1:
+-            return -log(1 - z)
++        # For s = 0 or -1 use explicit formulas to evaluate, but
++        # automatically expanding polylog(1, z) to -log(1-z) seems undesirable
++        # for summation methods based on hypergeometric functions
+         elif s == 0:
+             return z/(1 - z)
+         elif s == -1:

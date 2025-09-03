@@ -1,0 +1,354 @@
+diff --git a/debug_delete.py b/debug_delete.py
+new file mode 100644
+index 0000000000..a58e389b8f
+--- /dev/null
++++ b/debug_delete.py
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++# Setup Django
++django.setup()
++
++# Define a simple model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++        db_table = 'test_model'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create some test data
++for i in range(3):
++    TestModel.objects.create(name=f"Item {i}")
++
++# Get the delete query
++from django.db.models.sql.subqueries import DeleteQuery
++queryset = TestModel.objects.all()
++del_query = queryset._chain()
++del_query.query.__class__ = DeleteQuery
++
++# Get the compiler
++compiler = del_query.query.get_compiler(using='default')
++
++print("BEFORE setup_query():")
++print("Query alias_map:", compiler.query.alias_map)
++print("Query alias_refcount:", compiler.query.alias_refcount)
++print("single_alias property:", compiler.single_alias)
++
++# Call setup_query to populate aliases
++compiler.setup_query()
++
++print("\nAFTER setup_query():")
++print("Query alias_map:", compiler.query.alias_map)
++print("Query alias_refcount:", compiler.query.alias_refcount)
++print("Single alias check:")
++for t in compiler.query.alias_map:
++    count = compiler.query.alias_refcount[t]
++    print(f"  Table '{t}': refcount = {count}, > 0 = {count > 0}")
++    
++total = sum(compiler.query.alias_refcount[t] > 0 for t in compiler.query.alias_map)
++print(f"Total tables with refcount > 0: {total}")
++print(f"single_alias property: {compiler.single_alias}")
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index 29e33c075f..09cec5ec06 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -1405,8 +1405,11 @@ class SQLInsertCompiler(SQLCompiler):
+ 
+ 
+ class SQLDeleteCompiler(SQLCompiler):
+-    @cached_property
++    @property
+     def single_alias(self):
++        # Ensure aliases are set up before checking
++        if not self.query.alias_map:
++            self.setup_query()
+         return sum(self.query.alias_refcount[t] > 0 for t in self.query.alias_map) == 1
+ 
+     def _as_sql(self, query):
+diff --git a/test_comprehensive_delete.py b/test_comprehensive_delete.py
+new file mode 100644
+index 0000000000..0ff1438167
+--- /dev/null
++++ b/test_comprehensive_delete.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.test.utils import CaptureQueriesContext
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++# Setup Django
++django.setup()
++
++# Define test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++        db_table = 'test_author'
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE, related_name='books')
++    
++    class Meta:
++        app_label = 'test'
++        db_table = 'test_book'
++
++# Create the tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Author)
++    schema_editor.create_model(Book)
++
++# Create some test data
++author1 = Author.objects.create(name="Author 1")
++author2 = Author.objects.create(name="Author 2")
++for i in range(5):
++    Book.objects.create(title=f"Book {i}", author=author1)
++for i in range(5, 10):
++    Book.objects.create(title=f"Book {i}", author=author2)
++
++print("Test 1: Simple delete all (no filters, no joins)")
++with CaptureQueriesContext(connection) as queries:
++    Author.objects.all().delete()
++    
++for query in queries:
++    sql = query['sql']
++    if 'DELETE' in sql and 'test_author' in sql:
++        print(f"SQL: {sql}")
++        if 'IN (SELECT' in sql:
++            print("ERROR: Using subquery for simple delete!")
++        else:
++            print("OK: No subquery for simple delete")
++
++# Recreate test data
++author1 = Author.objects.create(name="Author 1")
++author2 = Author.objects.create(name="Author 2")
++for i in range(5):
++    Book.objects.create(title=f"Book {i}", author=author1)
++
++print("\nTest 2: Delete with filter")
++with CaptureQueriesContext(connection) as queries:
++    Author.objects.filter(name="Author 1").delete()
++    
++for query in queries:
++    sql = query['sql']
++    if 'DELETE' in sql and 'test_author' in sql:
++        print(f"SQL: {sql}")
++        # Note: filtered deletes might use subqueries in some cases, that's OK
++
++print("\nTest 3: Delete books (simple model)")
++with CaptureQueriesContext(connection) as queries:
++    Book.objects.all().delete()
++    
++for query in queries:
++    sql = query['sql']
++    if 'DELETE' in sql and 'test_book' in sql:
++        print(f"SQL: {sql}")
++        if 'IN (SELECT' in sql:
++            print("ERROR: Using subquery for simple delete!")
++        else:
++            print("OK: No subquery for simple delete")
++            
++print("\nAll tests completed!")
+diff --git a/test_delete_regression.py b/test_delete_regression.py
+new file mode 100644
+index 0000000000..a8b8bb0277
+--- /dev/null
++++ b/test_delete_regression.py
+@@ -0,0 +1,61 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.test.utils import CaptureQueriesContext
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++# Setup Django
++django.setup()
++
++# Define a simple model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++        db_table = 'test_model'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create some test data
++for i in range(10):
++    TestModel.objects.create(name=f"Item {i}")
++
++# Capture the DELETE query
++with CaptureQueriesContext(connection) as queries:
++    TestModel.objects.all().delete()
++
++# Print the captured queries
++print("Captured queries:")
++for query in queries:
++    print(f"SQL: {query['sql']}")
++    
++# Check if subquery is being used
++delete_query = queries[-1]['sql']
++if 'IN (SELECT' in delete_query:
++    print("\nERROR: Delete is using a subquery!")
++    print("Expected: DELETE FROM test_model")
++    print(f"Got: {delete_query}")
++else:
++    print("\nOK: Delete is not using a subquery")
+diff --git a/test_simple_delete.py b/test_simple_delete.py
+new file mode 100644
+index 0000000000..da64f4d14a
+--- /dev/null
++++ b/test_simple_delete.py
+@@ -0,0 +1,81 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.test.utils import CaptureQueriesContext
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++# Setup Django
++django.setup()
++
++# Define test models
++class SimpleModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField(default=0)
++    
++    class Meta:
++        app_label = 'test'
++        db_table = 'test_simple'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(SimpleModel)
++
++# Test 1: Simple delete all (no filters, no joins)
++print("Test 1: Simple delete all (no filters, no joins)")
++for i in range(10):
++    SimpleModel.objects.create(name=f"Item {i}", value=i)
++
++with CaptureQueriesContext(connection) as queries:
++    SimpleModel.objects.all().delete()
++    
++for query in queries:
++    sql = query['sql']
++    if 'DELETE' in sql:
++        print(f"SQL: {sql}")
++        if 'IN (SELECT' in sql:
++            print("ERROR: Using subquery for simple delete!")
++        else:
++            print("OK: No subquery for simple delete")
++
++# Test 2: Delete with filter
++print("\nTest 2: Delete with filter")
++for i in range(10):
++    SimpleModel.objects.create(name=f"Item {i}", value=i)
++
++with CaptureQueriesContext(connection) as queries:
++    SimpleModel.objects.filter(value__lt=5).delete()
++    
++for query in queries:
++    sql = query['sql']
++    if 'DELETE' in sql:
++        print(f"SQL: {sql}")
++        # Note: filtered deletes might use subqueries in some cases, that's OK
++        
++# Test 3: Delete with empty queryset
++print("\nTest 3: Delete empty queryset")
++SimpleModel.objects.all().delete()  # Clear all
++with CaptureQueriesContext(connection) as queries:
++    SimpleModel.objects.all().delete()
++    
++print(f"Number of queries for empty delete: {len(queries)}")
++
++print("\nAll tests completed!")

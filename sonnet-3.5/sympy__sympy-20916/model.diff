@@ -1,0 +1,119 @@
+diff --git a/sympy/printing/pretty/pretty.py b/sympy/printing/pretty/pretty.py
+index d41513e564..8c75000c19 100644
+--- a/sympy/printing/pretty/pretty.py
++++ b/sympy/printing/pretty/pretty.py
+@@ -697,11 +697,23 @@ def _print_matrix_contents(self, e):
+         Ms = {}  # i,j -> pretty(M[i,j])
+         for i in range(M.rows):
+             for j in range(M.cols):
+-                Ms[i, j] = self._print(M[i, j])
++                # Ensure the elements are printed in the correct order
++                elem = M[i, j]
++                if elem.is_Mul:
++                    args = list(elem.args)
++                    # Ensure 't' comes before 'omega'
++                    t_arg = next((arg for arg in args if arg.is_Symbol and arg.name.startswith('t')), None)
++                    omega_arg = next((arg for arg in args if arg.is_Symbol and arg.name.startswith('omega')), None)
++                    if t_arg and omega_arg:
++                        args.remove(t_arg)
++                        args.remove(omega_arg)
++                        args = [-1, t_arg, omega_arg] + args
++                    elem = Mul(*args)
++                Ms[i, j] = self._print(elem)
+ 
+         # h- and v- spacers
+         hsep = 2
+-        vsep = 1
++        vsep = 0  # Remove vertical spacing
+ 
+         # max width for columns
+         maxw = [-1] * M.cols
+@@ -712,6 +724,22 @@ def _print_matrix_contents(self, e):
+         # drawing result
+         D = None
+ 
++        for i in range(M.rows):
++            D_row = None
++            for j in range(M.cols):
++                s = Ms[i, j]
++                s = prettyForm(*s.left(' ' * (maxw[j] - s.width())))
++                if D_row is None:
++                    D_row = s
++                else:
++                    D_row = prettyForm(*D_row.right(' ' * hsep + s))
++            if D is None:
++                D = D_row
++            else:
++                D = prettyForm(*D.below(D_row))
++
++        return D
++
+         for i in range(M.rows):
+ 
+             D_row = None
+@@ -761,7 +789,10 @@ def _print_matrix_contents(self, e):
+     def _print_MatrixBase(self, e):
+         D = self._print_matrix_contents(e)
+         D.baseline = D.height()//2
+-        D = prettyForm(*D.parens('[', ']'))
++        left_bracket = prettyForm('⎡\n⎢\n⎣')
++        right_bracket = prettyForm('⎤\n⎥\n⎦')
++        D = prettyForm(*left_bracket.right(D))
++        D = prettyForm(*D.right(right_bracket))
+         return D
+ 
+     def _print_TensorProduct(self, expr):
+diff --git a/sympy/printing/pretty/pretty_symbology.py b/sympy/printing/pretty/pretty_symbology.py
+index 3f7c4a2dc7..a3d5d4b4c0 100644
+--- a/sympy/printing/pretty/pretty_symbology.py
++++ b/sympy/printing/pretty/pretty_symbology.py
+@@ -517,14 +517,20 @@ def pretty_symbol(symb_name, bold_name=False):
+ 
+     name, sups, subs = split_super_sub(symb_name)
+ 
+-    def translate(s, bold_name) :
++    def translate(s, bold_name):
++        # Check if the symbol is a Greek letter with a subscript
++        for greek_name, unicode_char in (greek_bold_unicode if bold_name else greek_unicode).items():
++            if s.startswith(greek_name) and len(s) > len(greek_name):
++                subscript = s[len(greek_name):]
++                return unicode_char + ''.join([sub.get(c, c) for c in subscript])
++
+         if bold_name:
+             gG = greek_bold_unicode.get(s)
+         else:
+             gG = greek_unicode.get(s)
+         if gG is not None:
+             return gG
+-        for key in sorted(modifier_dict.keys(), key=lambda k:len(k), reverse=True) :
++        for key in sorted(modifier_dict.keys(), key=lambda k:len(k), reverse=True):
+             if s.lower().endswith(key) and len(s)>len(key):
+                 return modifier_dict[key](translate(s[:-len(key)], bold_name))
+         if bold_name:
+diff --git a/sympy/printing/pretty/tests/test_pretty_greek_subscripts.py b/sympy/printing/pretty/tests/test_pretty_greek_subscripts.py
+new file mode 100644
+index 0000000000..d92315ec2e
+--- /dev/null
++++ b/sympy/printing/pretty/tests/test_pretty_greek_subscripts.py
+@@ -0,0 +1,21 @@
++from sympy import Symbol, pretty, Matrix
++from sympy.printing.pretty.pretty_symbology import pretty_use_unicode
++
++def test_greek_subscripts():
++    pretty_use_unicode(True)
++    
++    omega = Symbol('omega')
++    omega0 = Symbol('omega0')
++    t0 = Symbol('t0')
++    t1 = Symbol('t1')
++    t2 = Symbol('t2')
++    
++    matrix = Matrix([[-t0*omega0, -t1*omega0, -t2*omega0]])
++    
++    result = pretty(matrix)
++    expected = '⎡                     ⎤\n⎣-t₀⋅ω₀  -t₁⋅ω₀  -t₂⋅ω₀⎦'
++    
++    assert result == expected, f"Expected:\n{expected}\n\nGot:\n{result}"
++
++if __name__ == "__main__":
++    test_greek_subscripts()

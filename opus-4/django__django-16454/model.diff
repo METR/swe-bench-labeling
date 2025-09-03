@@ -1,0 +1,72 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index abc6f79a15..e0bfef8558 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -71,6 +71,31 @@ class CommandParser(ArgumentParser):
+         else:
+             raise CommandError("Error: %s" % message)
+ 
++    def add_subparsers(self, **kwargs):
++        """
++        Override add_subparsers to ensure that the subparsers are created
++        with the same error handling behavior as the parent.
++        """
++        # Store original parser class if present
++        parser_class = kwargs.get('parser_class', type(self))
++        
++        # Create custom subparser class that inherits parent's attributes
++        parent_called_from_command_line = self.called_from_command_line
++        parent_missing_args_message = self.missing_args_message
++        
++        class SubCommandParser(parser_class):
++            def __init__(self, **parser_kwargs):
++                # Pass parent's attributes to subparser
++                parser_kwargs.setdefault('called_from_command_line', parent_called_from_command_line)
++                parser_kwargs.setdefault('missing_args_message', parent_missing_args_message)
++                super().__init__(**parser_kwargs)
++        
++        # Set our custom class as the parser class
++        kwargs['parser_class'] = SubCommandParser
++        
++        # Call parent's add_subparsers with our custom parser class
++        return super().add_subparsers(**kwargs)
++
+ 
+ def handle_default_options(options):
+     """
+diff --git a/tests/user_commands/tests.py b/tests/user_commands/tests.py
+index e40632385c..c8d677b667 100644
+--- a/tests/user_commands/tests.py
++++ b/tests/user_commands/tests.py
+@@ -406,6 +406,31 @@ class CommandTests(SimpleTestCase):
+         with self.assertRaisesMessage(CommandError, msg):
+             management.call_command("subparser_dest", subcommand="foo", bar=12)
+ 
++    def test_subparser_error_formatting(self):
++        """
++        Management command subparsers should retain error formatting from the
++        parent CommandParser, raising CommandError instead of showing a stack trace.
++        """
++        # Test missing required argument to subparser - should raise CommandError
++        msg = "Error: the following arguments are required: bar"
++        with self.assertRaisesMessage(CommandError, msg):
++            management.call_command("subparser", "foo")
++            
++        # Direct test of CommandParser subparser inheritance
++        from django.core.management.base import CommandParser
++        
++        # Test with called_from_command_line=False (should raise CommandError)
++        parser = CommandParser(called_from_command_line=False)
++        subparsers = parser.add_subparsers()
++        subparser = subparsers.add_parser("test")
++        subparser.add_argument("required_arg")
++        
++        with self.assertRaises(CommandError):
++            parser.parse_args(["test"])  # Missing required_arg
++            
++        # Verify the subparser has inherited the parent's attributes
++        self.assertFalse(subparser.called_from_command_line)
++
+     def test_create_parser_kwargs(self):
+         """BaseCommand.create_parser() passes kwargs to CommandParser."""
+         epilog = "some epilog text"

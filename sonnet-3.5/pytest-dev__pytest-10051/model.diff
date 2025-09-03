@@ -1,0 +1,26 @@
+diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py
+index a4f4214b1..29974b793 100644
+--- a/src/_pytest/logging.py
++++ b/src/_pytest/logging.py
+@@ -396,7 +396,11 @@ class LogCaptureFixture:
+ 
+         .. versionadded:: 3.4
+         """
+-        return self._item.stash[caplog_records_key].get(when, [])
++        if when not in ("setup", "call", "teardown"):
++            raise ValueError("Invalid value for 'when': {}".format(when))
++        
++        self._item.stash[caplog_records_key][when] = self.records
++        return self._item.stash[caplog_records_key][when]
+ 
+     @property
+     def text(self) -> str:
+@@ -441,6 +445,8 @@ class LogCaptureFixture:
+     def clear(self) -> None:
+         """Reset the list of log records and the captured log text."""
+         self.handler.reset()
++        for when in ("setup", "call", "teardown"):
++            self._item.stash[caplog_records_key][when] = []
+ 
+     def set_level(self, level: Union[int, str], logger: Optional[str] = None) -> None:
+         """Set the level of a logger for the duration of a test.

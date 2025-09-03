@@ -1,0 +1,28 @@
+diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
+index 6ea18dd22f..6cc6bf6067 100644
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -318,12 +318,19 @@ class LocalePrefixPattern:
+         if language_code == settings.LANGUAGE_CODE and not self.prefix_default_language:
+             return ''
+         else:
+-            return '%s/' % language_code
++            return f'{language_code.lower()}/'
+ 
+     def match(self, path):
+-        language_prefix = self.language_prefix
+-        if path.startswith(language_prefix):
+-            return path[len(language_prefix):], (), {}
++        import re
++        language_prefix = self.language_prefix.rstrip('/')
++        language_code = get_language() or settings.LANGUAGE_CODE
++        if language_code == settings.LANGUAGE_CODE and not self.prefix_default_language:
++            return path, (), {}
++        pattern = rf'^({re.escape(language_prefix)}|{language_code}(-[A-Za-z]+)?(-[A-Za-z]+)?)/'
++        match = re.match(pattern, path)
++        if match:
++            matched_prefix = match.group(1)
++            return path[len(matched_prefix) + 1:], (), {}
+         return None
+ 
+     def check(self):

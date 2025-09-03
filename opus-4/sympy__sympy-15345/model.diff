@@ -1,0 +1,66 @@
+diff --git a/sympy/printing/mathematica.py b/sympy/printing/mathematica.py
+index ea7e3a2d94..806ac3e994 100644
+--- a/sympy/printing/mathematica.py
++++ b/sympy/printing/mathematica.py
+@@ -116,6 +116,12 @@ def _print_Derivative(self, expr):
+         dvars = [i[0] if i[1] == 1 else i for i in expr.variable_count]
+         return "Hold[D[" + ', '.join(self.doprint(a) for a in [dexpr] + dvars) + "]]"
+ 
++    def _print_Max(self, expr):
++        return "Max[%s]" % self.stringify(expr.args, ", ")
++
++    def _print_Min(self, expr):
++        return "Min[%s]" % self.stringify(expr.args, ", ")
++
+ 
+ def mathematica_code(expr, **settings):
+     r"""Converts an expr to a string of the Wolfram Mathematica code
+diff --git a/sympy/printing/tests/test_mathematica.py b/sympy/printing/tests/test_mathematica.py
+index dd636d0623..97ea56e601 100644
+--- a/sympy/printing/tests/test_mathematica.py
++++ b/sympy/printing/tests/test_mathematica.py
+@@ -90,3 +90,15 @@ def test_Sum():
+                      (y, -oo, oo))) == \
+         "Hold[Sum[Exp[-x^2 - y^2], {x, -Infinity, Infinity}, " \
+         "{y, -Infinity, Infinity}]]"
++
++
++def test_Max_Min():
++    from sympy import Max, Min
++    assert mcode(Max(x, 2)) == "Max[2, x]"
++    assert mcode(Max(x, y)) == "Max[x, y]"
++    assert mcode(Max(x, y, z)) == "Max[x, y, z]"
++    assert mcode(Min(x, 2)) == "Min[2, x]"
++    assert mcode(Min(x, y)) == "Min[x, y]"
++    assert mcode(Min(x, y, z)) == "Min[x, y, z]"
++    # Test nested
++    assert mcode(Max(x, Min(y, z))) == "Max[x, Min[y, z]]"
+diff --git a/test_max_min_fix.py b/test_max_min_fix.py
+new file mode 100644
+index 0000000000..0b7dc74fec
+--- /dev/null
++++ b/test_max_min_fix.py
+@@ -0,0 +1,23 @@
++from sympy import symbols, Max, Min, mathematica_code, oo
++
++x, y, z = symbols('x y z')
++
++# Test cases for Max
++print("Testing Max:")
++print("Max(x, 2):", mathematica_code(Max(x, 2)))
++print("Max(x, y):", mathematica_code(Max(x, y)))
++print("Max(x, y, z):", mathematica_code(Max(x, y, z)))
++print("Max(1, 2, 3):", mathematica_code(Max(1, 2, 3)))
++print("Max(x, oo):", mathematica_code(Max(x, oo)))
++
++print("\nTesting Min:")
++print("Min(x, 2):", mathematica_code(Min(x, 2)))
++print("Min(x, y):", mathematica_code(Min(x, y)))
++print("Min(x, y, z):", mathematica_code(Min(x, y, z)))
++print("Min(1, 2, 3):", mathematica_code(Min(1, 2, 3)))
++print("Min(x, -oo):", mathematica_code(Min(x, -oo)))
++
++# Test nested Max/Min
++print("\nTesting nested Max/Min:")
++print("Max(x, Min(y, z)):", mathematica_code(Max(x, Min(y, z))))
++print("Min(Max(x, 2), y):", mathematica_code(Min(Max(x, 2), y)))

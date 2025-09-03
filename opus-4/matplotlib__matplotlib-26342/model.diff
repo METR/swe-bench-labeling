@@ -1,0 +1,176 @@
+diff --git a/add_set_paths.patch b/add_set_paths.patch
+new file mode 100644
+index 0000000000..b3f1a51418
+--- /dev/null
++++ b/add_set_paths.patch
+@@ -0,0 +1,21 @@
++--- a/lib/matplotlib/contour.py
+++++ b/lib/matplotlib/contour.py
++@@ -1474,6 +1474,17 @@ class ContourSet(ContourLabeler, mcoll.Collection):
++                 linestyles=[self.get_linestyles()[idx % len(self.get_linestyles())]],
++             ):
++                 super().draw(renderer)
+++
+++    def set_paths(self, paths):
+++        """
+++        Set the paths of the ContourSet.
+++
+++        Parameters
+++        ----------
+++        paths : list of Path
+++            The paths to set for the ContourSet.
+++        """
+++        self._paths = paths
+++        self.stale = True
++ 
++ 
++ @_docstring.dedent_interpd
+diff --git a/lib/matplotlib/contour.py b/lib/matplotlib/contour.py
+index 3f84250b64..5245b41fc4 100644
+--- a/lib/matplotlib/contour.py
++++ b/lib/matplotlib/contour.py
+@@ -1475,6 +1475,18 @@ class ContourSet(ContourLabeler, mcoll.Collection):
+             ):
+                 super().draw(renderer)
+ 
++    def set_paths(self, paths):
++        """
++        Set the paths of the ContourSet.
++
++        Parameters
++        ----------
++        paths : list of Path
++            The paths to set for the ContourSet.
++        """
++        self._paths = paths
++        self.stale = True
++
+ 
+ @_docstring.dedent_interpd
+ class QuadContourSet(ContourSet):
+diff --git a/test_contour_paths.py b/test_contour_paths.py
+new file mode 100644
+index 0000000000..428c5d95ed
+--- /dev/null
++++ b/test_contour_paths.py
+@@ -0,0 +1,33 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Create test data
++x = np.linspace(-3, 3, 100)
++y = np.linspace(-3, 3, 100)
++X, Y = np.meshgrid(x, y)
++Z = np.sin(X) * np.cos(Y)
++
++# Create a contour plot
++fig, ax = plt.subplots()
++cs = ax.contour(X, Y, Z)
++
++# Check what get_paths returns
++print("Type of cs:", type(cs))
++print("Has get_paths method:", hasattr(cs, 'get_paths'))
++print("Has _paths attribute:", hasattr(cs, '_paths'))
++
++# Try calling get_paths
++try:
++    paths = cs.get_paths()
++    print("get_paths() returned:", type(paths))
++    print("Number of paths:", len(paths) if paths else 0)
++    print("get_paths() returns _paths:", paths is cs._paths)
++except Exception as e:
++    print("Error calling get_paths():", e)
++
++# Check if ContourSet inherits from Collection
++from matplotlib.collections import Collection
++print("\nIs ContourSet a Collection?", isinstance(cs, Collection))
++
++# Check parent classes
++print("MRO:", [cls.__name__ for cls in type(cs).__mro__])
+diff --git a/test_inheritance.py b/test_inheritance.py
+new file mode 100644
+index 0000000000..631713e56f
+--- /dev/null
++++ b/test_inheritance.py
+@@ -0,0 +1,10 @@
++import matplotlib.contour as mcontour
++
++# Check that set_paths is available in ContourSet
++print("ContourSet has set_paths:", hasattr(mcontour.ContourSet, 'set_paths'))
++
++# Check that QuadContourSet inherits it
++print("QuadContourSet has set_paths:", hasattr(mcontour.QuadContourSet, 'set_paths'))
++
++# Check inheritance
++print("QuadContourSet inherits from ContourSet:", issubclass(mcontour.QuadContourSet, mcontour.ContourSet))
+diff --git a/test_set_paths.py b/test_set_paths.py
+new file mode 100644
+index 0000000000..1e63cac1e5
+--- /dev/null
++++ b/test_set_paths.py
+@@ -0,0 +1,58 @@
++import numpy as np
++import matplotlib.pyplot as plt
++from matplotlib.path import Path
++
++# Create test data
++x = np.linspace(-3, 3, 100)
++y = np.linspace(-3, 3, 100)
++X, Y = np.meshgrid(x, y)
++Z = np.sin(X) * np.cos(Y)
++
++# Create a contour plot
++fig, ax = plt.subplots()
++cs = ax.contour(X, Y, Z)
++
++# Get the original paths
++original_paths = cs.get_paths()
++print(f"Original number of paths: {len(original_paths)}")
++print(f"Type of paths: {type(original_paths)}")
++print(f"First path type: {type(original_paths[0]) if original_paths else None}")
++
++# Create some dummy transformed paths (just for testing)
++# In real usage, these would be properly transformed paths
++transformed_paths = []
++for path in original_paths:
++    # Create a simple transformation - shift by 0.1 in x direction
++    vertices = path.vertices + np.array([0.1, 0])
++    transformed_path = Path(vertices, path.codes)
++    transformed_paths.append(transformed_path)
++
++# Test the new set_paths method
++print("\nTesting set_paths method...")
++try:
++    cs.set_paths(transformed_paths)
++    print("set_paths() succeeded!")
++    
++    # Verify the paths were set
++    new_paths = cs.get_paths()
++    print(f"Number of paths after set_paths: {len(new_paths)}")
++    print(f"Paths are the transformed ones: {new_paths is transformed_paths}")
++    
++    # Check that stale flag was set
++    print(f"Stale flag: {cs.stale}")
++    
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test the Cartopy use case
++print("\n\nTesting Cartopy-style usage:")
++paths = cs.get_paths()
++print(f"Got paths: {len(paths)} paths")
++paths[:] = transformed_paths  # Old workaround
++print("Old workaround succeeded")
++
++# Now with the new method
++cs.set_paths(transformed_paths)  # New cleaner approach
++print("New set_paths approach succeeded")
+diff --git a/test_set_paths_comprehensive.py b/test_set_paths_comprehensive.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_set_paths_comprehensive.py
+@@ -0,0 +1 @@
++

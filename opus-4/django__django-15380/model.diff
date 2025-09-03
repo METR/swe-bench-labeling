@@ -1,0 +1,452 @@
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+index bf9c2acd26..606415041a 100644
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -211,7 +211,7 @@ class MigrationAutodetector:
+         self.kept_unmanaged_keys = self.old_unmanaged_keys & self.new_unmanaged_keys
+         self.through_users = {}
+         self.old_field_keys = {
+-            (app_label, model_name, field_name)
++            (app_label, self.renamed_models.get((app_label, model_name), model_name), field_name)
+             for app_label, model_name in self.kept_model_keys
+             for field_name in self.from_state.models[
+                 app_label,
+@@ -824,12 +824,12 @@ class MigrationAutodetector:
+         for app_label, model_name, field_name in sorted(self.new_field_keys - self.old_field_keys):
+             old_model_name = self.renamed_models.get((app_label, model_name), model_name)
+             old_model_state = self.from_state.models[app_label, old_model_name]
+-            new_model_state = self.to_state.models[app_label, old_model_name]
++            new_model_state = self.to_state.models[app_label, model_name]
+             field = new_model_state.get_field(field_name)
+             # Scan to see if this is actually a rename!
+             field_dec = self.deep_deconstruct(field)
+             for rem_app_label, rem_model_name, rem_field_name in sorted(self.old_field_keys - self.new_field_keys):
+-                if rem_app_label == app_label and rem_model_name == model_name:
++                if rem_app_label == app_label and rem_model_name == old_model_name:
+                     old_field = old_model_state.get_field(rem_field_name)
+                     old_field_dec = self.deep_deconstruct(old_field)
+                     if field.remote_field and field.remote_field.model and 'to' in old_field_dec[2]:
+diff --git a/test_rename_bug.py b/test_rename_bug.py
+new file mode 100644
+index 0000000000..5751a2fb26
+--- /dev/null
++++ b/test_rename_bug.py
+@@ -0,0 +1,84 @@
++"""Test script to reproduce the rename bug"""
++import os
++import sys
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++from django.db import models
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.questioner import MigrationQuestioner
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++django.setup()
++
++# Mock questioner that auto-answers yes to renames
++class TestQuestioner(MigrationQuestioner):
++    def ask_rename_model(self, old_model_state, new_model_state):
++        # Auto answer yes
++        return True
++    
++    def ask_rename(self, model_name, old_name, new_name, field):
++        # Auto answer yes
++        return True
++
++# Create old state with MyModel and field1
++old_state = ProjectState()
++old_model = ModelState(
++    'test_app', 
++    'MyModel',
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field1', models.CharField(max_length=100)),
++    ],
++    {}
++)
++old_state.add_model(old_model)
++
++# Create new state with MyModel2 and field2 (renamed model and field)
++new_state = ProjectState()
++new_model = ModelState(
++    'test_app',
++    'MyModel2',  # Renamed model
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field2', models.CharField(max_length=100)),  # Renamed field
++    ],
++    {}
++)
++new_state.add_model(new_model)
++
++# Create autodetector
++questioner = TestQuestioner()
++autodetector = MigrationAutodetector(old_state, new_state, questioner)
++
++# Try to detect changes - this should crash
++from django.db.migrations.graph import MigrationGraph
++try:
++    graph = MigrationGraph()
++    changes = autodetector._detect_changes()
++    print("Success! Changes detected:")
++    print(f"Renamed models: {autodetector.renamed_models}")
++    print(f"Renamed fields: {autodetector.renamed_fields}")
++    for operation in autodetector.generated_operations.get('test_app', []):
++        print(f"  - {operation}")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_rename_bug_debug.py b/test_rename_bug_debug.py
+new file mode 100644
+index 0000000000..e81ef54b94
+--- /dev/null
++++ b/test_rename_bug_debug.py
+@@ -0,0 +1,109 @@
++"""Test script to debug the field key issue"""
++import os
++import sys
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++from django.db import models
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.questioner import MigrationQuestioner
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++django.setup()
++
++# Mock questioner that auto-answers yes to renames
++class TestQuestioner(MigrationQuestioner):
++    def ask_rename_model(self, old_model_state, new_model_state):
++        return True
++    
++    def ask_rename(self, model_name, old_name, new_name, field):
++        return True
++
++# Create old state with MyModel and field1
++old_state = ProjectState()
++old_model = ModelState(
++    'test_app', 
++    'MyModel',
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field1', models.CharField(max_length=100)),
++    ],
++    {}
++)
++old_state.add_model(old_model)
++
++# Create new state with MyModel2 and field2 (renamed model and field)
++new_state = ProjectState()
++new_model = ModelState(
++    'test_app',
++    'MyModel2',  # Renamed model
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field2', models.CharField(max_length=100)),  # Renamed field
++    ],
++    {}
++)
++new_state.add_model(new_model)
++
++# Create autodetector
++questioner = TestQuestioner()
++autodetector = MigrationAutodetector(old_state, new_state, questioner)
++
++# First initialize the model keys
++autodetector.old_model_keys = {
++    (app_label, model_name)
++    for app_label, model_name in old_state.models
++}
++autodetector.new_model_keys = {
++    (app_label, model_name)
++    for app_label, model_name in new_state.models
++}
++autodetector.old_proxy_keys = set()
++autodetector.new_proxy_keys = set()
++autodetector.old_unmanaged_keys = set()
++autodetector.new_unmanaged_keys = set()
++autodetector.renamed_models = {}
++
++# Manually call the methods to see what's happening
++autodetector._prepare_field_lists()
++print("Before generate_renamed_models:")
++print(f"old_model_keys: {autodetector.old_model_keys}")
++print(f"new_model_keys: {autodetector.new_model_keys}")
++print(f"old_field_keys: {autodetector.old_field_keys}")
++print(f"new_field_keys: {autodetector.new_field_keys}")
++
++autodetector.generate_renamed_models()
++print("\nAfter generate_renamed_models:")
++print(f"renamed_models: {autodetector.renamed_models}")
++print(f"old_model_keys: {autodetector.old_model_keys}")
++print(f"new_model_keys: {autodetector.new_model_keys}")
++print(f"old_field_keys: {autodetector.old_field_keys}")
++print(f"new_field_keys: {autodetector.new_field_keys}")
++
++# Re-prepare field lists after model rename
++autodetector._prepare_field_lists()
++print("\nAfter re-preparing field lists:")
++print(f"old_field_keys: {autodetector.old_field_keys}")
++print(f"new_field_keys: {autodetector.new_field_keys}")
++
++# Try to detect field renames
++autodetector.generated_operations = {}
++autodetector.generate_renamed_fields()
++print(f"\nRenamed fields: {autodetector.renamed_fields}")
+diff --git a/test_rename_bug_detailed.py b/test_rename_bug_detailed.py
+new file mode 100644
+index 0000000000..c821545dcc
+--- /dev/null
++++ b/test_rename_bug_detailed.py
+@@ -0,0 +1,87 @@
++"""Test script to reproduce the rename bug with detailed debugging"""
++import os
++import sys
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++from django.db import models
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.questioner import MigrationQuestioner
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++django.setup()
++
++# Mock questioner that auto-answers yes to renames
++class TestQuestioner(MigrationQuestioner):
++    def ask_rename_model(self, old_model_state, new_model_state):
++        print(f"Asked to rename model: {old_model_state.name} -> {new_model_state.name}")
++        return True
++    
++    def ask_rename(self, model_name, old_name, new_name, field):
++        print(f"Asked to rename field: {old_name} -> {new_name} on model {model_name}")
++        return True
++
++# Create old state with MyModel and field1
++old_state = ProjectState()
++old_model = ModelState(
++    'test_app', 
++    'MyModel',
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field1', models.CharField(max_length=100)),
++    ],
++    {}
++)
++old_state.add_model(old_model)
++
++# Create new state with MyModel2 and field2 (renamed model and field)
++new_state = ProjectState()
++new_model = ModelState(
++    'test_app',
++    'MyModel2',  # Renamed model
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field2', models.CharField(max_length=100)),  # Renamed field
++    ],
++    {}
++)
++new_state.add_model(new_model)
++
++# Create autodetector
++questioner = TestQuestioner()
++autodetector = MigrationAutodetector(old_state, new_state, questioner)
++
++# Try to detect changes - this should crash
++from django.db.migrations.graph import MigrationGraph
++try:
++    graph = MigrationGraph()
++    changes = autodetector._detect_changes()
++    print("\nSuccess! Changes detected:")
++    print(f"Renamed models: {autodetector.renamed_models}")
++    print(f"Renamed fields: {autodetector.renamed_fields}")
++    print(f"\nOperations generated:")
++    for operation in autodetector.generated_operations.get('test_app', []):
++        print(f"  - {operation}")
++        if hasattr(operation, 'old_name') and hasattr(operation, 'new_name'):
++            print(f"    (old: {operation.old_name}, new: {operation.new_name})")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_rename_bug_trace.py b/test_rename_bug_trace.py
+new file mode 100644
+index 0000000000..47e854dc5b
+--- /dev/null
++++ b/test_rename_bug_trace.py
+@@ -0,0 +1,120 @@
++"""Test script to trace through field rename detection"""
++import os
++import sys
++
++# Add django to path
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++from django.db import models
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.questioner import MigrationQuestioner
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++django.setup()
++
++# Monkey patch the generate_renamed_fields method to add debug output
++original_generate_renamed_fields = MigrationAutodetector.generate_renamed_fields
++
++def debug_generate_renamed_fields(self):
++    print("\n=== DEBUG generate_renamed_fields ===")
++    print(f"renamed_models: {self.renamed_models}")
++    print(f"new_field_keys - old_field_keys: {sorted(self.new_field_keys - self.old_field_keys)}")
++    print(f"old_field_keys - new_field_keys: {sorted(self.old_field_keys - self.new_field_keys)}")
++    
++    for app_label, model_name, field_name in sorted(self.new_field_keys - self.old_field_keys):
++        old_model_name = self.renamed_models.get((app_label, model_name), model_name)
++        print(f"\nChecking new field: {app_label}.{model_name}.{field_name}")
++        print(f"  old_model_name: {old_model_name}")
++        
++        # Check if we can get the model states
++        try:
++            old_model_state = self.from_state.models[app_label, old_model_name]
++            print(f"  Found old_model_state for {app_label}.{old_model_name}")
++        except KeyError as e:
++            print(f"  ERROR: Could not find old_model_state: {e}")
++            continue
++            
++        try:
++            new_model_state = self.to_state.models[app_label, model_name]
++            print(f"  Found new_model_state for {app_label}.{model_name}")
++        except KeyError as e:
++            print(f"  ERROR: Could not find new_model_state: {e}")
++            continue
++            
++        # Check what fields to compare against
++        for rem_app_label, rem_model_name, rem_field_name in sorted(self.old_field_keys - self.new_field_keys):
++            if rem_app_label == app_label and rem_model_name == old_model_name:
++                print(f"  Comparing with old field: {rem_app_label}.{rem_model_name}.{rem_field_name}")
++    
++    # Call the original method
++    return original_generate_renamed_fields(self)
++
++MigrationAutodetector.generate_renamed_fields = debug_generate_renamed_fields
++
++# Mock questioner that auto-answers yes to renames
++class TestQuestioner(MigrationQuestioner):
++    def ask_rename_model(self, old_model_state, new_model_state):
++        return True
++    
++    def ask_rename(self, model_name, old_name, new_name, field):
++        print(f"\n!!! RENAME FIELD DETECTED: {old_name} -> {new_name} on model {model_name}")
++        return True
++
++# Create old state with MyModel and field1
++old_state = ProjectState()
++old_model = ModelState(
++    'test_app', 
++    'MyModel',
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field1', models.CharField(max_length=100)),
++    ],
++    {}
++)
++old_state.add_model(old_model)
++
++# Create new state with MyModel2 and field2 (renamed model and field)
++new_state = ProjectState()
++new_model = ModelState(
++    'test_app',
++    'MyModel2',  # Renamed model
++    [
++        ('id', models.AutoField(primary_key=True)),
++        ('field2', models.CharField(max_length=100)),  # Renamed field
++    ],
++    {}
++)
++new_state.add_model(new_model)
++
++# Create autodetector
++questioner = TestQuestioner()
++autodetector = MigrationAutodetector(old_state, new_state, questioner)
++
++# Try to detect changes
++from django.db.migrations.graph import MigrationGraph
++try:
++    graph = MigrationGraph()
++    changes = autodetector._detect_changes()
++    print("\n=== RESULTS ===")
++    print(f"Renamed models: {autodetector.renamed_models}")
++    print(f"Renamed fields: {autodetector.renamed_fields}")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()

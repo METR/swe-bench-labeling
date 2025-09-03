@@ -1,0 +1,197 @@
+diff --git a/sympy/utilities/iterables.py b/sympy/utilities/iterables.py
+index dd36dea304..bb8c47122e 100644
+--- a/sympy/utilities/iterables.py
++++ b/sympy/utilities/iterables.py
+@@ -1738,19 +1738,9 @@ def partitions(n, m=None, k=None, size=False):
+     {2: 1, 4: 1}
+     {3: 2}
+ 
+-    Note that the _same_ dictionary object is returned each time.
+-    This is for speed:  generating each partition goes quickly,
+-    taking constant time, independent of n.
+-
+-    >>> [p for p in partitions(6, k=2)]
+-    [{1: 6}, {1: 6}, {1: 6}, {1: 6}]
+-
+-    If you want to build a list of the returned dictionaries then
+-    make a copy of them:
+-
+-    >>> [p.copy() for p in partitions(6, k=2)]  # doctest: +SKIP
++    >>> [p for p in partitions(6, k=2)]  # doctest: +SKIP
+     [{2: 3}, {1: 2, 2: 2}, {1: 4, 2: 1}, {1: 6}]
+-    >>> [(M, p.copy()) for M, p in partitions(6, k=2, size=True)]  # doctest: +SKIP
++    >>> [(M, p) for M, p in partitions(6, k=2, size=True)]  # doctest: +SKIP
+     [(3, {2: 3}), (4, {1: 2, 2: 2}), (5, {1: 4, 2: 1}), (6, {1: 6})]
+ 
+     References
+@@ -1802,9 +1792,9 @@ def partitions(n, m=None, k=None, size=False):
+         keys.append(r)
+     room = m - q - bool(r)
+     if size:
+-        yield sum(ms.values()), ms
++        yield sum(ms.values()), ms.copy()
+     else:
+-        yield ms
++        yield ms.copy()
+ 
+     while keys != [1]:
+         # Reuse any 1's.
+@@ -1842,9 +1832,9 @@ def partitions(n, m=None, k=None, size=False):
+             break
+         room -= need
+         if size:
+-            yield sum(ms.values()), ms
++            yield sum(ms.values()), ms.copy()
+         else:
+-            yield ms
++            yield ms.copy()
+ 
+ 
+ def ordered_partitions(n, m=None, sort=True):
+diff --git a/test_existing.py b/test_existing.py
+new file mode 100644
+index 0000000000..5d1adfc0a5
+--- /dev/null
++++ b/test_existing.py
+@@ -0,0 +1,24 @@
++from sympy.utilities.iterables import partitions
++
++# These are from the existing tests - they use .copy() which shouldn't be necessary anymore
++# But it should still work
++
++result1 = [p.copy() for p in partitions(6, k=2)]
++expected1 = [{2: 3}, {1: 2, 2: 2}, {1: 4, 2: 1}, {1: 6}]
++print(f"Test 1 with copy: {result1 == expected1}")
++
++# Now without copy
++result2 = [p for p in partitions(6, k=2)]
++expected2 = [{2: 3}, {1: 2, 2: 2}, {1: 4, 2: 1}, {1: 6}]
++print(f"Test 2 without copy: {result2 == expected2}")
++
++# More tests from the test file
++result3 = [p.copy() for p in partitions(6, k=3)]
++expected3 = [{3: 2}, {1: 1, 2: 1, 3: 1}, {1: 3, 3: 1}, {2: 3}, {1: 2, 2: 2},
++             {1: 4, 2: 1}, {1: 6}]
++print(f"Test 3 with copy: {result3 == expected3}")
++
++result4 = [p for p in partitions(6, k=3)]
++expected4 = [{3: 2}, {1: 1, 2: 1, 3: 1}, {1: 3, 3: 1}, {2: 3}, {1: 2, 2: 2},
++             {1: 4, 2: 1}, {1: 6}]
++print(f"Test 4 without copy: {result4 == expected4}")
+diff --git a/test_partitions.py b/test_partitions.py
+new file mode 100644
+index 0000000000..f447cf0101
+--- /dev/null
++++ b/test_partitions.py
+@@ -0,0 +1,22 @@
++from sympy.utilities.iterables import partitions
++
++# Test the current behavior - should show the same dictionary
++print("Current behavior - list(partitions(4)):")
++result = list(partitions(4))
++print(result)
++print()
++
++# Test that all elements are the same object
++print("Are all elements the same object?")
++print(all(result[0] is result[i] for i in range(1, len(result))))
++print()
++
++# Test the workaround with copy
++print("Workaround with copy:")
++result_copy = [p.copy() for p in partitions(4)]
++print(result_copy)
++print()
++
++# Test that copied elements are different objects
++print("Are copied elements different objects?")
++print(all(result_copy[0] is not result_copy[i] for i in range(1, len(result_copy))))
+diff --git a/test_partitions_comprehensive.py b/test_partitions_comprehensive.py
+new file mode 100644
+index 0000000000..68681ddd45
+--- /dev/null
++++ b/test_partitions_comprehensive.py
+@@ -0,0 +1,51 @@
++from sympy.utilities.iterables import partitions
++
++# Test basic functionality
++print("Test 1: Basic partitions(4):")
++result = list(partitions(4))
++print(result)
++print()
++
++# Test with k parameter
++print("Test 2: partitions(6, k=2):")
++result = list(partitions(6, k=2))
++print(result)
++print()
++
++# Test with m parameter
++print("Test 3: partitions(6, m=2):")
++result = list(partitions(6, m=2))
++print(result)
++print()
++
++# Test with size=True
++print("Test 4: partitions(4, size=True):")
++result = list(partitions(4, size=True))
++print(result)
++print()
++
++# Test edge cases
++print("Test 5: Edge case partitions(0):")
++result = list(partitions(0))
++print(result)
++print()
++
++print("Test 6: Edge case partitions(1):")
++result = list(partitions(1))
++print(result)
++print()
++
++# Test that objects are different
++print("Test 7: Verify objects are different:")
++result = list(partitions(3))
++print(f"Result: {result}")
++print(f"Are objects different? {result[0] is not result[1] and result[1] is not result[2]}")
++print()
++
++# Test modification doesn't affect other results
++print("Test 8: Modifying one result doesn't affect others:")
++result = list(partitions(3))
++original = [dict(d) for d in result]  # Make copies for comparison
++result[0][999] = 'modified'
++print(f"Modified first dict: {result[0]}")
++print(f"Other dicts unchanged: {result[1:] == original[1:]}")
+diff --git a/test_performance.py b/test_performance.py
+new file mode 100644
+index 0000000000..949988fcd9
+--- /dev/null
++++ b/test_performance.py
+@@ -0,0 +1,26 @@
++import time
++from sympy.utilities.iterables import partitions
++
++# Test performance for a reasonably large n
++n = 20
++
++print(f"Testing performance for partitions({n})...")
++
++start = time.time()
++count = 0
++for p in partitions(n):
++    count += 1
++end = time.time()
++
++print(f"Generated {count} partitions in {end - start:.4f} seconds")
++
++# Test that we can collect them all
++start = time.time()
++all_partitions = list(partitions(n))
++end = time.time()
++
++print(f"Collected all {len(all_partitions)} partitions in a list in {end - start:.4f} seconds")
++
++# Verify they're all different objects
++print(f"First 5 partitions: {all_partitions[:5]}")
++print(f"All different objects? {all(all_partitions[0] is not all_partitions[i] for i in range(1, min(10, len(all_partitions))))}")

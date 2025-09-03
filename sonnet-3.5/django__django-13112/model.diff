@@ -1,0 +1,83 @@
+diff --git a/django/apps/registry.py b/django/apps/registry.py
+index 408964a146..1d6c9e36b5 100644
+--- a/django/apps/registry.py
++++ b/django/apps/registry.py
+@@ -152,11 +152,14 @@ class Apps:
+         """
+         self.check_apps_ready()
+         try:
+-            return self.app_configs[app_label]
+-        except KeyError:
++            return next(
++                app_config for app_config in self.app_configs.values()
++                if app_config.label.lower() == app_label.lower()
++            )
++        except StopIteration:
+             message = "No installed app with label '%s'." % app_label
+             for app_config in self.get_app_configs():
+-                if app_config.name == app_label:
++                if app_config.name.lower() == app_label.lower():
+                     message += " Did you mean '%s'?" % app_config.label
+                     break
+             raise LookupError(message)
+diff --git a/tests/apps/MixedCaseApp/apps.py b/tests/apps/MixedCaseApp/apps.py
+new file mode 100644
+index 0000000000..518486e5ec
+--- /dev/null
++++ b/tests/apps/MixedCaseApp/apps.py
+@@ -0,0 +1,5 @@
++from django.apps import AppConfig
++
++class MixedCaseAppConfig(AppConfig):
++    name = 'tests.apps.MixedCaseApp'
++    label = 'MixedCaseApp'
+diff --git a/tests/apps/MixedCaseApp/models.py b/tests/apps/MixedCaseApp/models.py
+new file mode 100644
+index 0000000000..cd1ad00668
+--- /dev/null
++++ b/tests/apps/MixedCaseApp/models.py
+@@ -0,0 +1,4 @@
++from django.db import models
++
++class SomeModel(models.Model):
++    name = models.CharField(max_length=100)
+diff --git a/tests/apps/test_mixed_case_app_labels.py b/tests/apps/test_mixed_case_app_labels.py
+new file mode 100644
+index 0000000000..6b1c75cd87
+--- /dev/null
++++ b/tests/apps/test_mixed_case_app_labels.py
+@@ -0,0 +1,34 @@
++from django.apps import apps
++from django.test import TestCase
++from django.test.utils import override_settings
++
++class MixedCaseAppLabelTests(TestCase):
++    @override_settings(INSTALLED_APPS=['django.contrib.auth', 'django.contrib.contenttypes', 'tests.apps.MixedCaseApp'])
++    def test_mixed_case_app_label(self):
++        apps.set_installed_apps(['django.contrib.auth', 'django.contrib.contenttypes', 'tests.apps.MixedCaseApp'])
++        
++        # Test with exact case
++        app_config = apps.get_app_config('MixedCaseApp')
++        self.assertEqual(app_config.label, 'MixedCaseApp')
++        
++        # Test with lowercase
++        app_config = apps.get_app_config('mixedcaseapp')
++        self.assertEqual(app_config.label, 'MixedCaseApp')
++        
++        # Test with uppercase
++        app_config = apps.get_app_config('MIXEDCASEAPP')
++        self.assertEqual(app_config.label, 'MixedCaseApp')
++        
++        # Test with mixed case
++        app_config = apps.get_app_config('mIxEdCaSeApP')
++        self.assertEqual(app_config.label, 'MixedCaseApp')
++
++    @override_settings(INSTALLED_APPS=['django.contrib.auth', 'django.contrib.contenttypes', 'tests.apps.MixedCaseApp'])
++    def test_foreign_key_with_mixed_case_app_label(self):
++        from django.db import models
++        
++        class TestModel(models.Model):
++            foreign_key = models.ForeignKey('MixedCaseApp.SomeModel', on_delete=models.CASCADE)
++        
++        # If this doesn't raise any exceptions, the test passes
++        TestModel._meta.get_field('foreign_key').remote_field.model

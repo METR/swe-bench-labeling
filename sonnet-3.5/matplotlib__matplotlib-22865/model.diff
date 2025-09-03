@@ -1,0 +1,20 @@
+diff --git a/lib/matplotlib/colorbar.py b/lib/matplotlib/colorbar.py
+index c59b0ac815..62ac10b548 100644
+--- a/lib/matplotlib/colorbar.py
++++ b/lib/matplotlib/colorbar.py
+@@ -648,6 +648,15 @@ class Colorbar:
+             self.solids = self.ax.pcolormesh(
+                 X, Y, C, cmap=self.cmap, norm=self.norm, alpha=self.alpha,
+                 edgecolors='none', shading='flat')
++
++        # Add edges at extremities when extend='both' and drawedges=True
++        if self.drawedges and self.extend in ['both', 'min', 'max']:
++            edgecolors = ['none'] * len(X)
++            if self.extend in ['both', 'min']:
++                edgecolors[0] = 'k'
++            if self.extend in ['both', 'max']:
++                edgecolors[-1] = 'k'
++            self.solids.set_edgecolors(edgecolors)
+             if not self.drawedges:
+                 if len(self._y) >= self.n_rasterize:
+                     self.solids.set_rasterized(True)

@@ -1,0 +1,55 @@
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 5f9fe73c5c..9ff15cde6f 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -659,12 +659,19 @@ class Max(MinMaxBase, Application):
+     If is not possible to determine such a relation, return a partially
+     evaluated result.
+ 
++    If called without arguments, it returns negative infinity (-oo).
++
+     Assumptions are used to make the decision too.
+ 
+     Also, only comparable arguments are permitted.
+ 
+     It is named ``Max`` and not ``max`` to avoid conflicts
+     with the built-in function ``max``.
++    @classmethod
++    def __new__(cls, *args, **options):
++        if not args:
++            return S.NegativeInfinity
++        return super(Max, cls).__new__(cls, *args, **options)
+ 
+ 
+     Examples
+@@ -768,6 +775,8 @@ class Min(MinMaxBase, Application):
+     It is named ``Min`` and not ``min`` to avoid conflicts
+     with the built-in function ``min``.
+ 
++    If called without arguments, it returns positive infinity (oo).
++
+     Examples
+     ========
+ 
+@@ -776,6 +785,8 @@ class Min(MinMaxBase, Application):
+     >>> p = Symbol('p', positive=True)
+     >>> n = Symbol('n', negative=True)
+ 
++    >>> Min()
++    oo
+     >>> Min(x, -2)                  #doctest: +SKIP
+     Min(x, -2)
+     >>> Min(x, -2).subs(x, 3)
+@@ -795,6 +806,12 @@ class Min(MinMaxBase, Application):
+     zero = S.NegativeInfinity
+     identity = S.Infinity
+ 
++    @classmethod
++    def __new__(cls, *args, **options):
++        if not args:
++            return S.Infinity
++        return super(Min, cls).__new__(cls, *args, **options)
++
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+         n = len(self.args)

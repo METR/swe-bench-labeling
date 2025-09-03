@@ -1,0 +1,39 @@
+From 10eafdac16c9d71761ab718aca45e5853440af65 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Bj=C3=B6rn=20Ingvar=20Dahlgren?= <bjodah@gmail.com>
+Date: Mon, 21 Mar 2022 08:16:13 +0100
+Subject: [PATCH] Fix lambdify for Tuple of length 1
+
+---
+ sympy/utilities/lambdify.py            | 4 ++--
+ sympy/utilities/tests/test_lambdify.py | 2 ++
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/sympy/utilities/lambdify.py b/sympy/utilities/lambdify.py
+index da67263b19d5..9634c5ecbd9b 100644
+--- a/sympy/utilities/lambdify.py
++++ b/sympy/utilities/lambdify.py
+@@ -956,9 +956,9 @@ def _recursive_to_string(doprint, arg):
+         return doprint(arg)
+     elif iterable(arg):
+         if isinstance(arg, list):
+-            left, right = "[]"
++            left, right = "[", "]"
+         elif isinstance(arg, tuple):
+-            left, right = "()"
++            left, right = "(", ",)"
+         else:
+             raise NotImplementedError("unhandled type: %s, %s" % (type(arg), arg))
+         return left +', '.join(_recursive_to_string(doprint, e) for e in arg) + right
+diff --git a/sympy/utilities/tests/test_lambdify.py b/sympy/utilities/tests/test_lambdify.py
+index 023c2fb55ab9..0e12d9d43c22 100644
+--- a/sympy/utilities/tests/test_lambdify.py
++++ b/sympy/utilities/tests/test_lambdify.py
+@@ -1192,6 +1192,8 @@ def test_issue_14941():
+     # test tuple
+     f2 = lambdify([x, y], (y, x), 'sympy')
+     assert f2(2, 3) == (3, 2)
++    f2b = lambdify([], (1,))  # gh-23224
++    assert f2b() == (1,)
+ 
+     # test list
+     f3 = lambdify([x, y], [y, x], 'sympy')

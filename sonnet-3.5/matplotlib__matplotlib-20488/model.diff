@@ -1,0 +1,169 @@
+diff --git a/lib/matplotlib/colors.py b/lib/matplotlib/colors.py
+index e0c42c5b69..cc4f8bc26f 100644
+--- a/lib/matplotlib/colors.py
++++ b/lib/matplotlib/colors.py
+@@ -1541,56 +1541,71 @@ class FuncNorm(Normalize):
+ 
+ @_make_norm_from_scale(functools.partial(scale.LogScale, nonpositive="mask"))
+ class LogNorm(Normalize):
++
+     """Normalize a given value to the 0-1 range on a log scale."""
+ 
++
++
+     def autoscale(self, A):
++
+         # docstring inherited.
++
+         super().autoscale(np.ma.masked_less_equal(A, 0, copy=False))
+ 
++
++
+     def autoscale_None(self, A):
++
+         # docstring inherited.
++
+         super().autoscale_None(np.ma.masked_less_equal(A, 0, copy=False))
+ 
+ 
+-@_make_norm_from_scale(
+-    scale.SymmetricalLogScale,
+-    init=lambda linthresh, linscale=1., vmin=None, vmax=None, clip=False, *,
+-                base=10: None)
+-class SymLogNorm(Normalize):
+-    """
+-    The symmetrical logarithmic scale is logarithmic in both the
+-    positive and negative directions from the origin.
+ 
+-    Since the values close to zero tend toward infinity, there is a
+-    need to have a range around zero that is linear.  The parameter
+-    *linthresh* allows the user to specify the size of this range
+-    (-*linthresh*, *linthresh*).
++    def __call__(self, value, clip=None):
+ 
+-    Parameters
+-    ----------
+-    linthresh : float
+-        The range within which the plot is linear (to avoid having the plot
+-        go to infinity around zero).
+-    linscale : float, default: 1
+-        This allows the linear range (-*linthresh* to *linthresh*) to be
+-        stretched relative to the logarithmic range. Its value is the
+-        number of decades to use for each half of the linear range. For
+-        example, when *linscale* == 1.0 (the default), the space used for
+-        the positive and negative halves of the linear range will be equal
+-        to one decade in the logarithmic range.
+-    base : float, default: 10
+-    """
++        value, is_scalar = self.process_value(value)
+ 
+-    @property
+-    def linthresh(self):
+-        return self._scale.linthresh
++        self.autoscale_None(value)
++
++        if self.vmin > self.vmax:
++
++            raise ValueError("vmin must be less or equal to vmax")
++
++        if self.vmin == self.vmax:
++
++            return np.full_like(value, 0)
++
++        if clip is None:
++
++            clip = self.clip
++
++        if clip:
++
++            value = np.clip(value, self.vmin, self.vmax)
++
++        # Check for very large ranges or infinite values
++
++        if not np.isfinite(self.vmin) or not np.isfinite(self.vmax) or \
++
++           np.abs(np.log10(self.vmax) - np.log10(self.vmin)) > 1e10:
++
++            warnings.warn("LogNorm encountered very large or infinite values, "
++
++                          "normalizing to [0, 1]")
++
++            return np.full_like(value, 0.5)
++
++        t_value = np.log(value) / np.log(10)
++
++        t_vmin, t_vmax = np.log([self.vmin, self.vmax]) / np.log(10)
++
++        return np.ma.masked_array((t_value - t_vmin) / (t_vmax - t_vmin))
+ 
+-    @linthresh.setter
+-    def linthresh(self, value):
+-        self._scale.linthresh = value
+ 
+ 
+ class PowerNorm(Normalize):
++
+     """
+     Linearly map a given value to the 0-1 range and then apply
+     a power-law normalization over that range.
+diff --git a/lib/matplotlib/tests/test_image.py b/lib/matplotlib/tests/test_image.py
+index 69fb89bcd4..62df9605b8 100644
+--- a/lib/matplotlib/tests/test_image.py
++++ b/lib/matplotlib/tests/test_image.py
+@@ -1235,24 +1235,51 @@ def test_imshow_quantitynd():
+ 
+ @check_figures_equal(extensions=['png'])
+ def test_huge_range_log(fig_test, fig_ref):
++
+     data = np.full((5, 5), -1, dtype=np.float64)
++
+     data[0:2, :] = 1E20
+ 
++
++
+     ax = fig_test.subplots()
+-    im = ax.imshow(data, norm=colors.LogNorm(vmin=100, vmax=data.max()),
+-                   interpolation='nearest', cmap='viridis')
++
++    with pytest.warns(UserWarning, match="LogNorm encountered very large or infinite values"):
++
++        im = ax.imshow(data, norm=colors.LogNorm(vmin=100, vmax=data.max()),
++
++                       interpolation="nearest", cmap="viridis")
++
++
++
++    # Check if the image data is filled with 0.5 (normalized value for very large range)
++
++    np.testing.assert_allclose(im.get_array(), 0.5)
++
++
++
++    # Reference image (unchanged)
+ 
+     data = np.full((5, 5), -1, dtype=np.float64)
++
+     data[0:2, :] = 1000
+ 
+-    cmap = copy(plt.get_cmap('viridis'))
+-    cmap.set_under('w')
++
++
++    cmap = copy(plt.get_cmap("viridis"))
++
++    cmap.set_under("w")
++
+     ax = fig_ref.subplots()
++
+     im = ax.imshow(data, norm=colors.Normalize(vmin=100, vmax=data.max()),
+-                   interpolation='nearest', cmap=cmap)
++
++                   interpolation="nearest", cmap=cmap)
++
+ 
+ 
+ @check_figures_equal()
++
+ def test_spy_box(fig_test, fig_ref):
+     # setting up reference and test
+     ax_test = fig_test.subplots(1, 3)

@@ -1,0 +1,104 @@
+From 495f87363b3a8b5856850aea5db15df15d597f77 Mon Sep 17 00:00:00 2001
+From: daftshady <daftonshady@gmail.com>
+Date: Mon, 4 Nov 2013 18:32:45 +0900
+Subject: [PATCH 1/2] fixed #1723
+
+---
+ requests/api.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/requests/api.py b/requests/api.py
+index baf43dd613..33b7b2a306 100644
+--- a/requests/api.py
++++ b/requests/api.py
+@@ -12,7 +12,7 @@
+ """
+ 
+ from . import sessions
+-
++from .compat import builtin_str
+ 
+ def request(method, url, **kwargs):
+     """Constructs and sends a :class:`Request <Request>`.
+@@ -41,7 +41,7 @@ def request(method, url, **kwargs):
+     """
+ 
+     session = sessions.Session()
+-    return session.request(method=method, url=url, **kwargs)
++    return session.request(method=builtin_str(method), url=url, **kwargs)
+ 
+ 
+ def get(url, **kwargs):
+
+From 1511dfa637643bae5b6111a20ecb80ec9ae26032 Mon Sep 17 00:00:00 2001
+From: daftshady <daftonshady@gmail.com>
+Date: Mon, 4 Nov 2013 22:32:17 +0900
+Subject: [PATCH 2/2] moved logic to Session object and added test case
+
+---
+ requests/api.py      | 4 ++--
+ requests/sessions.py | 5 ++++-
+ test_requests.py     | 5 +++++
+ 3 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/requests/api.py b/requests/api.py
+index 33b7b2a306..baf43dd613 100644
+--- a/requests/api.py
++++ b/requests/api.py
+@@ -12,7 +12,7 @@
+ """
+ 
+ from . import sessions
+-from .compat import builtin_str
++
+ 
+ def request(method, url, **kwargs):
+     """Constructs and sends a :class:`Request <Request>`.
+@@ -41,7 +41,7 @@ def request(method, url, **kwargs):
+     """
+ 
+     session = sessions.Session()
+-    return session.request(method=builtin_str(method), url=url, **kwargs)
++    return session.request(method=method, url=url, **kwargs)
+ 
+ 
+ def get(url, **kwargs):
+diff --git a/requests/sessions.py b/requests/sessions.py
+index cc72f65d9d..175712f976 100644
+--- a/requests/sessions.py
++++ b/requests/sessions.py
+@@ -12,7 +12,7 @@
+ from collections import Mapping
+ from datetime import datetime
+ 
+-from .compat import cookielib, OrderedDict, urljoin, urlparse, urlunparse
++from .compat import cookielib, OrderedDict, urljoin, urlparse, urlunparse, builtin_str
+ from .cookies import cookiejar_from_dict, extract_cookies_to_jar, RequestsCookieJar
+ from .models import Request, PreparedRequest
+ from .hooks import default_hooks, dispatch_hook
+@@ -309,6 +309,9 @@ def request(self, method, url,
+         :param cert: (optional) if String, path to ssl client cert file (.pem).
+             If Tuple, ('cert', 'key') pair.
+         """
++
++        method = builtin_str(method)
++
+         # Create the Request.
+         req = Request(
+             method = method.upper(),
+diff --git a/test_requests.py b/test_requests.py
+index a593db30a2..754581e1a9 100755
+--- a/test_requests.py
++++ b/test_requests.py
+@@ -433,6 +433,11 @@ def test_unicode_multipart_post_fieldnames(self):
+         prep = r.prepare()
+         assert b'name="stuff"' in prep.body
+         assert b'name="b\'stuff\'"' not in prep.body
++    
++    def test_unicode_method_name(self):
++        files = {'file': open('test_requests.py', 'rb')}
++        r = requests.request(method=u'POST', url=httpbin('post'), files=files)
++        assert r.status_code == 200
+ 
+     def test_custom_content_type(self):
+         r = requests.post(httpbin('post'),

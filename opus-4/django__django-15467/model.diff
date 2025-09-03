@@ -1,0 +1,363 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 64be087bf1..8990e95717 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -269,7 +269,7 @@ class BaseModelAdmin(metaclass=forms.MediaDefiningClass):
+                         "class": get_ul_class(self.radio_fields[db_field.name]),
+                     }
+                 )
+-                kwargs["empty_label"] = _("None") if db_field.blank else None
++                kwargs["empty_label"] = (kwargs.get('empty_label') or _("None")) if db_field.blank else None
+ 
+         if "queryset" not in kwargs:
+             queryset = self.get_field_queryset(db, db_field, request)
+diff --git a/test_comprehensive_radio_fields.py b/test_comprehensive_radio_fields.py
+new file mode 100644
+index 0000000000..e23ee906fc
+--- /dev/null
++++ b/test_comprehensive_radio_fields.py
+@@ -0,0 +1,105 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.contrib import admin
++from django.test import TestCase, RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.utils.translation import gettext_lazy as _
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'django.contrib.messages',
++            'django.contrib.sessions',
++        ],
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++    django.setup()
++
++# Define test models
++class RelatedModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class TestModel(models.Model):
++    blank_field = models.ForeignKey(RelatedModel, on_delete=models.CASCADE, blank=True, null=True, related_name='blank_rel')
++    required_field = models.ForeignKey(RelatedModel, on_delete=models.CASCADE, related_name='required_rel')
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test 1: Custom empty label with blank field
++class CustomEmptyLabelAdmin(admin.ModelAdmin):
++    radio_fields = {'blank_field': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'blank_field':
++            kwargs['empty_label'] = "CUSTOM EMPTY LABEL"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++# Test 2: Default behavior with blank field (no custom empty_label)
++class DefaultBlankAdmin(admin.ModelAdmin):
++    radio_fields = {'blank_field': admin.HORIZONTAL}
++
++# Test 3: Required field (should have None as empty_label)
++class RequiredFieldAdmin(admin.ModelAdmin):
++    radio_fields = {'required_field': admin.HORIZONTAL}
++
++# Test 4: Custom empty label on required field (should be ignored)
++class CustomEmptyLabelRequiredAdmin(admin.ModelAdmin):
++    radio_fields = {'required_field': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'required_field':
++            kwargs['empty_label'] = "THIS SHOULD BE IGNORED"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++def run_tests():
++    site = AdminSite()
++    request = RequestFactory().get('/')
++    
++    print("Test 1: Custom empty label with blank field")
++    admin1 = CustomEmptyLabelAdmin(TestModel, site)
++    field1 = admin1.formfield_for_foreignkey(TestModel._meta.get_field('blank_field'), request)
++    assert field1.empty_label == "CUSTOM EMPTY LABEL", f"Expected 'CUSTOM EMPTY LABEL' but got '{field1.empty_label}'"
++    print(f"✓ Custom empty label preserved: '{field1.empty_label}'")
++    
++    print("\nTest 2: Default behavior with blank field")
++    admin2 = DefaultBlankAdmin(TestModel, site)
++    field2 = admin2.formfield_for_foreignkey(TestModel._meta.get_field('blank_field'), request)
++    assert field2.empty_label == _("None"), f"Expected translated 'None' but got '{field2.empty_label}'"
++    print(f"✓ Default empty label used: '{field2.empty_label}'")
++    
++    print("\nTest 3: Required field (should have None as empty_label)")
++    admin3 = RequiredFieldAdmin(TestModel, site)
++    field3 = admin3.formfield_for_foreignkey(TestModel._meta.get_field('required_field'), request)
++    assert field3.empty_label is None, f"Expected None but got '{field3.empty_label}'"
++    print(f"✓ Required field has None empty_label: {field3.empty_label}")
++    
++    print("\nTest 4: Custom empty label on required field (should be ignored)")
++    admin4 = CustomEmptyLabelRequiredAdmin(TestModel, site)
++    field4 = admin4.formfield_for_foreignkey(TestModel._meta.get_field('required_field'), request)
++    assert field4.empty_label is None, f"Expected None but got '{field4.empty_label}'"
++    print(f"✓ Custom empty label correctly ignored for required field: {field4.empty_label}")
++    
++    print("\nAll tests passed!")
++
++if __name__ == '__main__':
++    run_tests()
+diff --git a/test_django_models_corrected.py b/test_django_models_corrected.py
+new file mode 100644
+index 0000000000..61d5e1e610
+--- /dev/null
++++ b/test_django_models_corrected.py
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add tests directory to path  
++sys.path.insert(0, '/testbed/tests')
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_sqlite')
++
++# Import after settings configured
++from django.contrib import admin
++from django.test import RequestFactory
++from django.contrib.admin.sites import AdminSite
++
++# Initialize Django
++django.setup()
++
++# Import the test models
++from admin_widgets.models import Event, Band, Inventory
++
++# Test with a blank field
++class InventoryAdmin(admin.ModelAdmin):
++    radio_fields = {'parent': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'parent':
++            kwargs['empty_label'] = "MY CUSTOM LABEL FOR PARENT"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++# Test with a non-blank field
++class EventAdmin(admin.ModelAdmin):
++    radio_fields = {'main_band': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'main_band':
++            kwargs['empty_label'] = "THIS SHOULD BE IGNORED"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++def test_with_django_models():
++    site = AdminSite()
++    request = RequestFactory().get('/')
++    
++    # Check Inventory model - parent field is blank=True
++    inventory_admin = InventoryAdmin(Inventory, site)
++    parent_field = Inventory._meta.get_field('parent')
++    print(f"Inventory.parent field blank={parent_field.blank}")
++    
++    form_field = inventory_admin.formfield_for_foreignkey(parent_field, request)
++    print(f"Inventory.parent empty_label: '{form_field.empty_label}'")
++    assert form_field.empty_label == "MY CUSTOM LABEL FOR PARENT", \
++        f"Expected 'MY CUSTOM LABEL FOR PARENT' but got '{form_field.empty_label}'"
++    print("✓ Custom empty label preserved for blank field")
++    
++    # Check Event model - main_band field is required (not blank)
++    event_admin = EventAdmin(Event, site)
++    main_band_field = Event._meta.get_field('main_band')
++    print(f"\nEvent.main_band field blank={main_band_field.blank}")
++    
++    form_field = event_admin.formfield_for_foreignkey(main_band_field, request)
++    print(f"Event.main_band empty_label: {form_field.empty_label}")
++    assert form_field.empty_label is None, \
++        f"Expected None but got '{form_field.empty_label}'"
++    print("✓ Custom empty label correctly ignored for required field")
++    
++    print("\nAll tests with Django models passed!")
++
++if __name__ == '__main__':
++    test_with_django_models()
+diff --git a/test_django_models_radio_fields.py b/test_django_models_radio_fields.py
+new file mode 100644
+index 0000000000..0d47e62e66
+--- /dev/null
++++ b/test_django_models_radio_fields.py
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add tests directory to path  
++sys.path.insert(0, '/testbed/tests')
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_sqlite')
++
++# Import after settings configured
++from django.contrib import admin
++from django.test import RequestFactory
++from django.contrib.admin.sites import AdminSite
++
++# Initialize Django
++django.setup()
++
++# Import the test models
++from admin_widgets.models import Event, Band, Album
++
++# Test with a blank field
++class AlbumAdmin(admin.ModelAdmin):
++    radio_fields = {'band': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'band':
++            kwargs['empty_label'] = "MY CUSTOM LABEL FOR BAND"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++# Test with a non-blank field
++class EventAdmin(admin.ModelAdmin):
++    radio_fields = {'main_band': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'main_band':
++            kwargs['empty_label'] = "THIS SHOULD BE IGNORED"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++def test_with_django_models():
++    site = AdminSite()
++    request = RequestFactory().get('/')
++    
++    # Check Album model - band field is blank=True
++    album_admin = AlbumAdmin(Album, site)
++    band_field = Album._meta.get_field('band')
++    print(f"Album.band field blank={band_field.blank}")
++    
++    form_field = album_admin.formfield_for_foreignkey(band_field, request)
++    print(f"Album.band empty_label: '{form_field.empty_label}'")
++    assert form_field.empty_label == "MY CUSTOM LABEL FOR BAND", \
++        f"Expected 'MY CUSTOM LABEL FOR BAND' but got '{form_field.empty_label}'"
++    print("✓ Custom empty label preserved for blank field")
++    
++    # Check Event model - main_band field is required (not blank)
++    event_admin = EventAdmin(Event, site)
++    main_band_field = Event._meta.get_field('main_band')
++    print(f"\nEvent.main_band field blank={main_band_field.blank}")
++    
++    form_field = event_admin.formfield_for_foreignkey(main_band_field, request)
++    print(f"Event.main_band empty_label: {form_field.empty_label}")
++    assert form_field.empty_label is None, \
++        f"Expected None but got '{form_field.empty_label}'"
++    print("✓ Custom empty label correctly ignored for required field")
++    
++    print("\nAll tests with Django models passed!")
++
++if __name__ == '__main__':
++    test_with_django_models()
+diff --git a/test_radio_fields_empty_label.py b/test_radio_fields_empty_label.py
+new file mode 100644
+index 0000000000..dd72fd7a9c
+--- /dev/null
++++ b/test_radio_fields_empty_label.py
+@@ -0,0 +1,79 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.contrib import admin
++from django.test import TestCase, RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.utils.translation import gettext_lazy as _
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'django.contrib.messages',
++            'django.contrib.sessions',
++        ],
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++    django.setup()
++
++# Define test models
++class RelatedModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class TestModel(models.Model):
++    myfield = models.ForeignKey(RelatedModel, on_delete=models.CASCADE, blank=True, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Define ModelAdmin with radio_fields
++class TestModelAdmin(admin.ModelAdmin):
++    radio_fields = {'myfield': admin.HORIZONTAL}
++    
++    def formfield_for_foreignkey(self, db_field, request=None, **kwargs):
++        if db_field.name == 'myfield':
++            kwargs['empty_label'] = "I WANT TO SET MY OWN EMPTY LABEL"
++        return super().formfield_for_foreignkey(db_field, request, **kwargs)
++
++# Test the issue
++def test_custom_empty_label():
++    site = AdminSite()
++    model_admin = TestModelAdmin(TestModel, site)
++    request = RequestFactory().get('/')
++    
++    # Get the db_field
++    db_field = TestModel._meta.get_field('myfield')
++    
++    # Get the form field
++    form_field = model_admin.formfield_for_foreignkey(db_field, request)
++    
++    # Check the empty_label
++    print(f"Empty label: {form_field.empty_label}")
++    print(f"Expected: 'I WANT TO SET MY OWN EMPTY LABEL'")
++    print(f"Actual: {form_field.empty_label}")
++    
++    # This should be True but currently it's False due to the bug
++    assert form_field.empty_label == "I WANT TO SET MY OWN EMPTY LABEL", \
++        f"Expected 'I WANT TO SET MY OWN EMPTY LABEL' but got '{form_field.empty_label}'"
++
++if __name__ == '__main__':
++    test_custom_empty_label()
++    print("Test passed!")

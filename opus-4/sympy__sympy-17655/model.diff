@@ -1,0 +1,222 @@
+diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
+index 7c978c47be..39bf3971cf 100644
+--- a/sympy/geometry/point.py
++++ b/sympy/geometry/point.py
+@@ -104,6 +104,7 @@ class Point(GeometryEntity):
+     """
+ 
+     is_Point = True
++    _op_priority = 11.0  # higher than Expr's priority (10.0) to handle multiplication
+ 
+     def __new__(cls, *args, **kwargs):
+         evaluate = kwargs.get('evaluate', global_evaluate[0])
+@@ -278,6 +279,19 @@ def __mul__(self, factor):
+         coords = [simplify(x*factor) for x in self.args]
+         return Point(coords, evaluate=False)
+ 
++    def __rmul__(self, factor):
++        """Right multiplication for factor * point.
++        
++        This method is called when a non-Point object is multiplied by a Point
++        from the left side (e.g., 2 * Point(1, 1)).
++        
++        See Also
++        ========
++        
++        sympy.geometry.point.Point.__mul__
++        """
++        return self.__mul__(factor)
++
+     def __neg__(self):
+         """Negate the point."""
+         coords = [-x for x in self.args]
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..34c3f17615
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,65 @@
++from sympy import geometry as ge
++import sympy
++from sympy import S, Symbol
++
++# Test different types of multiplication
++point = ge.Point(1, 2, 3)
++point2d = ge.Point(1, 2)
++
++# Test with different numeric types
++print("=== Testing multiplication with different numeric types ===")
++print(f"point * 2 = {point * 2}")
++print(f"2 * point = {2 * point}")
++print(f"point * 2.0 = {point * 2.0}")
++print(f"2.0 * point = {2.0 * point}")
++print(f"point * sympy.S(2) = {point * sympy.S(2)}")
++print(f"sympy.S(2) * point = {sympy.S(2) * point}")
++print(f"point * sympy.Float(2.5) = {point * sympy.Float(2.5)}")
++print(f"sympy.Float(2.5) * point = {sympy.Float(2.5) * point}")
++print(f"point * sympy.Rational(3, 2) = {point * sympy.Rational(3, 2)}")
++print(f"sympy.Rational(3, 2) * point = {sympy.Rational(3, 2) * point}")
++
++# Test with symbols
++x = Symbol('x')
++print(f"\npoint * x = {point * x}")
++print(f"x * point = {x * point}")
++
++# Test division (should work via __mul__ and Pow)
++print(f"\n=== Testing division ===")
++print(f"point / 2 = {point / 2}")
++
++# Test __rmul__ is still called correctly for non-Point objects
++class CustomClass:
++    def __mul__(self, other):
++        return f"CustomClass.__mul__ called with {other}"
++    
++    def __rmul__(self, other):
++        return f"CustomClass.__rmul__ called with {other}"
++
++custom = CustomClass()
++print(f"\n=== Testing with custom class ===")
++print(f"point * custom = {point * custom}")
++
++# Test the original issue case
++print(f"\n=== Testing original issue ===")
++point1 = ge.Point(0,0)
++point2 = ge.Point(1,1)
++result1 = point1 + point2 * sympy.sympify(2.0)
++result2 = point1 + sympy.sympify(2.0) * point2
++print(f"point1 + point2 * sympy.sympify(2.0) = {result1}")
++print(f"point1 + sympy.sympify(2.0) * point2 = {result2}")
++print(f"Results are equal: {result1 == result2}")
++
++# Test that Point methods still work
++print(f"\n=== Testing Point methods ===")
++p1 = ge.Point(0, 0)
++p2 = ge.Point(3, 4)
++print(f"p1.distance(p2) = {p1.distance(p2)}")
++print(f"p1.midpoint(p2) = {p1.midpoint(p2)}")
++
++# Test Point2D and Point3D specific behavior
++print(f"\n=== Testing Point2D and Point3D ===")
++p2d = ge.Point2D(1, 2)
++p3d = ge.Point3D(1, 2, 3)
++print(f"2 * Point2D(1, 2) = {2 * p2d}, type: {type(2 * p2d)}")
++print(f"2 * Point3D(1, 2, 3) = {2 * p3d}, type: {type(2 * p3d)}")
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..abbe552732
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,23 @@
++from sympy import geometry as ge
++import sympy
++
++point2 = ge.Point(1, 1)
++factor = sympy.sympify(2.0)
++
++# Check types
++print(f"Type of factor: {type(factor)}")
++print(f"Type of point2: {type(point2)}")
++
++# Try multiplication
++result = factor * point2
++print(f"\nResult of {factor} * {point2} = {result}")
++print(f"Type of result: {type(result)}")
++
++# Check if our __rmul__ is being called
++print(f"\nHas __rmul__: {hasattr(point2, '__rmul__')}")
++
++# Check what happens when we explicitly call __rmul__
++if hasattr(point2, '__rmul__'):
++    explicit_result = point2.__rmul__(factor)
++    print(f"Explicit __rmul__ result: {explicit_result}")
++    print(f"Type: {type(explicit_result)}")
+diff --git a/test_final.py b/test_final.py
+new file mode 100644
+index 0000000000..06cb32fb2a
+--- /dev/null
++++ b/test_final.py
+@@ -0,0 +1,44 @@
++"""
++Test script to verify the fix for the issue:
++"Unexpected exception when multiplying geometry.Point and number"
++
++The issue was that point1 + sympy.sympify(2.0) * point2 raised an exception
++while point1 + point2 * sympy.sympify(2.0) worked fine.
++"""
++
++from sympy import geometry as ge
++import sympy
++
++def test_point_multiplication_fix():
++    """Test that both orderings of multiplication work correctly."""
++    point1 = ge.Point(0, 0)
++    point2 = ge.Point(1, 1)
++    
++    # These should both work and give the same result
++    result1 = point1 + point2 * sympy.sympify(2.0)
++    result2 = point1 + sympy.sympify(2.0) * point2
++    
++    assert result1 == result2 == ge.Point(2.0, 2.0)
++    assert isinstance(result1, ge.Point2D)
++    assert isinstance(result2, ge.Point2D)
++    
++    # Test with different numeric types
++    for factor in [2, 2.0, sympy.S(2), sympy.Float(2.0), sympy.Rational(2, 1)]:
++        r1 = point2 * factor
++        r2 = factor * point2
++        assert r1 == r2 == ge.Point(2, 2)
++        assert isinstance(r1, ge.Point)
++        assert isinstance(r2, ge.Point)
++    
++    # Test with 3D points
++    p3d = ge.Point(1, 2, 3)
++    assert 2 * p3d == p3d * 2 == ge.Point(2, 4, 6)
++    
++    # Test with symbols  
++    x = sympy.Symbol('x')
++    assert x * point2 == point2 * x == ge.Point(x, x)
++    
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_point_multiplication_fix()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..6771d10051
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,34 @@
++from sympy import geometry as ge
++import sympy
++
++# Test case from the issue
++point1 = ge.Point(0, 0)
++point2 = ge.Point(1, 1)
++
++print("Test 1: point1 + point2 * sympy.sympify(2.0)")
++try:
++    result1 = point1 + point2 * sympy.sympify(2.0)
++    print(f"Result: {result1}")
++    print(f"Type: {type(result1)}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: point1 + sympy.sympify(2.0) * point2")
++try:
++    result2 = point1 + sympy.sympify(2.0) * point2
++    print(f"Result: {result2}")
++    print(f"Type: {type(result2)}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: Direct multiplication")
++print(f"point2 * 2.0 = {point2 * 2.0}")
++print(f"Type: {type(point2 * 2.0)}")
++try:
++    result = 2.0 * point2
++    print(f"2.0 * point2 = {result}")
++    print(f"Type: {type(result)}")
++except TypeError as e:
++    print(f"2.0 * point2 raises TypeError: {e}")
++    print(f"sympy.sympify(2.0) * point2 = {sympy.sympify(2.0) * point2}")
++    print(f"Type: {type(sympy.sympify(2.0) * point2)}")

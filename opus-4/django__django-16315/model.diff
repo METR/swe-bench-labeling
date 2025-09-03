@@ -1,0 +1,306 @@
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index 76ca815765..fe58588d86 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -449,10 +449,22 @@ class DatabaseOperations(BaseDatabaseOperations):
+             else:
+                 field_sql = "%(field)s = VALUE(%(field)s)"
+ 
++            # Create a mapping from field names to field objects
++            field_map = {f.name: f for f in fields}
++            
++            # Map field names to database column names
++            update_columns = []
++            for field_name in update_fields:
++                field = field_map.get(field_name)
++                if field:
++                    update_columns.append(field.column)
++                else:
++                    update_columns.append(field_name)
++            
+             fields = ", ".join(
+                 [
+-                    field_sql % {"field": field}
+-                    for field in map(self.quote_name, update_fields)
++                    field_sql % {"field": self.quote_name(column)}
++                    for column in update_columns
+                 ]
+             )
+             return conflict_suffix_sql % {"fields": fields}
+diff --git a/django/db/backends/postgresql/operations.py b/django/db/backends/postgresql/operations.py
+index 62273fc43c..4e2fa670f1 100644
+--- a/django/db/backends/postgresql/operations.py
++++ b/django/db/backends/postgresql/operations.py
+@@ -353,12 +353,32 @@ class DatabaseOperations(BaseDatabaseOperations):
+         if on_conflict == OnConflict.IGNORE:
+             return "ON CONFLICT DO NOTHING"
+         if on_conflict == OnConflict.UPDATE:
++            # Create a mapping from field names to field objects
++            field_map = {f.name: f for f in fields}
++            
++            # Map field names to database column names
++            unique_columns = []
++            for field_name in unique_fields:
++                field = field_map.get(field_name)
++                if field:
++                    unique_columns.append(field.column)
++                else:
++                    unique_columns.append(field_name)
++            
++            update_columns = []
++            for field_name in update_fields:
++                field = field_map.get(field_name)
++                if field:
++                    update_columns.append(field.column)
++                else:
++                    update_columns.append(field_name)
++            
+             return "ON CONFLICT(%s) DO UPDATE SET %s" % (
+-                ", ".join(map(self.quote_name, unique_fields)),
++                ", ".join(map(self.quote_name, unique_columns)),
+                 ", ".join(
+                     [
+-                        f"{field} = EXCLUDED.{field}"
+-                        for field in map(self.quote_name, update_fields)
++                        f"{self.quote_name(column)} = EXCLUDED.{self.quote_name(column)}"
++                        for column in update_columns
+                     ]
+                 ),
+             )
+diff --git a/django/db/backends/sqlite3/operations.py b/django/db/backends/sqlite3/operations.py
+index bb84d52071..ca1cd5adea 100644
+--- a/django/db/backends/sqlite3/operations.py
++++ b/django/db/backends/sqlite3/operations.py
+@@ -417,12 +417,32 @@ class DatabaseOperations(BaseDatabaseOperations):
+             on_conflict == OnConflict.UPDATE
+             and self.connection.features.supports_update_conflicts_with_target
+         ):
++            # Create a mapping from field names to field objects
++            field_map = {f.name: f for f in fields}
++            
++            # Map field names to database column names
++            unique_columns = []
++            for field_name in unique_fields:
++                field = field_map.get(field_name)
++                if field:
++                    unique_columns.append(field.column)
++                else:
++                    unique_columns.append(field_name)
++            
++            update_columns = []
++            for field_name in update_fields:
++                field = field_map.get(field_name)
++                if field:
++                    update_columns.append(field.column)
++                else:
++                    update_columns.append(field_name)
++            
+             return "ON CONFLICT(%s) DO UPDATE SET %s" % (
+-                ", ".join(map(self.quote_name, unique_fields)),
++                ", ".join(map(self.quote_name, unique_columns)),
+                 ", ".join(
+                     [
+-                        f"{field} = EXCLUDED.{field}"
+-                        for field in map(self.quote_name, update_fields)
++                        f"{self.quote_name(column)} = EXCLUDED.{self.quote_name(column)}"
++                        for column in update_columns
+                     ]
+                 ),
+             )
+diff --git a/test_bulk_create_db_column.py b/test_bulk_create_db_column.py
+new file mode 100644
+index 0000000000..1a501cc272
+--- /dev/null
++++ b/test_bulk_create_db_column.py
+@@ -0,0 +1,72 @@
++import os
++import django
++from django.db import models, connection
++from django.db.models import IntegerField
++
++# Configure Django settings
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++from django.conf import settings
++
++# Configure the database to use SQLite
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Define the model with db_column
++class ActivityBlackListed(models.Model):
++    class Meta:
++        db_table = "Activity_BlackListed"
++        app_label = 'test_app'
++    
++    blacklistid = models.IntegerField(primary_key=True, db_column="BlacklistID")
++    sectorid = models.IntegerField(null=True, blank=True, db_column="SectorID")
++    
++    def __str__(self):
++        return f"ActivityBlackListed(blacklistid={self.blacklistid}, sectorid={self.sectorid})"
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(ActivityBlackListed)
++
++# Test bulk_create with update_conflicts
++instances = [
++    ActivityBlackListed(blacklistid=1, sectorid=10),
++    ActivityBlackListed(blacklistid=2, sectorid=20),
++]
++
++# This should work - initial creation
++ActivityBlackListed.objects.bulk_create(instances)
++print("Initial bulk_create successful")
++
++# Now test with conflicts - update existing records
++instances = [
++    ActivityBlackListed(blacklistid=1, sectorid=100),  # Changed sectorid
++    ActivityBlackListed(blacklistid=2, sectorid=200),  # Changed sectorid
++]
++
++try:
++    # This should fail with the bug
++    ActivityBlackListed.objects.bulk_create(
++        instances, 
++        update_conflicts=True, 
++        update_fields=["sectorid"], 
++        unique_fields=["blacklistid"]
++    )
++    print("bulk_create with update_conflicts successful")
++except Exception as e:
++    print(f"Error occurred: {e}")
++    print(f"Error type: {type(e)}")
+diff --git a/test_postgres_bulk_create.py b/test_postgres_bulk_create.py
+new file mode 100644
+index 0000000000..83165931f9
+--- /dev/null
++++ b/test_postgres_bulk_create.py
+@@ -0,0 +1,113 @@
++# Test the fix without needing actual database connection
++from django.db.models.enums import OnConflict
++from django.db.models import Model, IntegerField
++
++# Create a mock model with db_column set
++class ActivityBlackListed(Model):
++    class Meta:
++        db_table = "Activity_BlackListed"
++        app_label = 'test_app'
++    
++    blacklistid = IntegerField(primary_key=True, db_column="BlacklistID")
++    sectorid = IntegerField(null=True, blank=True, db_column="SectorID")
++    
++# Create mock field objects
++blacklistid_field = type('Field', (), {'name': 'blacklistid', 'column': 'BlacklistID'})()
++sectorid_field = type('Field', (), {'name': 'sectorid', 'column': 'SectorID'})()
++
++fields = [blacklistid_field, sectorid_field]
++update_fields = ['sectorid']
++unique_fields = ['blacklistid']
++
++# Test PostgreSQL implementation
++print("Testing PostgreSQL implementation...")
++from django.db.backends.postgresql.operations import DatabaseOperations
++
++# Create a mock connection with quote_name method
++class MockConnection:
++    class ops:
++        @staticmethod
++        def quote_name(name):
++            return f'"{name}"'
++
++ops = DatabaseOperations(MockConnection())
++
++sql = ops.on_conflict_suffix_sql(
++    fields,
++    OnConflict.UPDATE,
++    update_fields,
++    unique_fields
++)
++
++print("Generated SQL:", sql)
++
++# Check if the SQL uses the correct column names
++if '"BlacklistID"' in sql and '"SectorID"' in sql:
++    print("✓ SUCCESS: PostgreSQL correctly uses the db_column names!")
++else:
++    print("✗ FAILURE: PostgreSQL is still using field names instead of db_column names")
++    print("Expected to see 'BlacklistID' and 'SectorID' in the SQL")
++
++# Test SQLite implementation
++print("\nTesting SQLite implementation...")
++from django.db.backends.sqlite3.operations import DatabaseOperations as SQLiteOperations
++
++# Create a mock connection with features
++class MockSQLiteConnection:
++    class ops:
++        @staticmethod
++        def quote_name(name):
++            return f'"{name}"'
++    
++    class features:
++        supports_update_conflicts_with_target = True
++
++sqlite_ops = SQLiteOperations(MockSQLiteConnection())
++
++sql = sqlite_ops.on_conflict_suffix_sql(
++    fields,
++    OnConflict.UPDATE,
++    update_fields,
++    unique_fields
++)
++
++print("Generated SQL:", sql)
++
++# Check if the SQL uses the correct column names
++if '"BlacklistID"' in sql and '"SectorID"' in sql:
++    print("✓ SUCCESS: SQLite correctly uses the db_column names!")
++else:
++    print("✗ FAILURE: SQLite is still using field names instead of db_column names")
++    print("Expected to see 'BlacklistID' and 'SectorID' in the SQL")
++
++# Test MySQL implementation
++print("\nTesting MySQL implementation...")
++from django.db.backends.mysql.operations import DatabaseOperations as MySQLOperations
++
++# Create a mock connection with features
++class MockMySQLConnection:
++    mysql_is_mariadb = False
++    mysql_version = (8, 0, 19)
++    
++    class ops:
++        @staticmethod
++        def quote_name(name):
++            return f'`{name}`'
++
++mysql_ops = MySQLOperations(MockMySQLConnection())
++
++sql = mysql_ops.on_conflict_suffix_sql(
++    fields,
++    OnConflict.UPDATE,
++    update_fields,
++    unique_fields
++)
++
++print("Generated SQL:", sql)
++
++# Check if the SQL uses the correct column names
++if '`SectorID`' in sql:
++    print("✓ SUCCESS: MySQL correctly uses the db_column names!")
++else:
++    print("✗ FAILURE: MySQL is still using field names instead of db_column names")
++    print("Expected to see 'SectorID' in the SQL")

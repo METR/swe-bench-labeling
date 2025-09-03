@@ -1,0 +1,34 @@
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index b00dad96..b6b2e33d 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -933,8 +933,12 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords):
+         pandas.DataFrame.copy
+         """  # noqa
+         if data is None:
+-            variables = OrderedDict((k, v.copy(deep=deep))
+-                                    for k, v in self._variables.items())
++            variables = OrderedDict()
++            for k, v in self._variables.items():
++                if isinstance(v, IndexVariable):
++                    variables[k] = IndexVariable(v.dims, v.values, v.attrs, v.encoding)
++                else:
++                    variables[k] = v.copy(deep=deep)
+         elif not utils.is_dict_like(data):
+             raise ValueError('Data must be dict-like')
+         else:
+@@ -952,8 +956,12 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords):
+                     'Data must contain all variables in original '
+                     'dataset. Data is missing {}'
+                     .format(keys_missing_from_data))
+-            variables = OrderedDict((k, v.copy(deep=deep, data=data.get(k)))
+-                                    for k, v in self._variables.items())
++            variables = OrderedDict()
++            for k, v in self._variables.items():
++                if isinstance(v, IndexVariable):
++                    variables[k] = IndexVariable(v.dims, data.get(k, v.values), v.attrs, v.encoding)
++                else:
++                    variables[k] = v.copy(deep=deep, data=data.get(k))
+ 
+         attrs = copy.deepcopy(self._attrs) if deep else copy.copy(self._attrs)
+ 

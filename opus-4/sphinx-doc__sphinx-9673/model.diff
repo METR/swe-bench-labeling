@@ -1,0 +1,124 @@
+diff --git a/setup.py b/setup.py
+index 2b4504101..d865b8b37 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py
+index af4b47bb0..06a9594b4 100644
+--- a/sphinx/ext/autodoc/typehints.py
++++ b/sphinx/ext/autodoc/typehints.py
+@@ -103,6 +103,9 @@ def modify_field_list(node: nodes.field_list, annotations: Dict[str, str]) -> No
+             arg['type'] = True
+         elif parts[0] == 'rtype':
+             arguments['return'] = {'type': True}
++        elif parts[0] == 'returns':
++            arguments['return'] = arguments.get('return', {})
++            arguments['return']['param'] = True
+ 
+     for name, annotation in annotations.items():
+         if name == 'return':
+@@ -120,11 +123,12 @@ def modify_field_list(node: nodes.field_list, annotations: Dict[str, str]) -> No
+             field += nodes.field_body('', nodes.paragraph('', ''))
+             node += field
+ 
+-    if 'return' in annotations and 'return' not in arguments:
+-        field = nodes.field()
+-        field += nodes.field_name('', 'rtype')
+-        field += nodes.field_body('', nodes.paragraph('', annotation))
+-        node += field
++    if 'return' in annotations:
++        if 'return' not in arguments or not arguments.get('return', {}).get('type'):
++            field = nodes.field()
++            field += nodes.field_name('', 'rtype')
++            field += nodes.field_body('', nodes.paragraph('', annotations['return']))
++            node += field
+ 
+ 
+ def augment_descriptions_with_types(
+@@ -151,6 +155,8 @@ def augment_descriptions_with_types(
+             has_type.add(name)
+         elif parts[0] == 'return':
+             has_description.add('return')
++        elif parts[0] == 'returns':
++            has_description.add('return')
+         elif parts[0] == 'rtype':
+             has_type.add('return')
+ 
+diff --git a/tests/test_ext_napoleon.py b/tests/test_ext_napoleon.py
+index d6334b9eb..b27a63f05 100644
+--- a/tests/test_ext_napoleon.py
++++ b/tests/test_ext_napoleon.py
+@@ -97,6 +97,30 @@ class ProcessDocstringTest(TestCase):
+ class SetupTest(TestCase):
+     def test_unknown_app_type(self):
+         setup(object())
++    
++    def test_napoleon_with_autodoc_typehints_description_target(self):
++        """Test that Napoleon works with autodoc_typehints_description_target."""
++        # Test that when using napoleon with autodoc_typehints_description_target,
++        # the return type is correctly added for functions with documented returns
++        lines = ['Summary line.',
++                 '',
++                 'Args:',
++                 '    arg1 (str): arg1 description',
++                 '',
++                 'Returns:',
++                 '    The result.']
++        
++        app = mock.Mock()
++        app.config = Config()
++        app.config.napoleon_use_rtype = True
++        
++        # Process the docstring
++        _process_docstring(app, 'function', 'test_func', None, mock.Mock(), lines)
++        
++        # Check that it generates :returns: (not :return:) 
++        # This is what caused the issue - autodoc typehints was looking for :return:
++        # but Napoleon generates :returns:
++        self.assertIn(':returns: The result.', lines)
+ 
+     def test_add_config_values(self):
+         app = mock.Mock(Sphinx)
+diff --git a/tox.ini b/tox.ini
+index b6a67fd85..483f2df92 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

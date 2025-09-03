@@ -1,0 +1,325 @@
+diff --git a/setup.py b/setup.py
+index 2b4504101..d865b8b37 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/test_mock_getattr.py b/test_mock_getattr.py
+new file mode 100644
+index 000000000..efeb55c32
+--- /dev/null
++++ b/test_mock_getattr.py
+@@ -0,0 +1,42 @@
++"""
++Test mock module __getattr__ behavior
++"""
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass, mock, _MockModule
++from sphinx.util.typing import restify
++import sys
++
++# Let's see what happens with mock context
++with mock(['torch']):
++    import torch
++    
++    # First access to torch.nn.Module
++    Module1 = torch.nn.Module
++    print('First access to torch.nn.Module:')
++    print('  Module1:', Module1)
++    print('  type(Module1):', type(Module1))
++    print('  id(Module1):', id(Module1))
++    print('  isinstance(Module1, type):', isinstance(Module1, type))
++    print('  isinstance(Module1, _MockObject):', isinstance(Module1, _MockObject))
++    
++    # Second access to torch.nn.Module
++    Module2 = torch.nn.Module
++    print('\nSecond access to torch.nn.Module:')
++    print('  Module2:', Module2)
++    print('  type(Module2):', type(Module2))
++    print('  id(Module2):', id(Module2))
++    print('  Module1 is Module2:', Module1 is Module2)
++    
++    # Let's access from the class definition context
++    print('\nIn class definition context:')
++    
++    class TestClass(torch.nn.Module):
++        base_in_definition = torch.nn.Module
++        
++    print('  TestClass.__bases__[0] is Module1:', TestClass.__bases__[0] is Module1)
++    print('  TestClass.base_in_definition is Module1:', TestClass.base_in_definition is Module1)
++    
++    # Check __orig_bases__
++    print('\n__orig_bases__:')
++    print('  TestClass.__orig_bases__[0]:', TestClass.__orig_bases__[0])
++    print('  type(__orig_bases__[0]):', type(TestClass.__orig_bases__[0]))
++    print('  TestClass.__orig_bases__[0] is Module1:', TestClass.__orig_bases__[0] is Module1)
+diff --git a/test_mock_issue.py b/test_mock_issue.py
+new file mode 100644
+index 000000000..042f81735
+--- /dev/null
++++ b/test_mock_issue.py
+@@ -0,0 +1,26 @@
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass
++from sphinx.util.typing import restify
++
++# Create a mock Module (simulating torch.nn.Module)
++MockModule = _make_subclass('Module', 'torch.nn')
++print('MockModule:', MockModule)
++print('MockModule.__module__:', MockModule.__module__)
++print('MockModule.__name__:', MockModule.__name__)
++print('MockModule.__display_name__:', MockModule.__display_name__)
++
++# Create a derived class
++class MyDeepKernel(MockModule):
++    pass
++
++print('\nMyDeepKernel bases:', MyDeepKernel.__bases__)
++print('MyDeepKernel.__bases__[0]:', MyDeepKernel.__bases__[0])
++print('type(MyDeepKernel.__bases__[0]):', type(MyDeepKernel.__bases__[0]))
++
++# Test restify on bases
++for base in MyDeepKernel.__bases__:
++    print(f'\nBase: {base}')
++    print(f'restify(base): {restify(base)}')
++    print(f'type(base): {type(base)}')
++    print(f'base.__module__: {getattr(base, "__module__", None)}')
++    print(f'base.__name__: {getattr(base, "__name__", None)}')
++    print(f'isinstance(base, type): {isinstance(base, type)}')
+diff --git a/test_mock_name_attr.py b/test_mock_name_attr.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/test_mock_name_attr.py
+@@ -0,0 +1 @@
++
+diff --git a/test_orig_bases.py b/test_orig_bases.py
+new file mode 100644
+index 000000000..9b232813c
+--- /dev/null
++++ b/test_orig_bases.py
+@@ -0,0 +1,47 @@
++"""
++Test if the issue is with __orig_bases__
++"""
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass, mock, _MockModule
++from sphinx.util.typing import restify
++import sys
++
++# Let's see what happens with mock context
++with mock(['torch']):
++    import torch
++    
++    # This is what happens in the actual code - creates a DeepKernel that inherits from torch.nn.Module
++    class DeepKernel(torch.nn.Module):
++        pass
++    
++    print('DeepKernel.__bases__:', DeepKernel.__bases__)
++    print('hasattr(DeepKernel, "__orig_bases__"):', hasattr(DeepKernel, '__orig_bases__'))
++    
++    if hasattr(DeepKernel, '__orig_bases__'):
++        print('\nDeepKernel.__orig_bases__:', DeepKernel.__orig_bases__)
++        print('type(__orig_bases__[0]):', type(DeepKernel.__orig_bases__[0]))
++        
++        # Test restify on __orig_bases__
++        for i, base in enumerate(DeepKernel.__orig_bases__):
++            print(f'\n__orig_bases__[{i}]: {base}')
++            print(f'  type: {type(base)}')
++            print(f'  restify: {restify(base)}')
++            
++    # Let me test with generic type hint
++    from typing import Generic, TypeVar
++    
++    T = TypeVar('T')
++    
++    class GenericDeepKernel(torch.nn.Module, Generic[T]):
++        pass
++        
++    print('\n\nGenericDeepKernel.__bases__:', GenericDeepKernel.__bases__)
++    print('hasattr(GenericDeepKernel, "__orig_bases__"):', hasattr(GenericDeepKernel, '__orig_bases__'))
++    
++    if hasattr(GenericDeepKernel, '__orig_bases__'):
++        print('\nGenericDeepKernel.__orig_bases__:', GenericDeepKernel.__orig_bases__)
++        
++        # Test restify on __orig_bases__
++        for i, base in enumerate(GenericDeepKernel.__orig_bases__):
++            print(f'\n__orig_bases__[{i}]: {base}')
++            print(f'  type: {type(base)}')
++            print(f'  restify: {restify(base)}')
+diff --git a/test_real_issue.py b/test_real_issue.py
+new file mode 100644
+index 000000000..b6a67614e
+--- /dev/null
++++ b/test_real_issue.py
+@@ -0,0 +1,48 @@
++"""
++Let's reproduce the actual issue - when documenting classes that inherit from mocked classes
++"""
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass, mock, _MockModule
++from sphinx.util.typing import restify
++import sys
++
++# Let's see what happens with mock context
++with mock(['torch']):
++    import torch
++    
++    # Get the nn module
++    nn = torch.nn
++    print('torch.nn type:', type(nn))
++    print('torch.nn isinstance(_MockModule):', isinstance(nn, _MockModule))
++    
++    # Get Module from nn
++    Module = nn.Module
++    print('\ntorch.nn.Module:', Module)
++    print('torch.nn.Module type:', type(Module))
++    print('repr(Module):', repr(Module))
++    
++    # This is what happens in the actual code - creates a DeepKernel that inherits from torch.nn.Module
++    class DeepKernel(torch.nn.Module):
++        pass
++    
++    print('\nDeepKernel.__bases__:', DeepKernel.__bases__)
++    print('DeepKernel.__bases__[0]:', DeepKernel.__bases__[0])
++    print('type(DeepKernel.__bases__[0]):', type(DeepKernel.__bases__[0]))
++    
++    # Let's check if the base is an instance or a class
++    base = DeepKernel.__bases__[0]
++    print('\nIs base a type?', isinstance(base, type))
++    print('Is base a _MockObject?', isinstance(base, _MockObject))
++    print('base.__class__:', base.__class__)
++    
++    # Let's see what happens when we access attributes directly on Module
++    print('\nDirect access to Module:')
++    print('Module:', Module)
++    print('type(Module):', type(Module))
++    
++    # Test restify on the mock object directly
++    print('\nTesting restify on mock directly:')
++    mock_obj = torch.nn.Module()
++    print('mock_obj:', mock_obj)  
++    print('type(mock_obj):', type(mock_obj))
++    print('restify(mock_obj):', restify(mock_obj))
++    print('restify(type(mock_obj)):', restify(type(mock_obj)))
+diff --git a/test_restify_debug.py b/test_restify_debug.py
+new file mode 100644
+index 000000000..f293c287d
+--- /dev/null
++++ b/test_restify_debug.py
+@@ -0,0 +1,32 @@
++import sys
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass
++from sphinx.util import inspect
++
++# Create a mock Module (simulating torch.nn.Module)
++MockModule = _make_subclass('Module', 'torch.nn')
++
++print('MockModule info:')
++print('  type:', type(MockModule))
++print('  __module__:', getattr(MockModule, '__module__', None))
++print('  __name__:', getattr(MockModule, '__name__', None))
++print('  __qualname__:', getattr(MockModule, '__qualname__', None))
++print('  hasattr(__qualname__):', hasattr(MockModule, '__qualname__'))
++print('  isinstance(type):', isinstance(MockModule, type))
++print('  sys.version_info:', sys.version_info)
++
++# Check the flow through restify
++cls = MockModule
++print('\nChecking restify flow:')
++print('  cls.__module__ in ("__builtin__", "builtins"):', cls.__module__ in ('__builtin__', 'builtins'))
++print('  sys.version_info >= (3, 7):', sys.version_info >= (3, 7))
++
++# Check _restify_py37 flow
++print('\n_restify_py37 flow:')
++print('  inspect.isgenericalias(cls):', inspect.isgenericalias(cls))
++print('  hasattr(cls, "__qualname__"):', hasattr(cls, '__qualname__'))
++print('  cls.__module__ == "typing":', cls.__module__ == 'typing')
++
++# Check if _MockObject is in the MRO
++print('\nMRO check:')
++print('  MockModule.__mro__:', MockModule.__mro__)
++print('  _MockObject in MockModule.__mro__:', _MockObject in MockModule.__mro__)
+diff --git a/test_restify_mock_instance.py b/test_restify_mock_instance.py
+new file mode 100644
+index 000000000..10e8c31ac
+--- /dev/null
++++ b/test_restify_mock_instance.py
+@@ -0,0 +1,39 @@
++"""
++Debug why restify fails on mock instances
++"""
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass, mock
++from sphinx.util.typing import restify
++import sys
++
++with mock(['torch']):
++    import torch
++    
++    # Get a mock instance
++    mock_instance = torch.nn.Module
++    print('mock_instance:', mock_instance)
++    print('type(mock_instance):', type(mock_instance))
++    print('isinstance(mock_instance, _MockObject):', isinstance(mock_instance, _MockObject))
++    
++    # Check attributes used by restify
++    print('\nAttributes checked by restify:')
++    print('  hasattr(__module__):', hasattr(mock_instance, '__module__'))
++    print('  hasattr(__name__):', hasattr(mock_instance, '__name__'))
++    print('  hasattr(__qualname__):', hasattr(mock_instance, '__qualname__'))
++    
++    print('\nAttribute values:')
++    print('  __module__:', getattr(mock_instance, '__module__', None))
++    print('  __name__:', getattr(mock_instance, '__name__', None))
++    print('  __qualname__:', getattr(mock_instance, '__qualname__', None))
++    
++    # Check the type's attributes
++    print('\nType attributes:')
++    cls = type(mock_instance)
++    print('  type.__module__:', cls.__module__)
++    print('  type.__name__:', cls.__name__)
++    print('  type.__qualname__:', getattr(cls, '__qualname__', None))
++    
++    # Let's trace what happens in restify
++    print('\nrestify result:', restify(mock_instance))
++    
++    # Now let's check what restify does with the type
++    print('restify(type(mock_instance)):', restify(type(mock_instance)))
+diff --git a/tox.ini b/tox.ini
+index b6a67fd85..483f2df92 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

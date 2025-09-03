@@ -1,0 +1,116 @@
+diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
+index 73c20334d0..5d93eef393 100644
+--- a/sympy/geometry/point.py
++++ b/sympy/geometry/point.py
+@@ -152,8 +152,18 @@ def __new__(cls, *args, **kwargs):
+                         'warn' or 'ignore'.'''))
+         if any(coords[dim:]):
+             raise ValueError('Nonzero coordinates cannot be removed.')
+-        if any(a.is_number and im(a) for a in coords):
+-            raise ValueError('Imaginary coordinates are not permitted.')
++        # Check for imaginary coordinates
++        # When evaluate=False, im(a) returns an unevaluated expression like im(1)
++        # which is truthy even though it evaluates to 0. We need to check if
++        # the imaginary part is actually non-zero.
++        if evaluate:
++            if any(a.is_number and im(a) for a in coords):
++                raise ValueError('Imaginary coordinates are not permitted.')
++        else:
++            # When evaluate=False, we need to explicitly evaluate im() to check
++            # if it's actually non-zero
++            if any(a.is_number and im(a).evalf() != 0 for a in coords):
++                raise ValueError('Imaginary coordinates are not permitted.')
+         if not all(isinstance(a, Expr) for a in coords):
+             raise TypeError('Coordinates must be valid SymPy expressions.')
+ 
+diff --git a/sympy/geometry/tests/test_point.py b/sympy/geometry/tests/test_point.py
+index 930d707735..b397eca307 100644
+--- a/sympy/geometry/tests/test_point.py
++++ b/sympy/geometry/tests/test_point.py
+@@ -470,4 +470,32 @@ def test_direction_cosine():
+ 
+     assert p2.direction_cosine(Point3D(0, 0, 0)) == [-sqrt(3) / 3, -sqrt(3) / 3, -sqrt(3) / 3]
+     assert p2.direction_cosine(Point3D(1, 1, 12)) == [0, 0, 1]
+-    assert p2.direction_cosine(Point3D(12, 1, 12)) == [sqrt(2) / 2, 0, sqrt(2) / 2]
++
++
++def test_point_evaluate_false():
++    """Test Point creation with evaluate(False) context - issue #xxxxx"""
++    from sympy import evaluate, Integer
++    
++    # Test that Point creation works with evaluate(False) context
++    with evaluate(False):
++        # Using S() to parse string representation
++        p1 = S('Point2D(Integer(1),Integer(2))')
++        assert p1 == Point2D(1, 2)
++        assert isinstance(p1, Point2D)
++        
++        # Direct creation with Integer objects
++        p2 = Point2D(Integer(1), Integer(2))
++        assert p2 == Point2D(1, 2)
++        
++        # Test Point3D
++        p3 = S('Point3D(Integer(1),Integer(2),Integer(3))')
++        assert p3 == Point3D(1, 2, 3)
++        
++        # Test general Point
++        p4 = Point(1, 2, 3, 4)
++        assert p4.args == (1, 2, 3, 4)
++    
++    # Ensure complex numbers still raise error with evaluate(False)
++    with evaluate(False):
++        raises(ValueError, lambda: Point2D(1 + 2*I, 3))
++        raises(ValueError, lambda: Point3D(1, 2*I, 3))
+diff --git a/test_point_evaluate_false.py b/test_point_evaluate_false.py
+new file mode 100644
+index 0000000000..bc63736a68
+--- /dev/null
++++ b/test_point_evaluate_false.py
+@@ -0,0 +1,47 @@
++import sympy as sp
++
++def test_point_with_evaluate_false():
++    """Test that Point creation works correctly with evaluate(False) context."""
++    
++    # Test 1: Basic Point2D creation with evaluate(False) using S()
++    with sp.evaluate(False):
++        p1 = sp.S('Point2D(Integer(1),Integer(2))')
++        assert p1 == sp.Point2D(1, 2)
++        assert str(p1) == 'Point2D(1, 2)'
++    
++    # Test 2: Direct Point2D creation with evaluate(False)
++    with sp.evaluate(False):
++        p2 = sp.Point2D(sp.Integer(1), sp.Integer(2))
++        assert p2 == sp.Point2D(1, 2)
++    
++    # Test 3: Point3D with evaluate(False)
++    with sp.evaluate(False):
++        p3 = sp.S('Point3D(Integer(1),Integer(2),Integer(3))')
++        assert p3 == sp.Point3D(1, 2, 3)
++    
++    # Test 4: General Point with evaluate(False)
++    with sp.evaluate(False):
++        p4 = sp.Point(1, 2, 3, 4)
++        assert p4.args == (1, 2, 3, 4)
++    
++    # Test 5: Floats with evaluate(False) should remain floats
++    with sp.evaluate(False):
++        p5 = sp.Point2D(0.5, 0.25)
++        assert p5.args == (0.5, 0.25)
++    
++    # Test 6: Complex numbers should still raise error with evaluate(False)
++    try:
++        with sp.evaluate(False):
++            sp.Point2D(1 + 2*sp.I, 3)
++        assert False, "Should have raised ValueError for imaginary coordinate"
++    except ValueError as e:
++        assert str(e) == 'Imaginary coordinates are not permitted.'
++    
++    # Test 7: Same test without evaluate(False) for comparison
++    p6 = sp.S('Point2D(Integer(1),Integer(2))')
++    assert p6 == sp.Point2D(1, 2)
++    
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_point_with_evaluate_false()

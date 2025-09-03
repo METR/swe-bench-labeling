@@ -1,0 +1,148 @@
+diff --git a/debug_merge_attrs.py b/debug_merge_attrs.py
+new file mode 100644
+index 00000000..5c7cd860
+--- /dev/null
++++ b/debug_merge_attrs.py
+@@ -0,0 +1,32 @@
++import xarray as xr
++from xarray.core.merge import merge_attrs
++
++# Test 1: Test with empty attrs first 
++attrs_list = [{}, {'foo': 'bar'}, {'baz': 'qux'}]
++print("Test 1: Empty attrs first")
++print(f"attrs_list: {attrs_list}")
++print(f"override: {merge_attrs(attrs_list, 'override')}")
++print()
++
++# Test 2: Test with attrs in first position
++attrs_list = [{'foo': 'bar'}, {}, {'baz': 'qux'}]
++print("Test 2: Attrs in first position")
++print(f"attrs_list: {attrs_list}")
++print(f"override: {merge_attrs(attrs_list, 'override')}")
++print()
++
++# Test 3: Test the actual case for where function
++# In xr.where(cond, x, y), the arguments are ordered as cond, x, y
++# The condition typically has no attrs
++cond = xr.DataArray(True)
++x = xr.DataArray(5)
++x.attrs['x_attr'] = 'x_value'
++y = xr.DataArray(0)
++y.attrs['y_attr'] = 'y_value'
++
++attrs_list = [cond.attrs, x.attrs, y.attrs]
++print("Test 3: Simulating xr.where case")
++print(f"cond.attrs: {cond.attrs}")
++print(f"x.attrs: {x.attrs}")
++print(f"y.attrs: {y.attrs}")
++print(f"merge_attrs with override: {merge_attrs(attrs_list, 'override')}")
+diff --git a/test_where_attrs.py b/test_where_attrs.py
+new file mode 100644
+index 00000000..16a82bed
+--- /dev/null
++++ b/test_where_attrs.py
+@@ -0,0 +1,81 @@
++import numpy as np
++import xarray as xr
++
++# Test case 1: Basic test from the issue
++print("Test 1: Basic DataArray")
++data = xr.DataArray(np.ones([10,10], dtype=np.int8))
++data.attrs["attr_1"] = "test1"
++data.attrs["attr_2"] = "test2"
++print(f"Original attrs: {data.attrs}")
++
++data2 = xr.where(data == 1, 5, 0)
++print(f"After where attrs: {data2.attrs}")
++print(f"Original dtype: {data.dtype}, After where dtype: {data2.dtype}")
++print()
++
++# Test case 2: Simple test from second issue report
++print("Test 2: Simple scalar DataArray")
++da = xr.DataArray(1)
++da.attrs['foo'] = 'bar'
++print(f"Original attrs: {da.attrs}")
++result = xr.where(da==0, -1, da)
++print(f"After where attrs: {result.attrs}")
++print()
++
++# Test case 3: Test with keep_attrs option (if we add it)
++print("Test 3: Testing if keep_attrs works in apply_ufunc")
++from xarray.core import duck_array_ops
++from xarray import apply_ufunc
++
++da = xr.DataArray(1)
++da.attrs['foo'] = 'bar'
++print(f"Original attrs: {da.attrs}")
++
++# Try with keep_attrs=True - all DataArrays
++x_da = xr.DataArray(-1)
++result_with_attrs = apply_ufunc(
++    duck_array_ops.where,
++    da==0,
++    x_da,
++    da,
++    join="exact",
++    dataset_join="exact",
++    dask="allowed",
++    keep_attrs=True
++)
++print(f"With keep_attrs=True (all DataArrays): {result_with_attrs.attrs}")
++
++# Also test what happens if we give attrs to x
++x_da.attrs['x_attr'] = 'x_value'
++result_with_attrs = apply_ufunc(
++    duck_array_ops.where,
++    da==0,
++    x_da,
++    da,
++    join="exact",
++    dataset_join="exact",
++    dask="allowed",
++    keep_attrs=True
++)
++print(f"With keep_attrs=True (x has attrs too): {result_with_attrs.attrs}")
++
++print()
++print("Test 4: Debug - check argument order")
++# The issue might be that the condition comes first
++cond = xr.DataArray(True)
++x = xr.DataArray(5)
++x.attrs['x_attr'] = 'x_value'
++y = xr.DataArray(0)
++y.attrs['y_attr'] = 'y_value'
++
++result = apply_ufunc(
++    duck_array_ops.where,
++    cond,
++    x,
++    y,
++    join="exact",
++    dataset_join="exact",
++    dask="allowed",
++    keep_attrs=True
++)
++print(f"cond has no attrs, x has attrs, y has attrs: {result.attrs}")
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 9fe93c88..f0e57580 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1727,7 +1727,7 @@ def dot(*arrays, dims=None, **kwargs):
+     return result.transpose(*all_dims, missing_dims="ignore")
+ 
+ 
+-def where(cond, x, y):
++def where(cond, x, y, keep_attrs=None):
+     """Return elements from `x` or `y` depending on `cond`.
+ 
+     Performs xarray-like broadcasting across input arguments.
+@@ -1743,6 +1743,9 @@ def where(cond, x, y):
+         values to choose from where `cond` is True
+     y : scalar, array, Variable, DataArray or Dataset
+         values to choose from where `cond` is False
++    keep_attrs : bool or None, optional
++        If True, the attributes (``attrs``) will be copied from the first input to the
++        output one. If False (default), the output will be given a new empty ``attrs``.
+ 
+     Returns
+     -------

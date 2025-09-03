@@ -1,0 +1,119 @@
+diff --git a/sklearn/impute/_iterative.py b/sklearn/impute/_iterative.py
+index 1d918bc0c..ec52ce7e8 100644
+--- a/sklearn/impute/_iterative.py
++++ b/sklearn/impute/_iterative.py
+@@ -117,6 +117,13 @@ class IterativeImputer(_BaseImputer):
+         Which strategy to use to initialize the missing values. Same as the
+         `strategy` parameter in :class:`~sklearn.impute.SimpleImputer`.
+ 
++    fill_value : str or numerical value, default=None
++        When `initial_strategy == "constant"`, `fill_value` is used to replace all
++        occurrences of missing_values in the first imputation round. For string
++        or object data types, `fill_value` must be a string.
++        If `None`, `fill_value` will be 0 when imputing numerical
++        data and "missing_value" for strings or object data types.
++
+     imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
+             'random'}, default='ascending'
+         The order in which the features will be imputed. Possible values:
+@@ -285,6 +292,7 @@ class IterativeImputer(_BaseImputer):
+             StrOptions({"ascending", "descending", "roman", "arabic", "random"})
+         ],
+         "skip_complete": ["boolean"],
++        "fill_value": "no_validation",  # any object is valid
+         "min_value": [None, Interval(Real, None, None, closed="both"), "array-like"],
+         "max_value": [None, Interval(Real, None, None, closed="both"), "array-like"],
+         "verbose": ["verbose"],
+@@ -301,6 +309,7 @@ class IterativeImputer(_BaseImputer):
+         tol=1e-3,
+         n_nearest_features=None,
+         initial_strategy="mean",
++        fill_value=None,
+         imputation_order="ascending",
+         skip_complete=False,
+         min_value=-np.inf,
+@@ -322,6 +331,7 @@ class IterativeImputer(_BaseImputer):
+         self.tol = tol
+         self.n_nearest_features = n_nearest_features
+         self.initial_strategy = initial_strategy
++        self.fill_value = fill_value
+         self.imputation_order = imputation_order
+         self.skip_complete = skip_complete
+         self.min_value = min_value
+@@ -613,6 +623,7 @@ class IterativeImputer(_BaseImputer):
+             self.initial_imputer_ = SimpleImputer(
+                 missing_values=self.missing_values,
+                 strategy=self.initial_strategy,
++                fill_value=self.fill_value,
+                 keep_empty_features=self.keep_empty_features,
+             )
+             X_filled = self.initial_imputer_.fit_transform(X)
+diff --git a/sklearn/impute/tests/test_impute.py b/sklearn/impute/tests/test_impute.py
+index 86553effa..d6fde2294 100644
+--- a/sklearn/impute/tests/test_impute.py
++++ b/sklearn/impute/tests/test_impute.py
+@@ -1524,6 +1524,57 @@ def test_iterative_imputer_keep_empty_features(initial_strategy):
+     assert_allclose(X_imputed[:, 1], 0)
+ 
+ 
++def test_iterative_imputer_fill_value():
++    """Test IterativeImputer with fill_value parameter when initial_strategy='constant'."""
++    # Test with custom fill_value
++    X = np.array([[1, 2, np.nan], [4, np.nan, 6], [7, 8, 9]])
++    
++    # Test with constant strategy and custom fill_value
++    imputer = IterativeImputer(
++        initial_strategy='constant', 
++        fill_value=999,
++        max_iter=1,
++        random_state=42
++    )
++    imputer.fit_transform(X)
++    assert imputer.initial_imputer_.fill_value == 999
++    assert_array_equal(imputer.initial_imputer_.statistics_, [999, 999, 999])
++    
++    # Test with np.nan as fill_value
++    imputer_nan = IterativeImputer(
++        initial_strategy='constant',
++        fill_value=np.nan,
++        max_iter=1,
++        random_state=42
++    )
++    imputer_nan.fit_transform(X)
++    assert np.isnan(imputer_nan.initial_imputer_.fill_value)
++    assert np.all(np.isnan(imputer_nan.initial_imputer_.statistics_))
++    
++    # Test without fill_value (should use default of None, which becomes 0)
++    imputer_default = IterativeImputer(
++        initial_strategy='constant',
++        max_iter=1,
++        random_state=42
++    )
++    imputer_default.fit_transform(X)
++    assert imputer_default.initial_imputer_.fill_value is None
++    assert_array_equal(imputer_default.initial_imputer_.statistics_, [0, 0, 0])
++    
++    # Test that fill_value is passed through correctly even with other strategies
++    # (SimpleImputer will ignore it, but it should still be set)
++    imputer_mean = IterativeImputer(
++        initial_strategy='mean',
++        fill_value=999,
++        max_iter=1,
++        random_state=42
++    )
++    imputer_mean.fit_transform(X)
++    assert imputer_mean.initial_imputer_.fill_value == 999
++    # But statistics should be means, not the fill_value
++    assert imputer_mean.initial_imputer_.statistics_[0] != 999
++
++
+ @pytest.mark.parametrize("keep_empty_features", [True, False])
+ def test_knn_imputer_keep_empty_features(keep_empty_features):
+     """Check the behaviour of `keep_empty_features` for `KNNImputer`."""
+diff --git a/validate_fix.py b/validate_fix.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/validate_fix.py
+@@ -0,0 +1 @@
++

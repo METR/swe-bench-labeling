@@ -1,0 +1,238 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 844c01e95e..8f65695bbb 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -816,7 +816,7 @@ class Model(metaclass=ModelBase):
+                 inserted = True
+             # Set the parent's PK value to self.
+             if field:
+-                setattr(self, field.attname, self._get_pk_val(parent._meta))
++                setattr(self, field.attname, getattr(self, parent._meta.pk.attname))
+                 # Since we didn't have an instance of the parent handy set
+                 # attname directly, bypassing the descriptor. Invalidate
+                 # the related object cache, in case it's been accidentally
+diff --git a/test_debug_issue.py b/test_debug_issue.py
+new file mode 100644
+index 0000000000..c20a20e1e2
+--- /dev/null
++++ b/test_debug_issue.py
+@@ -0,0 +1,110 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import base
++
++# Monkey patch _save_parents to add debug output
++original_save_parents = base.Model._save_parents
++
++def debug_save_parents(self, cls, using, update_fields):
++    print(f"\n_save_parents called for {cls.__name__}")
++    meta = cls._meta
++    for parent, field in meta.parents.items():
++        print(f"  Parent: {parent.__name__}, field: {field}")
++        if field:
++            print(f"    field.attname = {field.attname}")
++            print(f"    getattr(self, field.attname) = {getattr(self, field.attname)}")
++            print(f"    parent._meta.pk.attname = {parent._meta.pk.attname}")
++            print(f"    getattr(self, parent._meta.pk.attname) = {getattr(self, parent._meta.pk.attname)}")
++    result = original_save_parents(self, cls, using, update_fields)
++    print(f"  After _save_parents:")
++    for parent, field in meta.parents.items():
++        if field:
++            print(f"    getattr(self, field.attname) = {getattr(self, field.attname)}")
++    return result
++
++base.Model._save_parents = debug_save_parents
++
++class Place(models.Model):
++    name = models.CharField(max_length=50)
++    address = models.CharField(max_length=80)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Restaurant(Place):
++    serves_hot_dogs = models.BooleanField(default=False)
++    serves_pizza = models.BooleanField(default=False)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Place)
++    schema_editor.create_model(Restaurant)
++
++print("Testing the issue...")
++
++# Create initial restaurant
++restaurant = Restaurant.objects.create(
++    name="Original Restaurant",
++    address="123 Main St",
++    serves_hot_dogs=True,
++    serves_pizza=False,
++)
++original_pk = restaurant.pk
++print(f"Created Restaurant with pk={original_pk}")
++print(f"  restaurant.pk = {restaurant.pk}")
++print(f"  restaurant.place_ptr_id = {restaurant.place_ptr_id}")
++
++# Reset the pk and change some values
++print("\nResetting primary keys...")
++print(f"Before reset: restaurant.id = {restaurant.id}")
++restaurant.pk = None
++restaurant.place_ptr_id = None
++print(f"After reset:")
++print(f"  restaurant.pk = {restaurant.pk}")
++print(f"  restaurant.id = {restaurant.id}")
++print(f"  restaurant.place_ptr_id = {restaurant.place_ptr_id}")
++
++restaurant.name = "New Restaurant"
++restaurant.serves_pizza = True
++
++print("\nSaving...")
++restaurant.save()
++
++print(f"\nAfter save:")
++print(f"  restaurant.pk = {restaurant.pk}")
++print(f"  restaurant.place_ptr_id = {restaurant.place_ptr_id}")
++
++# Check all objects
++print("\nAll Places:")
++for p in Place.objects.all():
++    print(f"  pk={p.pk}, name={p.name}")
++
++print("\nAll Restaurants:")  
++for r in Restaurant.objects.all():
++    print(f"  pk={r.pk}, name={r.name}, hot_dogs={r.serves_hot_dogs}, pizza={r.serves_pizza}")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_reproduce_issue.py b/test_reproduce_issue.py
+new file mode 100644
+index 0000000000..774e0010e9
+--- /dev/null
++++ b/test_reproduce_issue.py
+@@ -0,0 +1,51 @@
++import django
++from django.test import TestCase
++from django.db import models
++import uuid
++
++# Set up Django
++django.setup()
++
++class Item(models.Model):
++    # uid = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
++    uid = models.AutoField(primary_key=True, editable=False)
++    f = models.BooleanField(default=False)
++    
++    def reset(self):
++        self.uid = None
++        self.f = False
++        
++    class Meta:
++        app_label = 'test_app'
++
++class Derived(Item):
++    class Meta:
++        app_label = 'test_app'
++
++class SaveTestCase(TestCase):
++    def setUp(self):
++        self.derived = Derived.objects.create(f=True)  # create the first object
++        item = Item.objects.get(pk=self.derived.pk)
++        obj1 = item.derived
++        obj1.reset()
++        obj1.save()  # the first object is overwritten
++        
++    def test_f_true(self):
++        obj = Item.objects.get(pk=self.derived.pk)
++        self.assertTrue(obj.f)
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Item)
++        schema_editor.create_model(Derived)
++    
++    # Run test
++    test = SaveTestCase()
++    test.setUp()
++    try:
++        test.test_f_true()
++        print("Test passed - but this indicates the bug exists!")
++    except AssertionError:
++        print("Test failed - the object was overwritten (expected behavior with the bug)")
+diff --git a/tests/model_inheritance/tests.py b/tests/model_inheritance/tests.py
+index 5eef0f5bfa..8c47a31fe3 100644
+--- a/tests/model_inheritance/tests.py
++++ b/tests/model_inheritance/tests.py
+@@ -440,6 +440,44 @@ class ModelInheritanceDataTests(TestCase):
+             attrgetter("name")
+         )
+ 
++    def test_resetting_pk_on_child_model(self):
++        """
++        Test that resetting the primary key of a child model instance
++        and saving creates a new instance instead of overwriting the
++        existing one.
++        """
++        # Create initial restaurant
++        restaurant = Restaurant.objects.create(
++            name="Original Restaurant",
++            address="123 Main St",
++            serves_hot_dogs=True,
++            serves_pizza=False,
++        )
++        original_pk = restaurant.pk
++        
++        # Reset the pk and change some values
++        restaurant.pk = None
++        restaurant.place_ptr_id = None  # Also reset the parent link
++        restaurant.name = "New Restaurant"
++        restaurant.serves_pizza = True
++        restaurant.save()
++        
++        # Check that we have a new restaurant
++        self.assertIsNotNone(restaurant.pk)
++        self.assertNotEqual(restaurant.pk, original_pk)
++        
++        # Verify original restaurant still exists
++        original = Restaurant.objects.get(pk=original_pk)
++        self.assertEqual(original.name, "Original Restaurant")
++        self.assertTrue(original.serves_hot_dogs)
++        self.assertFalse(original.serves_pizza)
++        
++        # Verify new restaurant has correct values
++        new = Restaurant.objects.get(pk=restaurant.pk)
++        self.assertEqual(new.name, "New Restaurant")
++        self.assertTrue(new.serves_hot_dogs)
++        self.assertTrue(new.serves_pizza)
++
+     def test_exclude_inherited_on_null(self):
+         # Refs #12567
+         Supplier.objects.create(

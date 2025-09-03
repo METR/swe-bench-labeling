@@ -1,0 +1,484 @@
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index f2ca8c8df9..3f41864d77 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -568,6 +568,20 @@ class BaseDatabaseSchemaEditor:
+             exclude=meta_constraint_names | meta_index_names,
+             **constraint_kwargs,
+         )
++        # When deleting unique constraints, if we find multiple constraints,
++        # it might be because one is a primary key constraint and one is a
++        # unique_together constraint. Filter out primary key constraints.
++        if len(constraint_names) > 1 and constraint_kwargs.get("unique"):
++            # Get all constraint info to filter out primary keys
++            with self.connection.cursor() as cursor:
++                constraints = self.connection.introspection.get_constraints(
++                    cursor, model._meta.db_table
++                )
++            # Filter out primary key constraints
++            constraint_names = [
++                name for name in constraint_names
++                if not constraints.get(name, {}).get("primary_key", False)
++            ]
+         if len(constraint_names) != 1:
+             raise ValueError(
+                 "Found wrong number (%s) of constraints for %s(%s)"
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e470a0227b
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,139 @@
++#!/usr/bin/env python
++"""Test the fix for unique_together constraint on primary key"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django with minimal settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++from django.db import models, connection
++
++# Define a test model with unique_together on primary key
++class TestModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_unique_together_pk'
++        unique_together = [['id']]  # This is the problematic constraint
++    
++    name = models.CharField(max_length=100)
++
++# Test _delete_composed_index directly
++from django.db.backends.base import schema
++
++# Mock the necessary methods for testing
++class MockSchemaEditor(schema.BaseDatabaseSchemaEditor):
++    def __init__(self):
++        self.connection = connection
++        self.collected_sql = []
++        
++    def execute(self, sql, params=None):
++        # Just collect the SQL, don't execute it
++        self.collected_sql.append(sql)
++        
++    def _constraint_names(self, model, column_names=None, unique=None, 
++                         primary_key=None, index=None, foreign_key=None, 
++                         check=None, type_=None, exclude=None):
++        """Mock _constraint_names to simulate PostgreSQL behavior with two constraints on id"""
++        result = []
++        
++        # If we're looking for unique constraints on 'id' column
++        if column_names == ['id'] and unique is True:
++            # Simulate having both a primary key constraint and unique_together constraint
++            if primary_key is None:
++                # When primary_key is not specified, return both
++                result.append('test_unique_together_pk_pkey')  # Primary key constraint
++                result.append('test_unique_together_pk_id_1c3b3088c74c3b17_uniq')  # unique_together
++            elif primary_key is False:
++                # When explicitly excluding primary keys, only return unique_together
++                result.append('test_unique_together_pk_id_1c3b3088c74c3b17_uniq')
++                
++        if exclude:
++            result = [name for name in result if name not in exclude]
++        
++        return result
++    
++    def _delete_constraint_sql(self, sql, model, name):
++        return f"DROP CONSTRAINT {name}"
++
++# Test the fix
++editor = MockSchemaEditor()
++
++print("Testing _delete_composed_index with unique_together on primary key field...")
++print("\nBefore fix: Looking for unique constraints would find both primary key and unique_together")
++print("This would cause 'Found wrong number (2) of constraints' error")
++
++try:
++    # This should work with our fix
++    editor._delete_composed_index(
++        TestModel,
++        ['id'],  # fields  
++        {"unique": True},  # constraint_kwargs
++        "DROP INDEX"  # sql template
++    )
++    print("\nAfter fix: Successfully found only the unique_together constraint!")
++    print("Collected SQL:", editor.collected_sql)
++    print("\nSUCCESS: The fix correctly excludes primary key constraints when deleting unique_together!")
++except ValueError as e:
++    print(f"\nERROR: {e}")
++    print("The fix did not work as expected.")
++    
++# Also test that other operations still work correctly
++print("\n" + "="*60)
++print("Testing that the fix doesn't break other constraint lookups...")
++
++# Reset collected SQL
++editor.collected_sql = []
++
++# Mock different scenarios
++class TestModel2(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_normal_unique'
++        unique_together = [['name', 'email']]
++    
++    name = models.CharField(max_length=100)
++    email = models.EmailField()
++
++# Override _constraint_names for this test
++def mock_normal_constraint_names(self, model, column_names=None, unique=None, 
++                               primary_key=None, index=None, foreign_key=None, 
++                               check=None, type_=None, exclude=None):
++    """Mock for normal unique_together (not on primary key)"""
++    result = []
++    
++    if column_names == ['name', 'email'] and unique is True:
++        # Normal case: only one unique constraint
++        result.append('test_normal_unique_name_email_uniq')
++        
++    return result
++
++editor._constraint_names = mock_normal_constraint_names
++
++try:
++    editor._delete_composed_index(
++        TestModel2,
++        ['name', 'email'],
++        {"unique": True},
++        "DROP INDEX"
++    )
++    print("Normal unique_together deletion still works correctly!")
++    print("Collected SQL:", editor.collected_sql)
++except ValueError as e:
++    print(f"ERROR: Normal case broken: {e}")
+diff --git a/test_fix_v2.py b/test_fix_v2.py
+new file mode 100644
+index 0000000000..591fcddf51
+--- /dev/null
++++ b/test_fix_v2.py
+@@ -0,0 +1,185 @@
++#!/usr/bin/env python
++"""Test the fix for unique_together constraint on primary key"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django with minimal settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.backends.base import schema
++
++# Define a test model with unique_together on primary key
++class TestModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_unique_together_pk'
++        unique_together = [['id']]  # This is the problematic constraint
++    
++    name = models.CharField(max_length=100)
++
++# Mock connection and introspection
++class MockCursor:
++    def execute(self, sql, params=None):
++        pass
++    def fetchall(self):
++        return []
++    def __enter__(self):
++        return self
++    def __exit__(self, *args):
++        pass
++
++class MockIntrospection:
++    def get_constraints(self, cursor, table_name):
++        if table_name == 'test_unique_together_pk':
++            # Simulate PostgreSQL with both primary key and unique_together on id
++            return {
++                'test_unique_together_pk_pkey': {
++                    'columns': ['id'],
++                    'primary_key': True,
++                    'unique': True,
++                    'index': True,
++                    'check': False,
++                    'foreign_key': None,
++                },
++                'test_unique_together_pk_id_1c3b3088c74c3b17_uniq': {
++                    'columns': ['id'], 
++                    'primary_key': False,
++                    'unique': True,
++                    'index': True,
++                    'check': False,
++                    'foreign_key': None,
++                }
++            }
++        else:
++            # Normal unique constraint 
++            return {
++                'test_normal_unique_name_email_uniq': {
++                    'columns': ['name', 'email'],
++                    'primary_key': False,
++                    'unique': True,
++                    'index': True,
++                    'check': False,
++                    'foreign_key': None,
++                }
++            }
++    
++    def identifier_converter(self, name):
++        return name
++
++class MockConnection:
++    def __init__(self):
++        self.introspection = MockIntrospection()
++        
++    def cursor(self):
++        return MockCursor()
++
++# Mock schema editor
++class MockSchemaEditor(schema.BaseDatabaseSchemaEditor):
++    def __init__(self):
++        self.connection = MockConnection()
++        self.collected_sql = []
++        
++    def execute(self, sql, params=None):
++        # Just collect the SQL, don't execute it
++        self.collected_sql.append(sql)
++        
++    def _constraint_names(self, model, column_names=None, unique=None, 
++                         primary_key=None, index=None, foreign_key=None, 
++                         check=None, type_=None, exclude=None):
++        """Use real implementation but with mocked introspection"""
++        if column_names is not None:
++            column_names = [
++                self.connection.introspection.identifier_converter(name)
++                for name in column_names
++            ]
++        with self.connection.cursor() as cursor:
++            constraints = self.connection.introspection.get_constraints(
++                cursor, model._meta.db_table
++            )
++        result = []
++        for name, infodict in constraints.items():
++            if column_names is None or column_names == infodict["columns"]:
++                if unique is not None and infodict["unique"] != unique:
++                    continue
++                if primary_key is not None and infodict["primary_key"] != primary_key:
++                    continue
++                if index is not None and infodict["index"] != index:
++                    continue
++                if check is not None and infodict["check"] != check:
++                    continue
++                if foreign_key is not None and not infodict["foreign_key"]:
++                    continue
++                if not exclude or name not in exclude:
++                    result.append(name)
++        return result
++    
++    def _delete_constraint_sql(self, sql, model, name):
++        return f"DROP CONSTRAINT {name}"
++
++# Test the fix
++editor = MockSchemaEditor()
++
++print("Testing _delete_composed_index with unique_together on primary key field...")
++print("\nScenario: Table has both primary key constraint and unique_together constraint on 'id'")
++
++try:
++    # This should work with our fix
++    editor._delete_composed_index(
++        TestModel,
++        ['id'],  # fields  
++        {"unique": True},  # constraint_kwargs
++        "DROP INDEX"  # sql template
++    )
++    print("\nSUCCESS: The fix works! Found only the unique_together constraint!")
++    print("Collected SQL:", editor.collected_sql)
++    print("The primary key constraint was correctly excluded.")
++except ValueError as e:
++    print(f"\nERROR: {e}")
++    print("The fix did not work as expected.")
++    
++# Also test that other operations still work correctly
++print("\n" + "="*60)
++print("Testing that the fix doesn't break normal unique_together constraints...")
++
++# Reset collected SQL
++editor.collected_sql = []
++
++# Test normal unique_together (not on primary key)
++class TestModel2(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_normal_unique'
++        unique_together = [['name', 'email']]
++    
++    name = models.CharField(max_length=100)
++    email = models.EmailField()
++
++try:
++    editor._delete_composed_index(
++        TestModel2,
++        ['name', 'email'],
++        {"unique": True},
++        "DROP INDEX"
++    )
++    print("SUCCESS: Normal unique_together deletion still works correctly!")
++    print("Collected SQL:", editor.collected_sql)
++except ValueError as e:
++    print(f"ERROR: Normal case broken: {e}")
+diff --git a/test_unique_together_primary_key.py b/test_unique_together_primary_key.py
+new file mode 100644
+index 0000000000..a21551bf18
+--- /dev/null
++++ b/test_unique_together_primary_key.py
+@@ -0,0 +1,67 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django with minimal settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.migrations.executor import MigrationExecutor
++from django.db.migrations import Migration
++from django.db.migrations.operations import AlterUniqueTogether
++
++# Define a test model
++class TestModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_unique_together_pk'
++        unique_together = [['id']]  # This is the problematic constraint
++    
++    name = models.CharField(max_length=100)
++
++# Create the model in the database
++with connection.schema_editor() as schema_editor:
++    # First create the table
++    schema_editor.create_model(TestModel)
++    
++    # Check existing constraints
++    with connection.cursor() as cursor:
++        constraints = connection.introspection.get_constraints(
++            cursor, TestModel._meta.db_table
++        )
++        print("Initial constraints:")
++        for name, info in constraints.items():
++            if info.get('unique') or info.get('primary_key'):
++                print(f"  {name}: columns={info['columns']}, unique={info.get('unique')}, primary_key={info.get('primary_key')}")
++    
++    # Now try to remove the unique_together constraint
++    print("\nAttempting to remove unique_together constraint...")
++    try:
++        schema_editor.alter_unique_together(
++            TestModel,
++            old_unique_together=[['id']],
++            new_unique_together=[]
++        )
++        print("SUCCESS: unique_together constraint removed!")
++    except ValueError as e:
++        print(f"ERROR: {e}")
++    
++    # Clean up
++    schema_editor.delete_model(TestModel)
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index f3c4ea8ffe..4ab0aae66f 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -2809,6 +2809,45 @@ class OperationTests(OperationTestBase):
+             operation.describe(), "Alter unique_together for Pony (0 constraint(s))"
+         )
+ 
++    def test_alter_unique_together_primary_key(self):
++        """
++        Test removing unique_together constraint that includes primary key.
++        This addresses the issue where a model has unique_together on its
++        primary key field, resulting in two unique constraints.
++        """
++        # Create a test app and model
++        app_label = "test_alunto_pk"
++        project_state = ProjectState()
++        
++        # Create model with unique_together on primary key
++        model_state = ModelState(
++            app_label,
++            "Pony",
++            [
++                ("id", models.AutoField(primary_key=True)),
++                ("name", models.CharField(max_length=100)),
++            ],
++            {"unique_together": [["id"]]},
++        )
++        project_state.add_model(model_state)
++        
++        # Create the table
++        with connection.schema_editor() as editor:
++            editor.create_model(project_state.apps.get_model(app_label, "Pony"))
++        
++        # Remove the unique_together constraint
++        operation = migrations.AlterUniqueTogether("Pony", [])
++        new_state = project_state.clone()
++        operation.state_forwards(app_label, new_state)
++        
++        # This should not raise ValueError about finding wrong number of constraints
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        
++        # Clean up
++        with connection.schema_editor() as editor:
++            editor.delete_model(project_state.apps.get_model(app_label, "Pony"))
++
+     def test_add_index(self):
+         """
+         Test the AddIndex operation.

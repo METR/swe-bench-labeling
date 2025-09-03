@@ -1,0 +1,58 @@
+diff --git a/django/db/models/lookups.py b/django/db/models/lookups.py
+index 916478d075..43095262cc 100644
+--- a/django/db/models/lookups.py
++++ b/django/db/models/lookups.py
+@@ -548,8 +548,8 @@ class YearLookup(Lookup):
+ 
+     def as_sql(self, compiler, connection):
+         # Avoid the extract operation if the rhs is a direct value to allow
+-        # indexes to be used.
+-        if self.rhs_is_direct_value():
++        # indexes to be used, but only for non-ISO year lookups.
++        if self.rhs_is_direct_value() and not isinstance(self.lhs.lhs.output_field, DateTimeField):
+             # Skip the extract part by directly using the originating field,
+             # that is self.lhs.lhs.
+             lhs_sql, params = self.process_lhs(compiler, connection, self.lhs.lhs)
+@@ -558,6 +558,7 @@ class YearLookup(Lookup):
+             start, finish = self.year_lookup_bounds(connection, self.rhs)
+             params.extend(self.get_bound_params(start, finish))
+             return '%s %s' % (lhs_sql, rhs_sql), params
++        # For ISO year lookups or non-direct values, use the default behavior
+         return super().as_sql(compiler, connection)
+ 
+     def get_direct_rhs_sql(self, connection, rhs):
+diff --git a/tests/db_functions/datetime/test_extract_trunc.py b/tests/db_functions/datetime/test_extract_trunc.py
+index 258600127f..3099914182 100644
+--- a/tests/db_functions/datetime/test_extract_trunc.py
++++ b/tests/db_functions/datetime/test_extract_trunc.py
+@@ -642,6 +642,30 @@ class DateFunctionTests(TestCase):
+         with self.assertRaisesMessage(ValueError, "Cannot truncate TimeField 'start_time' to DateTimeField"):
+             list(DTModel.objects.annotate(truncated=Trunc('start_time', 'month')))
+ 
++    def test_iso_year_lookup(self):
++        # Create test data
++        start_datetime = datetime(2015, 1, 1, 0, 0, 0)  # ISO year 2015
++        end_datetime = datetime(2016, 1, 3, 0, 0, 0)  # ISO year 2015
++        if settings.USE_TZ:
++            start_datetime = timezone.make_aware(start_datetime, is_dst=False)
++            end_datetime = timezone.make_aware(end_datetime, is_dst=False)
++        self.create_model(start_datetime, end_datetime)
++
++        # Test __iso_year lookup
++        qs = DTModel.objects.filter(start_datetime__iso_year=2015)
++        self.assertEqual(qs.count(), 1)
++        
++        # Test that the EXTRACT function is used for __iso_year lookup
++        self.assertIn('EXTRACT', str(qs.query).upper())
++
++        # Test annotation with ExtractIsoYear
++        qs = DTModel.objects.annotate(iso_year=ExtractIsoYear('start_datetime')).filter(iso_year=2015)
++        self.assertEqual(qs.count(), 1)
++
++        # Ensure that regular year lookup still works
++        qs = DTModel.objects.filter(start_datetime__year=2015)
++        self.assertEqual(qs.count(), 1)
++        self.assertNotIn('EXTRACT', str(qs.query).upper())  # Should use BETWEEN optimization
+         with self.assertRaisesMessage(ValueError, "Cannot truncate DateField 'start_date' to DateTimeField"):
+             list(DTModel.objects.annotate(truncated=Trunc('start_date', 'month', output_field=DateTimeField())))
+ 

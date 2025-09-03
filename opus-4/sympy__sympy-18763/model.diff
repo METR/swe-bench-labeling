@@ -1,0 +1,92 @@
+diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
+index 8743723ea0..62699aca53 100644
+--- a/sympy/printing/latex.py
++++ b/sympy/printing/latex.py
+@@ -698,7 +698,11 @@ def _print_Derivative(self, expr):
+ 
+     def _print_Subs(self, subs):
+         expr, old, new = subs.args
+-        latex_expr = self._print(expr)
++        # Only parenthesize if the expression is Add (to handle cases like -x + y)
++        if expr.is_Add:
++            latex_expr = r"\left(%s\right)" % self._print(expr)
++        else:
++            latex_expr = self._print(expr)
+         latex_old = (self._print(e) for e in old)
+         latex_new = (self._print(e) for e in new)
+         latex_subs = r'\\ '.join(
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..bd3eb8d96a
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,33 @@
++from sympy import Subs, latex
++from sympy.abc import x, y
++
++# Test the specific case mentioned in the issue
++expr = 3*Subs(-x+y, (x,), (1,))
++result = latex(expr)
++expected = r'3 \left. \left(- x + y\right) \right|_{\substack{ x=1 }}'
++
++print(f"Expression: {expr}")
++print(f"LaTeX result: {result}")
++print(f"Expected: {expected}")
++print(f"Test {'PASSED' if result == expected else 'FAILED'}")
++
++# Additional test cases to ensure we don't break anything
++test_cases = [
++    (Subs(x*y, (x, y), (1, 2)), r'\left. x y \right|_{\substack{ x=1\\ y=2 }}'),
++    (Subs(x+y, (x,), (1,)), r'\left. \left(x + y\right) \right|_{\substack{ x=1 }}'),
++    (2*Subs(x*y, (x,), (1,)), r'2 \left. x y \right|_{\substack{ x=1 }}'),
++    (Subs(x**2, (x,), (1,)), r'\left. x^{2} \right|_{\substack{ x=1 }}'),
++]
++
++print("\nAdditional test cases:")
++all_pass = True
++for expr, expected in test_cases:
++    result = latex(expr)
++    passed = result == expected
++    all_pass = all_pass and passed
++    print(f"  {expr}: {'PASSED' if passed else 'FAILED'}")
++    if not passed:
++        print(f"    Expected: {expected}")
++        print(f"    Got: {result}")
++
++print(f"\nOverall: {'All tests PASSED' if all_pass else 'Some tests FAILED'}")
+diff --git a/test_subs_latex.py b/test_subs_latex.py
+new file mode 100644
+index 0000000000..64309e17be
+--- /dev/null
++++ b/test_subs_latex.py
+@@ -0,0 +1,30 @@
++from sympy import Subs, latex
++from sympy.abc import x, y
++
++# Test the issue
++expr = 3*Subs(-x+y, (x,), (1,))
++print("Expression:", expr)
++print("Current LaTeX:", latex(expr))
++print("Expected LaTeX:", r'3 \left. \left(- x + y\right) \right|_{\substack{ x=1 }}')
++
++# Let's also test some other cases
++expr2 = Subs(-x+y, (x,), (1,))
++print("\nExpression:", expr2)
++print("Current LaTeX:", latex(expr2))
++
++expr3 = Subs(x*y, (x,), (1,))
++print("\nExpression:", expr3)
++print("Current LaTeX:", latex(expr3))
++
++expr4 = 3*Subs(x*y, (x,), (1,))
++print("\nExpression:", expr4)
++print("Current LaTeX:", latex(expr4))
++
++# Test with more complex expressions
++expr5 = Subs(x+y+2, (x,), (1,))
++print("\nExpression:", expr5)
++print("Current LaTeX:", latex(expr5))
++
++expr6 = 3*Subs(x+y+2, (x,), (1,))
++print("\nExpression:", expr6)
++print("Current LaTeX:", latex(expr6))

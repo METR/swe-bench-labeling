@@ -1,0 +1,369 @@
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+index cf4df76882..c771623c68 100644
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -30,6 +30,21 @@ class DatabaseClient(BaseDatabaseClient):
+         subprocess_env = os.environ.copy()
+         if passwd:
+             subprocess_env['PGPASSWORD'] = str(passwd)
++        
++        # SSL parameters
++        sslmode = conn_params.get('sslmode')
++        if sslmode:
++            subprocess_env['PGSSLMODE'] = str(sslmode)
++        sslrootcert = conn_params.get('sslrootcert')
++        if sslrootcert:
++            subprocess_env['PGSSLROOTCERT'] = str(sslrootcert)
++        sslcert = conn_params.get('sslcert')
++        if sslcert:
++            subprocess_env['PGSSLCERT'] = str(sslcert)
++        sslkey = conn_params.get('sslkey')
++        if sslkey:
++            subprocess_env['PGSSLKEY'] = str(sslkey)
++        
+         try:
+             # Allow SIGINT to pass to psql to abort queries.
+             signal.signal(signal.SIGINT, signal.SIG_IGN)
+diff --git a/ssl_documentation.md b/ssl_documentation.md
+new file mode 100644
+index 0000000000..7ef983a2a1
+--- /dev/null
++++ b/ssl_documentation.md
+@@ -0,0 +1,42 @@
++# PostgreSQL SSL Support in dbshell
++
++The Django `dbshell` management command now supports PostgreSQL SSL/TLS parameters. When you have SSL configuration in your database settings, these parameters will be automatically passed to the `psql` command-line client.
++
++## Supported SSL Parameters
++
++The following SSL-related parameters from your database `OPTIONS` are supported:
++
++- `sslmode`: Controls the SSL connection mode (e.g., 'require', 'verify-ca', 'verify-full')
++- `sslrootcert`: Path to the root certificate file for server certificate verification
++- `sslcert`: Path to the client certificate file for mutual TLS authentication
++- `sslkey`: Path to the client private key file
++
++## Example Configuration
++
++```python
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.postgresql',
++        'NAME': 'mydatabase',
++        'USER': 'myuser',
++        'PASSWORD': 'mypassword',
++        'HOST': 'localhost',
++        'PORT': '5432',
++        'OPTIONS': {
++            'sslmode': 'verify-ca',
++            'sslrootcert': '/path/to/ca-cert.pem',
++            'sslcert': '/path/to/client-cert.pem',
++            'sslkey': '/path/to/client-key.pem',
++        }
++    }
++}
++```
++
++When you run `python manage.py dbshell` with this configuration, the SSL parameters will be passed to `psql` via environment variables:
++
++- `PGSSLMODE` (from `sslmode`)
++- `PGSSLROOTCERT` (from `sslrootcert`) 
++- `PGSSLCERT` (from `sslcert`)
++- `PGSSLKEY` (from `sslkey`)
++
++This ensures that the interactive shell connection uses the same SSL/TLS settings as your Django application.
+diff --git a/test_dbshell_ssl.py b/test_dbshell_ssl.py
+new file mode 100644
+index 0000000000..9bdac7f795
+--- /dev/null
++++ b/test_dbshell_ssl.py
+@@ -0,0 +1,89 @@
++"""Test script to verify SSL parameters are passed to dbshell."""
++import os
++import unittest
++from unittest.mock import patch, MagicMock
++from django.db.backends.postgresql.client import DatabaseClient
++
++
++class TestPostgreSQLDbshellSSL(unittest.TestCase):
++    
++    def test_ssl_parameters_in_environment(self):
++        """Test that SSL parameters are properly set in the subprocess environment."""
++        conn_params = {
++            'database': 'test_db',
++            'user': 'test_user',
++            'password': 'test_pass',
++            'host': 'localhost',
++            'port': '5432',
++            'sslmode': 'verify-ca',
++            'sslrootcert': '/path/to/ca.crt',
++            'sslcert': '/path/to/client_cert_chain.crt',
++            'sslkey': '/path/to/client_key.key'
++        }
++        
++        with patch('subprocess.run') as mock_run:
++            with patch('os.environ.copy') as mock_env_copy:
++                # Create a mock environment dict
++                mock_env = {}
++                mock_env_copy.return_value = mock_env
++                
++                # Call the method
++                DatabaseClient.runshell_db(conn_params)
++                
++                # Verify subprocess.run was called
++                mock_run.assert_called_once()
++                
++                # Get the environment passed to subprocess.run
++                call_args = mock_run.call_args
++                env = call_args[1]['env']
++                
++                # Verify all SSL parameters are in the environment
++                self.assertEqual(env['PGPASSWORD'], 'test_pass')
++                self.assertEqual(env['PGSSLMODE'], 'verify-ca')
++                self.assertEqual(env['PGSSLROOTCERT'], '/path/to/ca.crt')
++                self.assertEqual(env['PGSSLCERT'], '/path/to/client_cert_chain.crt')
++                self.assertEqual(env['PGSSLKEY'], '/path/to/client_key.key')
++                
++                # Verify the command line arguments
++                args = call_args[0][0]
++                self.assertEqual(args[0], 'psql')
++                self.assertIn('-U', args)
++                self.assertIn('test_user', args)
++                self.assertIn('-h', args)
++                self.assertIn('localhost', args)
++                self.assertIn('-p', args)
++                self.assertIn('5432', args)
++                self.assertEqual(args[-1], 'test_db')
++    
++    def test_ssl_parameters_optional(self):
++        """Test that SSL parameters are optional and only set when provided."""
++        conn_params = {
++            'database': 'test_db',
++            'user': 'test_user',
++            'host': 'localhost',
++            'sslmode': 'require',  # Only set sslmode
++        }
++        
++        with patch('subprocess.run') as mock_run:
++            with patch('os.environ.copy') as mock_env_copy:
++                # Create a mock environment dict
++                mock_env = {}
++                mock_env_copy.return_value = mock_env
++                
++                # Call the method
++                DatabaseClient.runshell_db(conn_params)
++                
++                # Get the environment passed to subprocess.run
++                call_args = mock_run.call_args
++                env = call_args[1]['env']
++                
++                # Verify only sslmode is set
++                self.assertEqual(env['PGSSLMODE'], 'require')
++                self.assertNotIn('PGPASSWORD', env)
++                self.assertNotIn('PGSSLROOTCERT', env)
++                self.assertNotIn('PGSSLCERT', env)
++                self.assertNotIn('PGSSLKEY', env)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/test_integrated_ssl.py b/test_integrated_ssl.py
+new file mode 100644
+index 0000000000..078f1ea457
+--- /dev/null
++++ b/test_integrated_ssl.py
+@@ -0,0 +1,71 @@
++"""Test integrated SSL parameters passing from Django settings to dbshell."""
++import os
++from unittest import mock
++from django.conf import settings
++from django.db import connection
++from django.test import TestCase, override_settings
++
++# Minimal Django settings for the test
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.postgresql',
++            'NAME': 'test_db',
++            'USER': 'test_user',
++            'PASSWORD': 'test_pass',
++            'HOST': 'localhost',
++            'PORT': '5432',
++            'OPTIONS': {
++                'sslmode': 'verify-ca',
++                'sslrootcert': '/path/to/ca.crt',
++                'sslcert': '/path/to/client_cert.crt',
++                'sslkey': '/path/to/client_key.key',
++            }
++        }
++    },
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++)
++
++import django
++django.setup()
++
++from django.db.backends.postgresql.client import DatabaseClient
++
++
++class TestIntegratedSSL(TestCase):
++    
++    def test_ssl_options_from_django_settings(self):
++        """Test that SSL options from Django settings are passed to psql."""
++        
++        def _mock_subprocess_run(*args, env=os.environ, **kwargs):
++            self.subprocess_args = list(*args)
++            self.env = env
++            return mock.Mock()
++        
++        with mock.patch('subprocess.run', new=_mock_subprocess_run):
++            # Get the client from the connection
++            client = connection.client
++            # Get connection params from the connection
++            conn_params = connection.get_connection_params()
++            
++            # Run the shell command
++            DatabaseClient.runshell_db(conn_params)
++            
++            # Verify SSL parameters are in the environment
++            self.assertEqual(self.env.get('PGSSLMODE'), 'verify-ca')
++            self.assertEqual(self.env.get('PGSSLROOTCERT'), '/path/to/ca.crt')
++            self.assertEqual(self.env.get('PGSSLCERT'), '/path/to/client_cert.crt')
++            self.assertEqual(self.env.get('PGSSLKEY'), '/path/to/client_key.key')
++            
++            # Verify basic connection parameters
++            self.assertEqual(self.env.get('PGPASSWORD'), 'test_pass')
++            
++            # Verify command line
++            self.assertEqual(self.subprocess_args[0], 'psql')
++            self.assertIn('test_db', self.subprocess_args)
++
++
++if __name__ == '__main__':
++    import unittest
++    unittest.main()
+diff --git a/test_ssl_simple.py b/test_ssl_simple.py
+new file mode 100644
+index 0000000000..18dd64bae5
+--- /dev/null
++++ b/test_ssl_simple.py
+@@ -0,0 +1,51 @@
++"""Simple test to verify SSL parameters are passed correctly."""
++import subprocess
++from unittest import mock
++
++# Import the client module directly
++from django.db.backends.postgresql.client import DatabaseClient
++
++# Simulate the connection parameters that would come from Django settings
++conn_params = {
++    'database': 'test_db',
++    'user': 'test_user',
++    'password': 'test_pass',
++    'host': 'localhost',
++    'port': '5432',
++    'sslmode': 'verify-ca',
++    'sslrootcert': '/path/to/ca.crt',
++    'sslcert': '/path/to/client_cert.crt',
++    'sslkey': '/path/to/client_key.key',
++}
++
++# Mock subprocess.run to capture the environment
++captured_env = None
++captured_args = None
++
++def mock_subprocess_run(args, **kwargs):
++    global captured_env, captured_args
++    captured_args = args
++    captured_env = kwargs.get('env', {})
++    return subprocess.CompletedProcess(args, 0)
++
++# Patch subprocess.run and run the command
++with mock.patch('subprocess.run', side_effect=mock_subprocess_run):
++    DatabaseClient.runshell_db(conn_params)
++
++# Verify the results
++print("Command arguments:", captured_args)
++print("\nEnvironment variables:")
++print(f"  PGPASSWORD: {captured_env.get('PGPASSWORD')}")
++print(f"  PGSSLMODE: {captured_env.get('PGSSLMODE')}")
++print(f"  PGSSLROOTCERT: {captured_env.get('PGSSLROOTCERT')}")
++print(f"  PGSSLCERT: {captured_env.get('PGSSLCERT')}")
++print(f"  PGSSLKEY: {captured_env.get('PGSSLKEY')}")
++
++# Verify all SSL parameters are present
++assert captured_env.get('PGPASSWORD') == 'test_pass'
++assert captured_env.get('PGSSLMODE') == 'verify-ca'
++assert captured_env.get('PGSSLROOTCERT') == '/path/to/ca.crt'
++assert captured_env.get('PGSSLCERT') == '/path/to/client_cert.crt'
++assert captured_env.get('PGSSLKEY') == '/path/to/client_key.key'
++
++print("\nAll SSL parameters are correctly passed to psql!")
+diff --git a/tests/dbshell/test_postgresql.py b/tests/dbshell/test_postgresql.py
+index a33e7f6482..f8474eed68 100644
+--- a/tests/dbshell/test_postgresql.py
++++ b/tests/dbshell/test_postgresql.py
+@@ -94,3 +94,61 @@ class PostgreSqlDbshellCommandTestCase(SimpleTestCase):
+             DatabaseClient.runshell_db({})
+         # dbshell restores the original handler.
+         self.assertEqual(sigint_handler, signal.getsignal(signal.SIGINT))
++
++
++    def test_ssl_parameters(self):
++        """Test that SSL parameters are properly passed as environment variables."""
++        def _mock_subprocess_run(*args, env=os.environ, **kwargs):
++            self.subprocess_args = list(*args)
++            self.env = env
++            return subprocess.CompletedProcess(self.subprocess_args, 0)
++        
++        with mock.patch('subprocess.run', new=_mock_subprocess_run):
++            DatabaseClient.runshell_db({
++                'database': 'dbname',
++                'user': 'someuser',
++                'password': 'somepassword',
++                'host': 'somehost',
++                'port': '5432',
++                'sslmode': 'verify-ca',
++                'sslrootcert': '/path/to/ca.crt',
++                'sslcert': '/path/to/client_cert.crt',
++                'sslkey': '/path/to/client_key.key',
++            })
++        
++        # Check command line arguments
++        self.assertEqual(
++            self.subprocess_args,
++            ['psql', '-U', 'someuser', '-h', 'somehost', '-p', '5432', 'dbname']
++        )
++        
++        # Check environment variables
++        self.assertEqual(self.env.get('PGPASSWORD'), 'somepassword')
++        self.assertEqual(self.env.get('PGSSLMODE'), 'verify-ca')
++        self.assertEqual(self.env.get('PGSSLROOTCERT'), '/path/to/ca.crt')
++        self.assertEqual(self.env.get('PGSSLCERT'), '/path/to/client_cert.crt')
++        self.assertEqual(self.env.get('PGSSLKEY'), '/path/to/client_key.key')
++
++    def test_partial_ssl_parameters(self):
++        """Test that only provided SSL parameters are set."""
++        def _mock_subprocess_run(*args, env=os.environ, **kwargs):
++            self.subprocess_args = list(*args)
++            self.env = env
++            return subprocess.CompletedProcess(self.subprocess_args, 0)
++        
++        with mock.patch('subprocess.run', new=_mock_subprocess_run):
++            DatabaseClient.runshell_db({
++                'database': 'dbname',
++                'user': 'someuser',
++                'host': 'somehost',
++                'sslmode': 'require',
++                'sslrootcert': '/path/to/ca.crt',
++                # No sslcert or sslkey
++            })
++        
++        # Check that only specified SSL parameters are in the environment
++        self.assertEqual(self.env.get('PGSSLMODE'), 'require')
++        self.assertEqual(self.env.get('PGSSLROOTCERT'), '/path/to/ca.crt')
++        self.assertNotIn('PGSSLCERT', self.env)
++        self.assertNotIn('PGSSLKEY', self.env)
++        self.assertNotIn('PGPASSWORD', self.env)

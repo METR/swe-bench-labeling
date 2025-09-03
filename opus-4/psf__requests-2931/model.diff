@@ -1,0 +1,126 @@
+diff --git a/debug_to_native_string.py b/debug_to_native_string.py
+new file mode 100644
+index 00000000..84bdaf20
+--- /dev/null
++++ b/debug_to_native_string.py
+@@ -0,0 +1,18 @@
++from requests.utils import to_native_string
++from requests.compat import is_py2, builtin_str
++
++# Test to_native_string behavior
++print("Python 2:", is_py2)
++print("builtin_str type:", builtin_str)
++
++# Test case from issue
++data = u"ööö".encode("utf-8")
++print("\nOriginal data:", data)
++print("Type:", type(data))
++
++# Try to apply to_native_string
++try:
++    result = to_native_string(data)
++    print("Success! Result:", result)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
+diff --git a/requests/models.py b/requests/models.py
+index 9c624d3c..5df8be65 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -81,7 +81,8 @@ class RequestEncodingMixin(object):
+         """
+ 
+         if isinstance(data, (str, bytes)):
+-            return to_native_string(data)
++            # Use UTF-8 encoding for to_native_string to handle non-ASCII bytes
++            return to_native_string(data, encoding='utf-8')
+         elif hasattr(data, 'read'):
+             return data
+         elif hasattr(data, '__iter__'):
+diff --git a/test_final.py b/test_final.py
+new file mode 100644
+index 00000000..8b137891
+--- /dev/null
++++ b/test_final.py
+@@ -0,0 +1 @@
++
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 00000000..c842a181
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,59 @@
++import requests
++from requests.models import PreparedRequest
++
++# Test the fix directly
++print("Testing binary data encoding...")
++
++# Test case 1: Binary data with non-ASCII bytes (from the issue)
++data = u"ööö".encode("utf-8")
++print(f"\nTest 1 - Binary data with UTF-8 encoded text: {data}")
++
++req = PreparedRequest()
++req.headers = {}
++try:
++    req.prepare_body(data=data, files=None)
++    print(f"Success! Body is: {req.body}")
++    print(f"Body type: {type(req.body)}")
++except Exception as e:
++    print(f"Error: {type(e).__name__} - {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test case 2: ASCII bytes (should also work)
++data2 = b"test=foo"
++print(f"\nTest 2 - ASCII bytes: {data2}")
++
++req2 = PreparedRequest()
++req2.headers = {}
++try:
++    req2.prepare_body(data=data2, files=None)
++    print(f"Success! Body is: {req2.body}")
++    print(f"Body type: {type(req2.body)}")
++except Exception as e:
++    print(f"Error: {type(e).__name__} - {e}")
++
++# Test case 3: String data (should still work)
++data3 = "hello world"
++print(f"\nTest 3 - String data: {data3}")
++
++req3 = PreparedRequest()
++req3.headers = {}
++try:
++    req3.prepare_body(data=data3, files=None)
++    print(f"Success! Body is: {req3.body}")
++    print(f"Body type: {type(req3.body)}")
++except Exception as e:
++    print(f"Error: {type(e).__name__} - {e}")
++
++# Test case 4: Dict data (should be URL encoded)
++data4 = {"key": "value", "test": "ööö"}
++print(f"\nTest 4 - Dict data: {data4}")
++
++req4 = PreparedRequest()
++req4.headers = {}
++try:
++    req4.prepare_body(data=data4, files=None)
++    print(f"Success! Body is: {req4.body}")
++    print(f"Body type: {type(req4.body)}")
++except Exception as e:
++    print(f"Error: {type(e).__name__} - {e}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..7938cd14
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,10 @@
++import requests
++
++# Test case from the issue
++try:
++    response = requests.put("http://httpbin.org/put", data=u"ööö".encode("utf-8"))
++    print("Success! Response status:", response.status_code)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
++    import traceback
++    traceback.print_exc()

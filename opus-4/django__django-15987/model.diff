@@ -1,0 +1,298 @@
+diff --git a/django/core/management/commands/loaddata.py b/django/core/management/commands/loaddata.py
+index ac97f13161..7b7b2e65f1 100644
+--- a/django/core/management/commands/loaddata.py
++++ b/django/core/management/commands/loaddata.py
+@@ -362,12 +362,15 @@ class Command(BaseCommand):
+         """
+         dirs = []
+         fixture_dirs = settings.FIXTURE_DIRS
+-        if len(fixture_dirs) != len(set(fixture_dirs)):
++        # Convert all paths to strings for duplicate detection
++        fixture_dirs_str = [os.fspath(d) for d in fixture_dirs]
++        if len(fixture_dirs_str) != len(set(fixture_dirs_str)):
+             raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
+         for app_config in apps.get_app_configs():
+             app_label = app_config.label
+             app_dir = os.path.join(app_config.path, "fixtures")
+-            if app_dir in fixture_dirs:
++            # Also convert to string when checking if app_dir is in fixture_dirs
++            if app_dir in fixture_dirs_str:
+                 raise ImproperlyConfigured(
+                     "'%s' is a default fixture directory for the '%s' app "
+                     "and cannot be listed in settings.FIXTURE_DIRS."
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..d3cf228b3e
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,43 @@
++import os
++from pathlib import Path
++
++# Test edge cases for os.fspath()
++
++# Test 1: Empty list
++fixture_dirs = []
++fixture_dirs_str = [os.fspath(d) for d in fixture_dirs]
++print(f"Empty list: {fixture_dirs_str}")
++
++# Test 2: None value - this would raise TypeError
++try:
++    fixture_dirs = [None]
++    fixture_dirs_str = [os.fspath(d) for d in fixture_dirs]
++except TypeError as e:
++    print(f"None value error: {e}")
++
++# Test 3: Bytes path (valid on Unix)
++try:
++    fixture_dirs = [b'/path/to/fixtures']
++    fixture_dirs_str = [os.fspath(d) for d in fixture_dirs]
++    print(f"Bytes path: {fixture_dirs_str}")
++except Exception as e:
++    print(f"Bytes path error: {e}")
++
++# Test 4: Integer (invalid)
++try:
++    fixture_dirs = [123]
++    fixture_dirs_str = [os.fspath(d) for d in fixture_dirs]
++except TypeError as e:
++    print(f"Integer error: {e}")
++
++# Test 5: Custom path-like object
++class CustomPath:
++    def __init__(self, path):
++        self._path = path
++    
++    def __fspath__(self):
++        return self._path
++
++fixture_dirs = [CustomPath('/custom/path')]
++fixture_dirs_str = [os.fspath(d) for d in fixture_dirs]
++print(f"Custom path-like object: {fixture_dirs_str}")
+diff --git a/test_fixture_dirs_path.py b/test_fixture_dirs_path.py
+new file mode 100644
+index 0000000000..f2617859f9
+--- /dev/null
++++ b/test_fixture_dirs_path.py
+@@ -0,0 +1,48 @@
++from pathlib import Path
++
++# Test showing the potential issue with Path duplicates
++# Let's test various scenarios
++
++# Same path as Path objects
++path1 = Path("/some/path")
++path2 = Path("/some/path")
++print(f"Same path as Path objects:")
++print(f"  path1 == path2: {path1 == path2}")
++print(f"  len([path1, path2]) != len(set([path1, path2])): {len([path1, path2]) != len(set([path1, path2]))}")
++
++# Different forms of the same path
++path3 = Path("/some/./path")  # With redundant ./
++path4 = Path("/some/../some/path")  # With ../
++path5 = Path("/some//path")  # With double slashes
++
++print(f"\nDifferent forms of same path:")
++print(f"  path1: {path1}")
++print(f"  path3 (with ./): {path3}")
++print(f"  path4 (with ../): {path4}")  
++print(f"  path5 (with //): {path5}")
++
++print(f"\nEquality checks:")
++print(f"  path1 == path3: {path1 == path3}")
++print(f"  path1 == path4: {path1 == path4}")
++print(f"  path1 == path5: {path1 == path5}")
++
++print(f"\nSet uniqueness:")
++paths = [path1, path3, path4, path5]
++print(f"  Number of paths: {len(paths)}")
++print(f"  Number of unique paths in set: {len(set(paths))}")
++print(f"  Set contains: {set(paths)}")
++
++# Let's also check what happens with relative vs absolute paths
++rel_path = Path("some/path")
++abs_path = Path("/some/path")
++print(f"\nRelative vs absolute paths:")
++print(f"  rel_path: {rel_path}")
++print(f"  abs_path: {abs_path}")
++print(f"  rel_path == abs_path: {rel_path == abs_path}")
++
++# Check with mixed strings and Paths
++print(f"\nMixed strings and Paths:")
++mixed = ["/some/path", Path("/some/path")]
++print(f"  List: {mixed}")
++print(f"  Set: {set(mixed)}")
++print(f"  Duplicate detected: {len(mixed) != len(set(mixed))}")
+diff --git a/test_fixture_dirs_path_django.py b/test_fixture_dirs_path_django.py
+new file mode 100644
+index 0000000000..71036ca7aa
+--- /dev/null
++++ b/test_fixture_dirs_path_django.py
+@@ -0,0 +1,51 @@
++"""
++Test case for loaddata command's handling of Path objects in FIXTURE_DIRS.
++This test can be added to Django's test suite in tests/fixtures/tests.py
++"""
++import os
++import tempfile
++from pathlib import Path
++
++from django.core.exceptions import ImproperlyConfigured
++from django.core.management import CommandError, call_command
++from django.test import TestCase, override_settings
++
++
++class FixtureDirsPathTests(TestCase):
++    """Test fixture directory handling with Path objects."""
++
++    def test_fixture_dirs_with_path_duplicates(self):
++        """settings.FIXTURE_DIRS should detect duplicates even with Path objects."""
++        # String duplicates (existing behavior)
++        with override_settings(FIXTURE_DIRS=['/path/to/fixtures', '/path/to/fixtures']):
++            with self.assertRaisesMessage(ImproperlyConfigured, "settings.FIXTURE_DIRS contains duplicates."):
++                call_command('loaddata', 'dummy', verbosity=0)
++
++        # Path object duplicates
++        with override_settings(FIXTURE_DIRS=[Path('/path/to/fixtures'), Path('/path/to/fixtures')]):
++            with self.assertRaisesMessage(ImproperlyConfigured, "settings.FIXTURE_DIRS contains duplicates."):
++                call_command('loaddata', 'dummy', verbosity=0)
++
++        # Mixed string and Path duplicates (the bug that was fixed)
++        with override_settings(FIXTURE_DIRS=['/path/to/fixtures', Path('/path/to/fixtures')]):
++            with self.assertRaisesMessage(ImproperlyConfigured, "settings.FIXTURE_DIRS contains duplicates."):
++                call_command('loaddata', 'dummy', verbosity=0)
++
++    def test_fixture_dirs_with_path_objects(self):
++        """Path objects in FIXTURE_DIRS should work correctly."""
++        with tempfile.TemporaryDirectory() as temp_dir:
++            # Create a fixture file
++            fixture_dir = Path(temp_dir) / 'fixtures'
++            fixture_dir.mkdir()
++            fixture_file = fixture_dir / 'test.json'
++            fixture_file.write_text('[]')
++
++            # Test with Path object in FIXTURE_DIRS
++            with override_settings(FIXTURE_DIRS=[Path(temp_dir) / 'fixtures']):
++                # This should work without errors (though the fixture is empty)
++                call_command('loaddata', 'test', verbosity=0)
++
++            # Test with mixed strings and Path objects
++            with override_settings(FIXTURE_DIRS=[str(fixture_dir), Path(temp_dir) / 'other']):
++                # This should work without errors
++                call_command('loaddata', 'test', verbosity=0)
+diff --git a/test_fspath.py b/test_fspath.py
+new file mode 100644
+index 0000000000..f2c20519d2
+--- /dev/null
++++ b/test_fspath.py
+@@ -0,0 +1,28 @@
++import os
++from pathlib import Path
++
++# Test that os.fspath works correctly with both strings and Path objects
++test_string = "/path/to/fixtures"
++test_path = Path("/path/to/fixtures")
++
++print(f"os.fspath('{test_string}') = '{os.fspath(test_string)}'")
++print(f"os.fspath(Path('{test_path}')) = '{os.fspath(test_path)}'")
++print(f"Both results are equal: {os.fspath(test_string) == os.fspath(test_path)}")
++
++# Test with various path types
++paths = [
++    "/path/to/fixtures",
++    Path("/path/to/fixtures"),
++    Path("/path/./to/fixtures"),
++    "/path/./to/fixtures",
++]
++
++print("\nConverting all to strings with os.fspath:")
++for p in paths:
++    print(f"  {repr(p)} -> '{os.fspath(p)}'")
++
++# Verify that different representations become the same
++print(f"\nComparing normalized paths:")
++normalized = [os.fspath(p) for p in paths[:2]]
++print(f"set({normalized}) = {set(normalized)}")
++print(f"Duplicates detected: {len(normalized) != len(set(normalized))}")
+diff --git a/test_loaddata_fixture_dirs.py b/test_loaddata_fixture_dirs.py
+new file mode 100644
+index 0000000000..ecfab6b438
+--- /dev/null
++++ b/test_loaddata_fixture_dirs.py
+@@ -0,0 +1,76 @@
++"""Test for the loaddata command fixture directory duplicate detection issue."""
++import os
++import sys
++from pathlib import Path
++from unittest.mock import Mock, patch
++
++# Add Django to the path
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++from django.core.management.commands.loaddata import Command
++from django.core.exceptions import ImproperlyConfigured
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++import django
++django.setup()
++
++def test_fixture_dirs_with_path_duplicates():
++    """Test that duplicates are detected when FIXTURE_DIRS contains Path objects."""
++    
++    # Test 1: String duplicates (should be detected - current behavior)
++    print("Test 1: String duplicates")
++    with patch.object(settings, 'FIXTURE_DIRS', ['/path/to/fixtures', '/path/to/fixtures']):
++        cmd = Command()
++        cmd.app_label = None  # Initialize the attribute
++        try:
++            _ = cmd.fixture_dirs
++            print("  FAILED: No exception raised for string duplicates")
++        except ImproperlyConfigured as e:
++            print(f"  PASSED: {e}")
++    
++    # Test 2: Path object duplicates (should be detected)
++    print("\nTest 2: Path object duplicates")
++    with patch.object(settings, 'FIXTURE_DIRS', [Path('/path/to/fixtures'), Path('/path/to/fixtures')]):
++        cmd = Command()
++        cmd.app_label = None  # Initialize the attribute
++        try:
++            _ = cmd.fixture_dirs
++            print("  FAILED: No exception raised for Path duplicates")
++        except ImproperlyConfigured as e:
++            print(f"  PASSED: {e}")
++    
++    # Test 3: Mixed string and Path duplicates (currently NOT detected - this is the bug)
++    print("\nTest 3: Mixed string and Path duplicates (THE BUG)")
++    with patch.object(settings, 'FIXTURE_DIRS', ['/path/to/fixtures', Path('/path/to/fixtures')]):
++        cmd = Command()
++        cmd.app_label = None  # Initialize the attribute
++        try:
++            _ = cmd.fixture_dirs
++            print("  FAILED: No exception raised for mixed string/Path duplicates - THIS IS THE BUG!")
++        except ImproperlyConfigured as e:
++            print(f"  PASSED: {e}")
++    
++    # Test 4: No duplicates with mixed types (should pass)
++    print("\nTest 4: No duplicates with mixed types")
++    with patch.object(settings, 'FIXTURE_DIRS', ['/path/to/fixtures1', Path('/path/to/fixtures2')]):
++        cmd = Command()
++        cmd.app_label = None  # Initialize the attribute
++        try:
++            dirs = cmd.fixture_dirs
++            print(f"  PASSED: No exception raised, dirs={dirs[-2:]}")  # Show last 2 (excluding '')
++        except ImproperlyConfigured as e:
++            print(f"  FAILED: Unexpected exception: {e}")
++
++if __name__ == '__main__':
++    test_fixture_dirs_with_path_duplicates()

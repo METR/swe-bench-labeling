@@ -1,0 +1,139 @@
+diff --git a/debug_nested.py b/debug_nested.py
+new file mode 100644
+index 0000000000..ba24887112
+--- /dev/null
++++ b/debug_nested.py
+@@ -0,0 +1,22 @@
++from sympy import symbols, Min, Max, pycode
++
++x, y, z = symbols("x y z")
++
++# Test nested Min/Max
++nested1 = Min(Max(x, y), z)
++nested2 = Max(Min(x, y), z)
++
++print(f"Min(Max(x, y), z) -> {pycode(nested1)}")
++print(f"Max(Min(x, y), z) -> {pycode(nested2)}")
++
++# Also test different nested combinations
++nested3 = Min(x, Max(y, z))
++nested4 = Max(x, Min(y, z))
++
++print(f"Min(x, Max(y, z)) -> {pycode(nested3)}")
++print(f"Max(x, Min(y, z)) -> {pycode(nested4)}")
++
++# Test with symbol c
++a, b, c = symbols("a b c")
++nested5 = Min(Max(a, b), c)
++print(f"Min(Max(a, b), c) -> {pycode(nested5)}")
+diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
+index 3a72ab606c..7d5ca243df 100644
+--- a/sympy/printing/pycode.py
++++ b/sympy/printing/pycode.py
+@@ -470,6 +470,12 @@ def _print_Symbol(self, expr):
+     _print_fresnelc = CodePrinter._print_not_supported
+     _print_fresnels = CodePrinter._print_not_supported
+ 
++    def _print_Min(self, expr):
++        return "min({})".format(", ".join(self._print(arg) for arg in expr.args))
++
++    def _print_Max(self, expr):
++        return "max({})".format(", ".join(self._print(arg) for arg in expr.args))
++
+ 
+ for k in PythonCodePrinter._kf:
+     setattr(PythonCodePrinter, '_print_%s' % k, _print_known_func)
+diff --git a/sympy/printing/tests/test_pycode.py b/sympy/printing/tests/test_pycode.py
+index 9c1285d7dd..afd95fc055 100644
+--- a/sympy/printing/tests/test_pycode.py
++++ b/sympy/printing/tests/test_pycode.py
+@@ -392,3 +392,28 @@ def test_numerical_accuracy_functions():
+     assert prntr.doprint(expm1(x)) == 'numpy.expm1(x)'
+     assert prntr.doprint(log1p(x)) == 'numpy.log1p(x)'
+     assert prntr.doprint(cosm1(x)) == 'scipy.special.cosm1(x)'
++
++
++def test_Min_Max():
++    from sympy.functions.elementary.miscellaneous import (Min, Max)
++    from sympy.functions import sin, cos
++    
++    # Test Min with 2 arguments
++    assert pycode(Min(x, y)) == "min(x, y)"
++    
++    # Test Max with 2 arguments  
++    assert pycode(Max(x, y)) == "max(x, y)"
++    
++    # Test Min with 3 arguments
++    assert pycode(Min(x, y, z)) == "min(x, y, z)"
++    
++    # Test Max with 3 arguments
++    assert pycode(Max(x, y, z)) == "max(x, y, z)"
++    
++    # Test with expressions
++    assert pycode(Min(sin(x), cos(x))) == "min(math.sin(x), math.cos(x))"
++    assert pycode(Max(sin(x), cos(x))) == "max(math.sin(x), math.cos(x))"
++    
++    # Test nested Min/Max (note: SymPy may reorder arguments)
++    assert pycode(Min(Max(x, y), z)) == "min(z, max(x, y))"
++    assert pycode(Max(Min(x, y), z)) == "max(z, min(x, y))"
+diff --git a/test_min_max.py b/test_min_max.py
+new file mode 100644
+index 0000000000..e6abe1a43b
+--- /dev/null
++++ b/test_min_max.py
+@@ -0,0 +1,10 @@
++from sympy import symbols, Min, Max, pycode
++
++a, b = symbols("a b")
++c = Min(a, b)
++d = Max(a, b)
++
++print("Min output:")
++print(pycode(c))
++print("\nMax output:")
++print(pycode(d))
+diff --git a/test_min_max_comprehensive.py b/test_min_max_comprehensive.py
+new file mode 100644
+index 0000000000..29afecf424
+--- /dev/null
++++ b/test_min_max_comprehensive.py
+@@ -0,0 +1,39 @@
++from sympy import symbols, Min, Max, pycode, sqrt, sin, cos
++
++# Test with 2 arguments
++a, b = symbols("a b")
++c = Min(a, b)
++d = Max(a, b)
++
++print("Test with 2 arguments:")
++print(f"Min(a, b) -> {pycode(c)}")
++print(f"Max(a, b) -> {pycode(d)}")
++
++# Test with 3 arguments
++x, y, z = symbols("x y z")
++e = Min(x, y, z)
++f = Max(x, y, z)
++
++print("\nTest with 3 arguments:")
++print(f"Min(x, y, z) -> {pycode(e)}")
++print(f"Max(x, y, z) -> {pycode(f)}")
++
++# Test with expressions
++expr1 = Min(sin(x), cos(x))
++expr2 = Max(sqrt(x), x**2)
++
++print("\nTest with expressions:")
++print(f"Min(sin(x), cos(x)) -> {pycode(expr1)}")
++print(f"Max(sqrt(x), x**2) -> {pycode(expr2)}")
++
++# Test nested Min/Max
++nested = Min(Max(a, b), c)
++print("\nTest nested Min/Max:")
++print(f"Min(Max(a, b), c) -> {pycode(nested)}")
++
++# Test with numeric values
++num_min = Min(5, 3, 7)
++num_max = Max(5, 3, 7)
++print("\nTest with numeric values:")
++print(f"Min(5, 3, 7) -> {pycode(num_min)}")
++print(f"Max(5, 3, 7) -> {pycode(num_max)}")

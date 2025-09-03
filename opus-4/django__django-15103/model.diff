@@ -1,0 +1,172 @@
+diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py
+index 5ccef38048..12f0d4caaa 100644
+--- a/django/template/defaultfilters.py
++++ b/django/template/defaultfilters.py
+@@ -83,7 +83,7 @@ def escapejs_filter(value):
+ 
+ 
+ @register.filter(is_safe=True)
+-def json_script(value, element_id):
++def json_script(value, element_id=None):
+     """
+     Output value JSON-encoded, wrapped in a <script type="application/json">
+     tag.
+diff --git a/django/utils/html.py b/django/utils/html.py
+index da1b5675ec..8147c5d3d0 100644
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -61,7 +61,7 @@ _json_script_escapes = {
+ }
+ 
+ 
+-def json_script(value, element_id):
++def json_script(value, element_id=None):
+     """
+     Escape all the HTML/XML special characters with their unicode escapes, so
+     value is safe to be output anywhere except for inside a tag attribute. Wrap
+@@ -69,10 +69,16 @@ def json_script(value, element_id):
+     """
+     from django.core.serializers.json import DjangoJSONEncoder
+     json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)
+-    return format_html(
+-        '<script id="{}" type="application/json">{}</script>',
+-        element_id, mark_safe(json_str)
+-    )
++    if element_id:
++        return format_html(
++            '<script id="{}" type="application/json">{}</script>',
++            element_id, mark_safe(json_str)
++        )
++    else:
++        return format_html(
++            '<script type="application/json">{}</script>',
++            mark_safe(json_str)
++        )
+ 
+ 
+ def conditional_escape(text):
+diff --git a/test_json_script_optional.py b/test_json_script_optional.py
+new file mode 100644
+index 0000000000..7abe962749
+--- /dev/null
++++ b/test_json_script_optional.py
+@@ -0,0 +1,45 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': False,
++        'OPTIONS': {
++            'context_processors': [],
++        },
++    }]
++)
++django.setup()
++
++from django.utils.html import json_script
++
++# Test direct function call
++print("Test 1 - Direct call with None:")
++result1 = json_script({'test': 'value'}, None)
++print(result1)
++print()
++
++print("Test 2 - Direct call without id:")
++result2 = json_script({'test': 'value'})
++print(result2)
++print()
++
++# Test template usage
++from django.template import Template, Context
++
++print("Test 3 - Template with id:")
++template3 = Template("{{ value|json_script:'test_id' }}")
++context3 = Context({'value': {'test': 'value'}})
++result3 = template3.render(context3)
++print(result3)
++print()
++
++print("Test 4 - Template without id:")
++template4 = Template("{{ value|json_script }}")
++context4 = Context({'value': {'test': 'value'}})
++result4 = template4.render(context4)
++print(result4)
++print()
+diff --git a/tests/template_tests/filter_tests/test_json_script_optional.py b/tests/template_tests/filter_tests/test_json_script_optional.py
+new file mode 100644
+index 0000000000..7837971b81
+--- /dev/null
++++ b/tests/template_tests/filter_tests/test_json_script_optional.py
+@@ -0,0 +1,32 @@
++from django.test import SimpleTestCase
++
++from ..utils import setup
++
++
++class JsonScriptOptionalTests(SimpleTestCase):
++
++    @setup({'json-tag-no-id': '{{ value|json_script }}'})
++    def test_without_id(self):
++        output = self.engine.render_to_string(
++            'json-tag-no-id',
++            {'value': {'a': 'testing\r\njson \'string" <b>escaping</b>'}}
++        )
++        self.assertEqual(
++            output,
++            '<script type="application/json">'
++            '{"a": "testing\\r\\njson \'string\\" \\u003Cb\\u003Eescaping\\u003C/b\\u003E"}'
++            '</script>'
++        )
++
++    @setup({'json-tag-with-id': '{{ value|json_script:"test_id" }}'})
++    def test_with_id(self):
++        output = self.engine.render_to_string(
++            'json-tag-with-id',
++            {'value': {'a': 'testing\r\njson \'string" <b>escaping</b>'}}
++        )
++        self.assertEqual(
++            output,
++            '<script id="test_id" type="application/json">'
++            '{"a": "testing\\r\\njson \'string\\" \\u003Cb\\u003Eescaping\\u003C/b\\u003E"}'
++            '</script>'
++        )
+diff --git a/tests/utils_tests/test_html.py b/tests/utils_tests/test_html.py
+index 909620ea3f..74ac51b28e 100644
+--- a/tests/utils_tests/test_html.py
++++ b/tests/utils_tests/test_html.py
+@@ -172,6 +172,31 @@ class TestUtilsHtml(SimpleTestCase):
+         for arg, expected in tests:
+             with self.subTest(arg=arg):
+                 self.assertEqual(json_script(arg, 'test_id'), expected)
++        
++        # Test optional element_id parameter
++        optional_tests = (
++            # "<", ">" and "&" are quoted inside JSON strings without id
++            ('&<>', '<script type="application/json">"\\u0026\\u003C\\u003E"</script>'),
++            # "<", ">" and "&" are quoted inside JSON objects without id
++            (
++                {'a': '<script>test&ing</script>'},
++                '<script type="application/json">'
++                '{"a": "\\u003Cscript\\u003Etest\\u0026ing\\u003C/script\\u003E"}</script>'
++            ),
++            # Lazy strings are quoted without id
++            (lazystr('&<>'), '<script type="application/json">"\\u0026\\u003C\\u003E"</script>'),
++            (
++                {'a': lazystr('<script>test&ing</script>')},
++                '<script type="application/json">'
++                '{"a": "\\u003Cscript\\u003Etest\\u0026ing\\u003C/script\\u003E"}</script>'
++            ),
++        )
++        for arg, expected in optional_tests:
++            with self.subTest(arg=arg):
++                # Test with None as element_id
++                self.assertEqual(json_script(arg, None), expected)
++                # Test without element_id argument
++                self.assertEqual(json_script(arg), expected)
+ 
+     def test_smart_urlquote(self):
+         items = (

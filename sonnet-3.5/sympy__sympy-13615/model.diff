@@ -1,0 +1,43 @@
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index 917717bb74..0320cb09ae 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -1719,17 +1719,32 @@ def reduce(A, B):
+         Simplify a :class:`Complement`.
+ 
+         """
+-        if B == S.UniversalSet or A.is_subset(B):
++        if B == S.UniversalSet:
+             return EmptySet()
+ 
+         if isinstance(B, Union):
+             return Intersection(s.complement(A) for s in B.args)
+ 
+-        result = B._complement(A)
+-        if result != None:
+-            return result
+-        else:
+-            return Complement(A, B, evaluate=False)
++        if isinstance(A, FiniteSet):
++            # Handle the case where A contains both symbols and numbers
++            numeric_elements = [elem for elem in A if elem.is_number]
++            symbolic_elements = [elem for elem in A if not elem.is_number]
++            
++            if isinstance(B, Interval):
++                numeric_complement = FiniteSet(*[elem for elem in numeric_elements if elem < B.start or elem > B.end])
++            elif isinstance(B, FiniteSet):
++                numeric_complement = FiniteSet(*[elem for elem in numeric_elements if elem not in B])
++            else:
++                # For other set types, we can't determine the complement of numeric elements
++                numeric_complement = FiniteSet(*numeric_elements)
++            
++            if symbolic_elements:
++                return Union(numeric_complement, FiniteSet(*symbolic_elements))
++            else:
++                return numeric_complement
++
++        # For all other cases, return the unevaluated Complement
++        return Complement(A, B, evaluate=False)
+ 
+     def _contains(self, other):
+         A = self.args[0]

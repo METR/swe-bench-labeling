@@ -1,0 +1,77 @@
+diff --git a/pylint/pyreverse/diadefslib.py b/pylint/pyreverse/diadefslib.py
+index 5d803c929..eb627dcef 100644
+--- a/pylint/pyreverse/diadefslib.py
++++ b/pylint/pyreverse/diadefslib.py
+@@ -83,7 +83,27 @@ class DiaDefGenerator:
+     def add_class(self, node):
+         """visit one class and add it to diagram"""
+         self.linker.visit(node)
+-        self.classdiagram.add_object(self.get_title(node), node)
++        attributes = self.get_attributes_with_type_hints(node)
++        self.classdiagram.add_object(self.get_title(node), node, attributes=attributes)
++
++    def get_attributes_with_type_hints(self, node):
++        """Get class attributes with their type hints"""
++        attributes = []
++        for attr_name, attr_node in node.instance_attrs.items():
++            type_hint = self.get_type_hint(attr_node)
++            if type_hint:
++                attributes.append(f"{attr_name}: {type_hint}")
++            else:
++                attributes.append(attr_name)
++        return attributes
++
++    def get_type_hint(self, attr_node):
++        """Get the type hint for an attribute"""
++        if isinstance(attr_node, astroid.AssignAttr):
++            assigned = attr_node.assigned_stmts()
++            if assigned and isinstance(assigned[0], astroid.AnnAssign):
++                return assigned[0].annotation.as_string()
++        return None
+ 
+     def get_ancestors(self, node, level):
+         """return ancestor nodes of a class node"""
+diff --git a/pylint/pyreverse/diagrams.py b/pylint/pyreverse/diagrams.py
+index bf9f67af6..2aefc4257 100644
+--- a/pylint/pyreverse/diagrams.py
++++ b/pylint/pyreverse/diagrams.py
+@@ -108,10 +108,15 @@ class ClassDiagram(Figure, FilterMixIn):
+         ]
+         return sorted(methods, key=lambda n: n.name)
+ 
+-    def add_object(self, title, node):
++    def add_object(self, title, node, attributes=None):
+         """create a diagram object"""
+         assert node not in self._nodes
+         ent = DiagramEntity(title, node)
++        if attributes:
++            ent.attrs = attributes
++        else:
++            ent.attrs = self.get_attrs(node)
++        ent.methods = self.get_methods(node)
+         self._nodes[node] = ent
+         self.objects.append(ent)
+ 
+diff --git a/pylint/pyreverse/writer.py b/pylint/pyreverse/writer.py
+index 0d80bb9ca..b54b63789 100644
+--- a/pylint/pyreverse/writer.py
++++ b/pylint/pyreverse/writer.py
+@@ -132,14 +132,15 @@ class DotWriter(DiagramWriter):
+         if obj.shape == "interface":
+             label = "«interface»\\n%s" % label
+         if not self.config.only_classnames:
+-            label = r"{}|{}\l|".format(label, r"\l".join(obj.attrs))
++            attrs = r"\l".join(obj.attrs)
++            methods = ""
+             for func in obj.methods:
+                 if func.args.args:
+                     args = [arg.name for arg in func.args.args if arg.name != "self"]
+                 else:
+                     args = []
+-                label = r"{}{}({})\l".format(label, func.name, ", ".join(args))
+-            label = "{%s}" % label
++                methods += r"{}({})\l".format(func.name, ", ".join(args))
++            label = "{%s|%s|%s}" % (label, attrs, methods)
+         if is_exception(obj.node):
+             return dict(fontcolor="red", label=label, shape="record")
+         return dict(label=label, shape="record")

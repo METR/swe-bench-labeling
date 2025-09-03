@@ -1,0 +1,36 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 387deca527..1ba73379b3 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -451,6 +451,15 @@ class QuerySet:
+         obj = self.model(**kwargs)
+         self._for_write = True
+         obj.save(force_insert=True, using=self.db)
++        
++        # Apply from_db_value for fields with custom converters
++        for field in obj._meta.fields:
++            if hasattr(field, 'from_db_value'):
++                attr = field.attname
++                value = getattr(obj, attr)
++                converted = field.from_db_value(value, None, connections[self.db])
++                setattr(obj, attr, converted)
++        
+         return obj
+ 
+     def _prepare_for_bulk_create(self, objs):
+@@ -522,6 +531,15 @@ class QuerySet:
+                     obj_without_pk._state.adding = False
+                     obj_without_pk._state.db = self.db
+ 
++        # Apply from_db_value for fields with custom converters
++        for obj in objs:
++            for field in opts.fields:
++                if hasattr(field, 'from_db_value'):
++                    attr = field.attname
++                    value = getattr(obj, attr)
++                    converted = field.from_db_value(value, None, connection)
++                    setattr(obj, attr, converted)
++
+         return objs
+ 
+     def bulk_update(self, objs, fields, batch_size=None):

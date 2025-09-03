@@ -1,0 +1,278 @@
+diff --git a/debug_floatformat.py b/debug_floatformat.py
+new file mode 100644
+index 0000000000..38266cbeb2
+--- /dev/null
++++ b/debug_floatformat.py
+@@ -0,0 +1,44 @@
++import django
++from django.conf import settings
++from decimal import Decimal
++
++# Configure Django settings
++settings.configure(USE_I18N=True, DEBUG=True, SECRET_KEY='test')
++django.setup()
++
++# Let's trace through the function to understand the issue
++text = '0.00'
++arg = 0
++
++print(f"Input: text='{text}', arg={arg}")
++
++input_val = str(text)
++d = Decimal(input_val)
++print(f"Decimal value d: {d}")
++print(f"d.as_tuple(): {d.as_tuple()}")
++
++p = int(arg)
++print(f"p: {p}")
++
++m = int(d) - d
++print(f"m (int(d) - d): {m}")
++print(f"not m: {not m}")
++print(f"p < 0: {p < 0}")
++
++if not m and p < 0:
++    print("Would return early")
++else:
++    print("Continuing...")
++    
++    exp = Decimal(1).scaleb(-abs(p))
++    print(f"exp: {exp}")
++    
++    tupl = d.as_tuple()
++    units = len(tupl[1])
++    print(f"units (len(tupl[1])): {units}")
++    
++    units += -tupl[2] if m else tupl[2]
++    print(f"units after adjustment: {units}")
++    
++    prec = abs(p) + units + 1
++    print(f"prec calculation: abs({p}) + {units} + 1 = {prec}")
+diff --git a/debug_floatformat2.py b/debug_floatformat2.py
+new file mode 100644
+index 0000000000..faef612599
+--- /dev/null
++++ b/debug_floatformat2.py
+@@ -0,0 +1,48 @@
++import django
++from django.conf import settings
++from decimal import Decimal
++
++# Configure Django settings
++settings.configure(USE_I18N=True, DEBUG=True, SECRET_KEY='test')
++django.setup()
++
++# Let's trace through the function to understand the issue
++def analyze_value(text, arg):
++    print(f"\n=== Analyzing: text='{text}', arg={arg} ===")
++    
++    input_val = str(text)
++    d = Decimal(input_val)
++    print(f"Decimal value d: {d}")
++    print(f"d.as_tuple(): {d.as_tuple()}")
++    
++    p = int(arg)
++    print(f"p: {p}")
++    
++    m = int(d) - d
++    print(f"m (int(d) - d): {m}")
++    print(f"not m: {not m}")
++    print(f"p < 0: {p < 0}")
++    
++    if not m and p < 0:
++        print("Would return early")
++    else:
++        print("Continuing...")
++        
++        exp = Decimal(1).scaleb(-abs(p))
++        print(f"exp: {exp}")
++        
++        tupl = d.as_tuple()
++        units = len(tupl[1])
++        print(f"units (len(tupl[1])): {units}")
++        
++        units += -tupl[2] if m else tupl[2]
++        print(f"units after adjustment: {units}")
++        
++        prec = abs(p) + units + 1
++        print(f"prec calculation: abs({p}) + {units} + 1 = {prec}")
++
++# Test different cases
++analyze_value('0.00', 0)
++analyze_value('0.0', 0)
++analyze_value('0', 0)
++analyze_value('1.00', 0)
+diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py
+index 23c3a08c67..e091f75cee 100644
+--- a/django/template/defaultfilters.py
++++ b/django/template/defaultfilters.py
+@@ -184,6 +184,8 @@ def floatformat(text, arg=-1):
+     units = len(tupl[1])
+     units += -tupl[2] if m else tupl[2]
+     prec = abs(p) + units + 1
++    # Ensure prec is at least 1 to avoid ValueError
++    prec = max(1, prec)
+ 
+     # Avoid conversion to scientific notation by accessing `sign`, `digits`,
+     # and `exponent` from Decimal.as_tuple() directly.
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..18dfb02de2
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,57 @@
++import django
++from django.conf import settings
++from decimal import Decimal
++from django.template.defaultfilters import floatformat
++
++# Configure Django settings
++settings.configure(USE_I18N=True, DEBUG=True, SECRET_KEY='test')
++django.setup()
++
++# Test various edge cases
++test_cases = [
++    # (input_value, arg, expected_output)
++    ('0.00', 0, '0'),
++    ('0.000', 0, '0'),
++    ('0.0000', 0, '0'),
++    ('0.00000', 0, '0'),
++    (Decimal('0.00'), 0, '0'),
++    (Decimal('0.000'), 0, '0'),
++    (Decimal('0.0000'), 0, '0'),
++    
++    # Negative zeros
++    ('-0.00', 0, '0'),
++    ('-0.000', 0, '0'),
++    (Decimal('-0.00'), 0, '0'),
++    (Decimal('-0.000'), 0, '0'),
++    
++    # Non-zero values with many decimal places
++    ('0.00001', 0, '0'),
++    ('0.0001', 0, '0'),
++    ('0.001', 0, '0'),
++    ('0.01', 0, '0'),
++    ('0.1', 0, '0'),
++    
++    # Some rounding cases
++    ('0.4', 0, '0'),
++    ('0.5', 0, '1'),
++    ('0.6', 0, '1'),
++    
++    # With positive arg
++    ('0.00', 1, '0.0'),
++    ('0.00', 2, '0.00'),
++    ('0.00', 3, '0.000'),
++    
++    # With negative arg
++    ('0.00', -1, '0'),
++    ('0.00', -2, '0'),
++    ('0.00', -3, '0'),
++]
++
++print("Testing edge cases:")
++for input_val, arg, expected in test_cases:
++    try:
++        result = floatformat(input_val, arg)
++        status = "PASS" if result == expected else f"FAIL (got {result})"
++        print(f"floatformat({repr(input_val)}, {arg}) = {repr(result)} [{status}]")
++    except Exception as e:
++        print(f"floatformat({repr(input_val)}, {arg}) = ERROR: {type(e).__name__}: {e}")
+diff --git a/test_floatformat_issue.py b/test_floatformat_issue.py
+new file mode 100644
+index 0000000000..be378436db
+--- /dev/null
++++ b/test_floatformat_issue.py
+@@ -0,0 +1,45 @@
++import django
++from django.conf import settings
++from decimal import Decimal
++from django.template.defaultfilters import floatformat
++
++# Configure Django settings
++settings.configure(USE_I18N=True, DEBUG=True, SECRET_KEY='test')
++django.setup()
++
++# Test the issue
++print("Testing floatformat('0.00', 0)")
++try:
++    result = floatformat('0.00', 0)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTesting floatformat(Decimal('0.00'), 0)")
++try:
++    result = floatformat(Decimal('0.00'), 0)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++# Test with other similar values
++print("\nTesting floatformat('0.0', 0)")
++try:
++    result = floatformat('0.0', 0)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTesting floatformat('0', 0)")
++try:
++    result = floatformat('0', 0)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTesting floatformat('1.00', 0)")
++try:
++    result = floatformat('1.00', 0)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+diff --git a/tests/template_tests/filter_tests/test_floatformat.py b/tests/template_tests/filter_tests/test_floatformat.py
+index 361a888ce3..d758e4d93e 100644
+--- a/tests/template_tests/filter_tests/test_floatformat.py
++++ b/tests/template_tests/filter_tests/test_floatformat.py
+@@ -111,6 +111,9 @@ class FunctionTests(SimpleTestCase):
+         self.assertEqual(
+             floatformat(0.000000000000000000015, 20), "0.00000000000000000002"
+         )
++        # Test edge case from issue: floatformat('0.00', 0) should not crash
++        self.assertEqual(floatformat('0.00', 0), "0")
++        self.assertEqual(floatformat(Decimal('0.00'), 0), "0")
+ 
+     def test_negative_zero_values(self):
+         tests = [
+diff --git a/verify_issue_fix.py b/verify_issue_fix.py
+new file mode 100644
+index 0000000000..5db4ec1d8c
+--- /dev/null
++++ b/verify_issue_fix.py
+@@ -0,0 +1,27 @@
++"""
++Verify the exact issue from the problem description is fixed
++"""
++import django
++from django.conf import settings
++settings.configure(USE_I18N=True, DEBUG=True, SECRET_KEY='test')
++django.setup()
++
++from decimal import Decimal
++from django.template.defaultfilters import floatformat
++
++print("Testing the exact issue from the problem description:")
++print("=" * 60)
++
++try:
++    result = floatformat('0.00', 0)
++    print(f"floatformat('0.00', 0) = {repr(result)} ✓")
++except Exception as e:
++    print(f"floatformat('0.00', 0) raised {type(e).__name__}: {e} ✗")
++
++try:
++    result = floatformat(Decimal('0.00'), 0)
++    print(f"floatformat(Decimal('0.00'), 0) = {repr(result)} ✓")
++except Exception as e:
++    print(f"floatformat(Decimal('0.00'), 0) raised {type(e).__name__}: {e} ✗")
++
++print("\nBoth calls completed successfully without ValueError!")

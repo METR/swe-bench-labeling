@@ -1,0 +1,48 @@
+diff --git a/django/template/library.py b/django/template/library.py
+index 20bc86dac8..e9148400b3 100644
+--- a/django/template/library.py
++++ b/django/template/library.py
+@@ -120,6 +120,21 @@ class Library:
+                     parser, bits, params, varargs, varkw, defaults,
+                     kwonly, kwonly_defaults, takes_context, function_name,
+                 )
++                # Check for duplicate keyword arguments
++                seen_kwargs = set()
++                for k, v in kwargs.items():
++                    if k in seen_kwargs:
++                        raise TemplateSyntaxError(
++                            f"'{function_name}' received multiple values for keyword argument '{k}'"
++                        )
++                    seen_kwargs.add(k)
++                # Check for unexpected keyword arguments
++                valid_kwargs = set(params[len(params) - len(defaults or ()):] + list(kwonly or []))
++                for k in kwargs:
++                    if k not in valid_kwargs:
++                        raise TemplateSyntaxError(
++                            f"'{function_name}' received unexpected keyword argument '{k}'"
++                        )
+                 return SimpleNode(func, takes_context, args, kwargs, target_var)
+             self.tag(function_name, compile_func)
+             return func
+@@ -153,6 +168,21 @@ class Library:
+                     parser, bits, params, varargs, varkw, defaults,
+                     kwonly, kwonly_defaults, takes_context, function_name,
+                 )
++                # Check for duplicate keyword arguments
++                seen_kwargs = set()
++                for k, v in kwargs.items():
++                    if k in seen_kwargs:
++                        raise TemplateSyntaxError(
++                            f"'{function_name}' received multiple values for keyword argument '{k}'"
++                        )
++                    seen_kwargs.add(k)
++                # Check for unexpected keyword arguments
++                valid_kwargs = set(params[len(params) - len(defaults or ()):] + list(kwonly or []))
++                for k in kwargs:
++                    if k not in valid_kwargs:
++                        raise TemplateSyntaxError(
++                            f"'{function_name}' received unexpected keyword argument '{k}'"
++                        )
+                 return InclusionNode(
+                     func, takes_context, args, kwargs, filename,
+                 )

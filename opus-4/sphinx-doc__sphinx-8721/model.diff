@@ -1,0 +1,348 @@
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/viewcode.py b/sphinx/ext/viewcode.py
+index a7d52a91c..060604e25 100644
+--- a/sphinx/ext/viewcode.py
++++ b/sphinx/ext/viewcode.py
+@@ -182,6 +182,8 @@ def collect_pages(app: Sphinx) -> Generator[Tuple[str, Dict[str, Any], str], Non
+     env = app.builder.env
+     if not hasattr(env, '_viewcode_modules'):
+         return
++    if app.builder.name.startswith("epub") and not env.config.viewcode_enable_epub:
++        return
+     highlighter = app.builder.highlighter  # type: ignore
+     urito = app.builder.get_relative_uri
+ 
+diff --git a/test_separate_builds.py b/test_separate_builds.py
+new file mode 100644
+index 000000000..a222239d5
+--- /dev/null
++++ b/test_separate_builds.py
+@@ -0,0 +1,81 @@
++"""Test separate HTML and EPUB builds."""
++
++import os
++import tempfile
++import shutil
++from pathlib import Path
++from sphinx.cmd.build import build_main
++import zipfile
++
++def test_separate_builds():
++    """Test building HTML and EPUB separately with different doctrees."""
++    
++    test_root = Path(__file__).parent / 'tests' / 'roots' / 'test-ext-viewcode'
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Build HTML with its own doctree
++        html_outdir = Path(tmpdir) / 'html_output'
++        html_doctree = Path(tmpdir) / 'html_doctrees'
++        
++        print("Building HTML...")
++        args = [
++            '-b', 'html',
++            '-d', str(html_doctree),
++            str(test_root),
++            str(html_outdir)
++        ]
++        build_main(args)
++        
++        # Build EPUB with its own doctree
++        epub_outdir = Path(tmpdir) / 'epub_output'
++        epub_doctree = Path(tmpdir) / 'epub_doctrees'
++        
++        print("\nBuilding EPUB...")
++        args = [
++            '-b', 'epub',
++            '-d', str(epub_doctree),
++            str(test_root),
++            str(epub_outdir)
++        ]
++        build_main(args)
++        
++        # Check HTML output
++        print("\nChecking HTML output...")
++        html_modules = html_outdir / '_modules'
++        if html_modules.exists():
++            print(f"✓ HTML _modules directory exists")
++            module_files = list(html_modules.rglob('*.html'))
++            print(f"  Found {len(module_files)} module files")
++        
++        # Check EPUB output
++        print("\nChecking EPUB output...")
++        epub_file = epub_outdir / 'Python.epub'
++        if epub_file.exists():
++            # Extract epub
++            extract_dir = epub_outdir / 'extracted'
++            with zipfile.ZipFile(epub_file, 'r') as zip_ref:
++                zip_ref.extractall(extract_dir)
++            
++            # Check for _modules
++            epub_has_modules = False
++            for root, dirs, files in os.walk(extract_dir):
++                if '_modules' in dirs or '_modules' in str(root):
++                    epub_has_modules = True
++                    print(f"✗ Found _modules directory in EPUB: {root}")
++                    
++            # Check for viewcode links
++            for root, dirs, files in os.walk(extract_dir):
++                for file in files:
++                    if file.endswith('.xhtml'):
++                        filepath = os.path.join(root, file)
++                        with open(filepath, 'r', encoding='utf-8') as f:
++                            content = f.read()
++                            if 'viewcode-link' in content:
++                                print(f"✗ Found viewcode-link in: {file}")
++                                epub_has_modules = True
++                                
++            if not epub_has_modules:
++                print("✓ EPUB does not contain viewcode content")
++
++if __name__ == '__main__':
++    test_separate_builds()
+diff --git a/test_viewcode_epub.py b/test_viewcode_epub.py
+new file mode 100644
+index 000000000..9893008fb
+--- /dev/null
++++ b/test_viewcode_epub.py
+@@ -0,0 +1,94 @@
++"""Test for viewcode epub issue."""
++
++import os
++import pytest
++from sphinx.application import Sphinx
++from sphinx.util import ensuredir
++
++
++@pytest.mark.sphinx('html', 'epub', testroot='ext-viewcode')
++def test_viewcode_epub_disabled(app, status, warning):
++    """Test that viewcode doesn't create pages for epub when viewcode_enable_epub=False."""
++    
++    # Run the build
++    app.build()
++    
++    # Check that HTML pages were created
++    html_modules_dir = os.path.join(app.outdir, '_modules')
++    assert os.path.exists(html_modules_dir)
++    
++    # Check that epub _modules directory doesn't exist or is empty
++    # The issue is that when running "make html epub", the epub builder
++    # would also get the module pages from the html builder
++    
++    # Let's look for any .xhtml files in the output that contain viewcode content
++    epub_has_viewcode = False
++    for root, dirs, files in os.walk(app.outdir):
++        for file in files:
++            if file.endswith('.xhtml'):
++                filepath = os.path.join(root, file)
++                with open(filepath, 'r', encoding='utf-8') as f:
++                    content = f.read()
++                    if '_modules' in content or 'viewcode-block' in content:
++                        epub_has_viewcode = True
++                        break
++    
++    # In the current broken state, this would be True
++    # After the fix, it should be False
++    assert not epub_has_viewcode, "EPUB should not contain viewcode pages when viewcode_enable_epub=False"
++
++
++if __name__ == '__main__':
++    # Quick test runner
++    import tempfile
++    import shutil
++    from pathlib import Path
++    
++    # Setup test directory
++    test_root = Path(__file__).parent / 'tests' / 'roots' / 'test-ext-viewcode'
++    with tempfile.TemporaryDirectory() as tmpdir:
++        outdir = Path(tmpdir) / 'output'
++        
++        # Create app for HTML and EPUB
++        app = Sphinx(
++            srcdir=str(test_root),
++            confdir=str(test_root),
++            outdir=str(outdir),
++            doctreedir=str(Path(tmpdir) / 'doctrees'),
++            buildername='html',
++            confoverrides={'extensions': ['sphinx.ext.viewcode'], 'viewcode_enable_epub': False}
++        )
++        
++        # Build HTML
++        app.build()
++        
++        # Now build EPUB with same config
++        app2 = Sphinx(
++            srcdir=str(test_root),
++            confdir=str(test_root),
++            outdir=str(outdir),
++            doctreedir=str(Path(tmpdir) / 'doctrees'),
++            buildername='epub',
++            confoverrides={'extensions': ['sphinx.ext.viewcode'], 'viewcode_enable_epub': False}
++        )
++        app2.build()
++        
++        print(f"Output dir: {outdir}")
++        print("Checking for viewcode in epub...")
++        
++        # Check results
++        epub_has_viewcode = False
++        for root, dirs, files in os.walk(outdir):
++            for file in files:
++                if file.endswith('.xhtml'):
++                    filepath = os.path.join(root, file)
++                    with open(filepath, 'r', encoding='utf-8') as f:
++                        content = f.read()
++                        if '_modules' in content or 'viewcode-block' in content:
++                            print(f"Found viewcode content in: {filepath}")
++                            epub_has_viewcode = True
++        
++        if epub_has_viewcode:
++            print("ERROR: EPUB contains viewcode pages when viewcode_enable_epub=False")
++        else:
++            print("SUCCESS: EPUB does not contain viewcode pages")
+diff --git a/test_viewcode_issue.py b/test_viewcode_issue.py
+new file mode 100644
+index 000000000..1bc0fa2fe
+--- /dev/null
++++ b/test_viewcode_issue.py
+@@ -0,0 +1,94 @@
++"""Test for viewcode epub issue - simulating make html epub."""
++
++import os
++import tempfile
++import shutil
++from pathlib import Path
++from sphinx.cmd.build import build_main
++
++def test_make_html_epub():
++    """Test that simulates 'make html epub' command."""
++    
++    # Setup test directory
++    test_root = Path(__file__).parent / 'tests' / 'roots' / 'test-ext-viewcode'
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        outdir = Path(tmpdir) / 'output'
++        doctreedir = Path(tmpdir) / 'doctrees'
++        
++        # Simulate 'make html epub' by passing both builders
++        # This is what happens when you run: make html epub
++        args = [
++            '-b', 'html',  # First builder
++            '-d', str(doctreedir),
++            str(test_root),  # source dir
++            str(outdir / 'html')  # output dir for html
++        ]
++        
++        # Build HTML first
++        print("Building HTML...")
++        result = build_main(args)
++        
++        # Now build EPUB (this is the second part of 'make html epub')
++        args = [
++            '-b', 'epub',  # Second builder
++            '-d', str(doctreedir),
++            str(test_root),  # source dir
++            str(outdir / 'epub')  # output dir for epub
++        ]
++        
++        print("\nBuilding EPUB...")
++        result = build_main(args)
++        
++        print(f"\nOutput dir: {outdir}")
++        print("\nChecking HTML output for _modules...")
++        
++        # Check HTML output
++        html_modules = outdir / 'html' / '_modules'
++        if html_modules.exists():
++            print(f"✓ HTML _modules directory exists: {html_modules}")
++            module_files = list(html_modules.rglob('*.html'))
++            print(f"  Found {len(module_files)} module files")
++        else:
++            print("✗ HTML _modules directory does not exist")
++            
++        print("\nChecking EPUB output for _modules...")
++        
++        # Check EPUB output - unzip and inspect
++        epub_file = outdir / 'epub' / 'Python.epub'
++        if epub_file.exists():
++            print(f"✓ EPUB file exists: {epub_file}")
++            
++            # Extract epub to inspect contents
++            import zipfile
++            extract_dir = outdir / 'epub_extracted'
++            with zipfile.ZipFile(epub_file, 'r') as zip_ref:
++                zip_ref.extractall(extract_dir)
++            
++            # Look for _modules in the extracted epub
++            epub_has_modules = False
++            for root, dirs, files in os.walk(extract_dir):
++                if '_modules' in dirs or '_modules' in str(root):
++                    epub_has_modules = True
++                    print(f"✗ Found _modules directory in EPUB: {root}")
++                    
++                for file in files:
++                    if file.endswith('.xhtml'):
++                        filepath = os.path.join(root, file)
++                        with open(filepath, 'r', encoding='utf-8') as f:
++                            content = f.read()
++                            if '_modules/' in content or 'viewcode-link' in content:
++                                print(f"✗ Found viewcode content in EPUB file: {file}")
++                                epub_has_modules = True
++                                
++            if not epub_has_modules:
++                print("✓ EPUB does not contain _modules or viewcode content")
++                print("\nSUCCESS: EPUB correctly excludes viewcode when viewcode_enable_epub=False")
++            else:
++                print("\nERROR: EPUB contains viewcode pages when viewcode_enable_epub=False")
++                
++        else:
++            print("✗ EPUB file does not exist")
++
++if __name__ == '__main__':
++    test_make_html_epub()
+diff --git a/tox.ini b/tox.ini
+index 21a0faec3..be1a9127e 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

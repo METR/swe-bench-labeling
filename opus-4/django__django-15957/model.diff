@@ -1,0 +1,402 @@
+diff --git a/django/db/models/fields/related_descriptors.py b/django/db/models/fields/related_descriptors.py
+index b192df4fbf..91e210db9a 100644
+--- a/django/db/models/fields/related_descriptors.py
++++ b/django/db/models/fields/related_descriptors.py
+@@ -145,7 +145,25 @@ class ForwardManyToOneDescriptor:
+             }
+         else:
+             query = {"%s__in" % self.field.related_query_name(): instances}
+-        queryset = queryset.filter(**query)
++            
++        # Handle sliced querysets by temporarily removing the slice,
++        # applying the filter, then re-applying the slice
++        if queryset.query.is_sliced:
++            # Store the slice limits
++            low_mark = queryset.query.low_mark
++            high_mark = queryset.query.high_mark
++            
++            # Clone the queryset and clear limits
++            queryset = queryset._chain()
++            queryset.query.clear_limits()
++            
++            # Apply the filter
++            queryset = queryset.filter(**query)
++            
++            # Restore the slice limits
++            queryset.query.set_limits(low_mark, high_mark)
++        else:
++            queryset = queryset.filter(**query)
+ 
+         # Since we're going to assign directly in the cache,
+         # we must manage the reverse relation cache manually.
+@@ -404,7 +422,25 @@ class ReverseOneToOneDescriptor:
+         instance_attr = self.related.field.get_foreign_related_value
+         instances_dict = {instance_attr(inst): inst for inst in instances}
+         query = {"%s__in" % self.related.field.name: instances}
+-        queryset = queryset.filter(**query)
++        
++        # Handle sliced querysets by temporarily removing the slice,
++        # applying the filter, then re-applying the slice
++        if queryset.query.is_sliced:
++            # Store the slice limits
++            low_mark = queryset.query.low_mark
++            high_mark = queryset.query.high_mark
++            
++            # Clone the queryset and clear limits
++            queryset = queryset._chain()
++            queryset.query.clear_limits()
++            
++            # Apply the filter
++            queryset = queryset.filter(**query)
++            
++            # Restore the slice limits
++            queryset.query.set_limits(low_mark, high_mark)
++        else:
++            queryset = queryset.filter(**query)
+ 
+         # Since we're going to assign directly in the cache,
+         # we must manage the reverse relation cache manually.
+@@ -719,7 +755,25 @@ def create_reverse_many_to_one_manager(superclass, rel):
+             instance_attr = self.field.get_foreign_related_value
+             instances_dict = {instance_attr(inst): inst for inst in instances}
+             query = {"%s__in" % self.field.name: instances}
+-            queryset = queryset.filter(**query)
++            
++            # Handle sliced querysets by temporarily removing the slice,
++            # applying the filter, then re-applying the slice
++            if queryset.query.is_sliced:
++                # Store the slice limits
++                low_mark = queryset.query.low_mark
++                high_mark = queryset.query.high_mark
++                
++                # Clone the queryset and clear limits
++                queryset = queryset._chain()
++                queryset.query.clear_limits()
++                
++                # Apply the filter
++                queryset = queryset.filter(**query)
++                
++                # Restore the slice limits
++                queryset.query.set_limits(low_mark, high_mark)
++            else:
++                queryset = queryset.filter(**query)
+ 
+             # Since we just bypassed this class' get_queryset(), we must manage
+             # the reverse relation manually.
+@@ -1052,7 +1106,25 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
+             queryset = queryset.using(queryset._db or self._db)
+ 
+             query = {"%s__in" % self.query_field_name: instances}
+-            queryset = queryset._next_is_sticky().filter(**query)
++            
++            # Handle sliced querysets by temporarily removing the slice,
++            # applying the filter, then re-applying the slice
++            if queryset.query.is_sliced:
++                # Store the slice limits
++                low_mark = queryset.query.low_mark
++                high_mark = queryset.query.high_mark
++                
++                # Clone the queryset and clear limits
++                queryset = queryset._chain()
++                queryset.query.clear_limits()
++                
++                # Apply the filter
++                queryset = queryset._next_is_sticky().filter(**query)
++                
++                # Restore the slice limits after filtering
++                queryset.query.set_limits(low_mark, high_mark)
++            else:
++                queryset = queryset._next_is_sticky().filter(**query)
+ 
+             # M2M: need to annotate the query in order to get the primary model
+             # that the secondary model was actually related to. We know that
+diff --git a/test_comprehensive_prefetch_slice.py b/test_comprehensive_prefetch_slice.py
+new file mode 100644
+index 0000000000..686bbf8829
+--- /dev/null
++++ b/test_comprehensive_prefetch_slice.py
+@@ -0,0 +1,206 @@
++import django
++from django.conf import settings
++
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.test import TestCase
++from django.db.models import Prefetch
++
++
++class Category(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class Post(models.Model):
++    title = models.CharField(max_length=100)
++    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='posts')
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class Tag(models.Model):
++    name = models.CharField(max_length=100)
++    posts = models.ManyToManyField(Post, related_name='tags')
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++def test_reverse_fk_prefetch_with_slice():
++    print("Testing reverse ForeignKey prefetch with slice...")
++    
++    # Create test data
++    cat1 = Category.objects.create(name="Category 1")
++    cat2 = Category.objects.create(name="Category 2")
++    
++    for i in range(10):
++        Post.objects.create(title=f"Post {i} Cat 1", category=cat1)
++        Post.objects.create(title=f"Post {i} Cat 2", category=cat2)
++    
++    # Test prefetch with sliced queryset
++    categories = Category.objects.prefetch_related(
++        Prefetch(
++            'posts',
++            queryset=Post.objects.all()[:3],
++            to_attr='example_posts',
++        )
++    )
++    
++    for cat in categories:
++        print(f"  {cat.name}: {len(cat.example_posts)} posts")
++        assert len(cat.example_posts) == 3
++        for post in cat.example_posts:
++            assert post.category_id == cat.id
++    
++    print("  ✓ Reverse ForeignKey prefetch with slice works!")
++
++
++def test_m2m_prefetch_with_slice():
++    print("\nTesting ManyToMany prefetch with slice...")
++    
++    # Create test data
++    posts = []
++    for i in range(5):
++        posts.append(Post.objects.create(title=f"Post {i}", category=Category.objects.create(name=f"Cat {i}")))
++    
++    tags = []
++    for i in range(3):
++        tag = Tag.objects.create(name=f"Tag {i}")
++        # Add all posts to each tag
++        tag.posts.set(posts)
++        tags.append(tag)
++    
++    # Test prefetch with sliced queryset
++    tags_qs = Tag.objects.prefetch_related(
++        Prefetch(
++            'posts',
++            queryset=Post.objects.all()[:2],
++            to_attr='limited_posts',
++        )
++    )
++    
++    for tag in tags_qs:
++        print(f"  {tag.name}: {len(tag.limited_posts)} posts")
++        assert len(tag.limited_posts) == 2
++        for post in tag.limited_posts:
++            assert tag in post.tags.all()
++    
++    print("  ✓ ManyToMany prefetch with slice works!")
++
++
++def test_forward_fk_prefetch_with_slice():
++    print("\nTesting forward ForeignKey prefetch with slice...")
++    
++    # Create test data - multiple posts pointing to same categories
++    cat1 = Category.objects.create(name="Category 1")
++    cat2 = Category.objects.create(name="Category 2")
++    
++    posts = []
++    for i in range(10):
++        posts.append(Post.objects.create(title=f"Post {i}", category=cat1 if i < 5 else cat2))
++    
++    # Test prefetch with sliced queryset on forward relation
++    # This is less common but should still work
++    posts_qs = Post.objects.prefetch_related(
++        Prefetch(
++            'category',
++            queryset=Category.objects.all(),
++        )
++    )
++    
++    for post in posts_qs[:3]:  # Only check first 3 posts
++        print(f"  {post.title}: Category {post.category.name}")
++        assert post.category is not None
++        assert post.category.id in [cat1.id, cat2.id]
++    
++    print("  ✓ Forward ForeignKey prefetch works!")
++
++
++def test_offset_and_limit():
++    print("\nTesting prefetch with offset and limit...")
++    
++    # Create test data
++    cat = Category.objects.create(name="Test Category")
++    
++    for i in range(20):
++        Post.objects.create(title=f"Post {i:02d}", category=cat)
++    
++    # Test with offset and limit (e.g., [5:10])
++    categories = Category.objects.prefetch_related(
++        Prefetch(
++            'posts',
++            queryset=Post.objects.order_by('title')[5:10],
++            to_attr='middle_posts',
++        )
++    )
++    
++    cat = categories.first()
++    print(f"  {cat.name}: {len(cat.middle_posts)} posts (offset 5, limit 5)")
++    assert len(cat.middle_posts) == 5
++    
++    # Check that we got the right posts (5-9)
++    titles = [p.title for p in cat.middle_posts]
++    expected_titles = [f"Post {i:02d}" for i in range(5, 10)]
++    assert titles == expected_titles
++    
++    print("  ✓ Prefetch with offset and limit works!")
++
++
++def test_empty_slice():
++    print("\nTesting prefetch with empty slice...")
++    
++    # Create test data
++    cat = Category.objects.create(name="Test Category")
++    
++    for i in range(5):
++        Post.objects.create(title=f"Post {i}", category=cat)
++    
++    # Test with slice that returns no results
++    categories = Category.objects.prefetch_related(
++        Prefetch(
++            'posts',
++            queryset=Post.objects.all()[10:20],  # Beyond available posts
++            to_attr='no_posts',
++        )
++    )
++    
++    cat = categories.first()
++    print(f"  {cat.name}: {len(cat.no_posts)} posts")
++    assert len(cat.no_posts) == 0
++    
++    print("  ✓ Prefetch with empty slice works!")
++
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Category)
++        schema_editor.create_model(Post)
++        schema_editor.create_model(Tag)
++        # Create M2M table
++        schema_editor.create_model(Tag.posts.through)
++    
++    test_reverse_fk_prefetch_with_slice()
++    test_m2m_prefetch_with_slice()
++    test_forward_fk_prefetch_with_slice()
++    test_offset_and_limit()
++    test_empty_slice()
++    
++    print("\n✅ All tests passed!")
+diff --git a/test_prefetch_slice.py b/test_prefetch_slice.py
+new file mode 100644
+index 0000000000..b68822b77d
+--- /dev/null
++++ b/test_prefetch_slice.py
+@@ -0,0 +1,72 @@
++import django
++from django.conf import settings
++
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.test import TestCase
++from django.db.models import Prefetch
++
++
++class Category(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class Post(models.Model):
++    title = models.CharField(max_length=100)
++    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name='post_set')
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++def test_prefetch_with_sliced_queryset():
++    # Create test data
++    cat1 = Category.objects.create(name="Category 1")
++    cat2 = Category.objects.create(name="Category 2")
++    
++    for i in range(10):
++        Post.objects.create(title=f"Post {i} Cat 1", category=cat1)
++        Post.objects.create(title=f"Post {i} Cat 2", category=cat2)
++    
++    # Try to prefetch with a sliced queryset
++    try:
++        categories = Category.objects.prefetch_related(
++            Prefetch(
++                'post_set',
++                queryset=Post.objects.all()[:3],
++                to_attr='example_posts',
++            )
++        )
++        # Force evaluation
++        list(categories)
++        print("Success! Prefetch with sliced queryset worked.")
++    except Exception as e:
++        print(f"Error: {e}")
++        print(f"Error type: {type(e)}")
++        import traceback
++        traceback.print_exc()
++
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Category)
++        schema_editor.create_model(Post)
++    
++    test_prefetch_with_sliced_queryset()

@@ -1,0 +1,52 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index d69c24419b..21f0d8bfaa 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1668,6 +1668,12 @@ class Query(BaseExpression):
+         query = Query(self.model)
+         query.add_filter(filter_expr)
+         query.clear_ordering(True)
++
++        # Copy FilteredRelation annotations from the outer query to the inner query
++        for annotation, value in self.annotations.items():
++            if value.__class__.__name__ == 'FilteredRelation':
++                query.add_annotation(value, annotation)
++
+         # Try to have as simple as possible subquery -> trim leading joins from
+         # the subquery.
+         trimmed_prefix, contains_louter = query.trim_start(names_with_path)
+diff --git a/tests/filtered_relation/tests.py b/tests/filtered_relation/tests.py
+index 5e85dff16c..2cf64953aa 100644
+--- a/tests/filtered_relation/tests.py
++++ b/tests/filtered_relation/tests.py
+@@ -98,6 +98,30 @@ class FilteredRelationTests(TestCase):
+             [self.author1]
+         )
+ 
++    def test_with_join_exclude(self):
++        self.assertSequenceEqual(
++            Author.objects.annotate(
++                book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++            ).exclude(book_alice__isnull=False),
++            [self.author2]
++        )
++
++    def test_with_join_exclude_and_filter(self):
++        self.assertSequenceEqual(
++            Author.objects.annotate(
++                book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++            ).exclude(book_alice__isnull=False).filter(name='Jane'),
++            [self.author2]
++        )
++
++    def test_with_join_exclude_empty(self):
++        self.assertSequenceEqual(
++            Author.objects.annotate(
++                book_alice=FilteredRelation('book', condition=Q(book__title__iexact='nonexistent')),
++            ).exclude(book_alice__isnull=False),
++            [self.author1, self.author2]
++        )
++
+     def test_with_join_and_complex_condition(self):
+         self.assertSequenceEqual(
+             Author.objects.annotate(

@@ -1,0 +1,101 @@
+diff --git a/sympy/sets/handlers/intersection.py b/sympy/sets/handlers/intersection.py
+index c54dc8f72a..37bce49f5e 100644
+--- a/sympy/sets/handlers/intersection.py
++++ b/sympy/sets/handlers/intersection.py
+@@ -306,9 +306,9 @@ def intersection_sets(self, other): # noqa:F811
+             # univarite imaginary part in same variable
+             x, xis = zip(*[solve_linear(i, 0) for i in Mul.make_args(im) if n in i.free_symbols])
+             if x and all(i == n for i in x):
+-                base_set -= FiniteSet(xis)
++                base_set = base_set.intersect(FiniteSet(*xis))
+             else:
+-                base_set -= ConditionSet(n, Eq(im, 0), S.Integers)
++                base_set = ConditionSet(n, Eq(im, 0), base_set)
+         # exclude values that make denominators 0
+         for i in denoms(f):
+             if i.has(n):
+@@ -316,9 +316,9 @@ def intersection_sets(self, other): # noqa:F811
+                 if sol != []:
+                     x, xis = sol
+                     if x and all(i == n for i in x):
+-                        base_set -= FiniteSet(xis)
++                        base_set -= FiniteSet(*xis)
+                 else:
+-                    base_set -= ConditionSet(n, Eq(i, 0), S.Integers)
++                    base_set -= ConditionSet(n, Eq(i, 0), base_set)
+         return imageset(lam, base_set)
+ 
+     elif isinstance(other, Interval):
+diff --git a/test_additional.py b/test_additional.py
+new file mode 100644
+index 0000000000..d4104cbe00
+--- /dev/null
++++ b/test_additional.py
+@@ -0,0 +1,42 @@
++from sympy import *
++from sympy.abc import n, x
++
++print("Test 1: Original issue case")
++S1 = imageset(Lambda(n, n + (n - 1)*(n + 1)*I), S.Integers)
++print("S1:", S1)
++print("S1.intersect(Reals):", S1.intersect(Reals))
++print("2 in S1.intersect(Reals):", 2 in S1.intersect(Reals))
++print("-1 in S1.intersect(Reals):", -1 in S1.intersect(Reals))
++print("1 in S1.intersect(Reals):", 1 in S1.intersect(Reals))
++print()
++
++print("Test 2: Always real case")
++S2 = imageset(Lambda(n, 2*n), S.Integers)
++print("S2:", S2)
++print("S2.intersect(Reals):", S2.intersect(Reals))
++print()
++
++print("Test 3: Never real case")
++S3 = imageset(Lambda(n, n + I), S.Integers)
++print("S3:", S3)
++print("S3.intersect(Reals):", S3.intersect(Reals))
++print()
++
++print("Test 4: More complex imaginary part")
++S4 = imageset(Lambda(n, n + n**2*I), S.Integers)
++print("S4:", S4)
++print("S4.intersect(Reals):", S4.intersect(Reals))
++print("0 in S4.intersect(Reals):", 0 in S4.intersect(Reals))
++print()
++
++print("Test 5: With denominators")
++S5 = imageset(Lambda(n, 1/n + I), S.Integers - {0})
++print("S5:", S5)
++print("S5.intersect(Reals):", S5.intersect(Reals))
++print()
++
++print("Test 6: Intersection with interval")
++S6 = imageset(Lambda(x, 2*x), S.Reals)
++print("S6:", S6)
++print("S6.intersect(Interval(0, 4)):", S6.intersect(Interval(0, 4)))
++print()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..a4e02ce848
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,19 @@
++from sympy import *
++from sympy.abc import n
++
++# Test case from the issue
++S1 = imageset(Lambda(n, n + (n - 1)*(n + 1)*I), S.Integers)
++print("S1:", S1)
++print("2 in S1:", 2 in S1)
++
++# The issue: this should be False, not True
++print("2 in S1.intersect(Reals):", 2 in S1.intersect(Reals))
++
++# What the intersection should be
++print("S1.intersect(Reals):", S1.intersect(Reals))
++
++# Verify the correct values
++print("\nChecking individual values:")
++for val in [-2, -1, 0, 1, 2]:
++    result = val + (val - 1)*(val + 1)*I
++    print(f"f({val}) = {result}, is real: {result.is_real}")

@@ -1,0 +1,359 @@
+diff --git a/setup.py b/setup.py
+index a427d5493..978e3d8e0 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/cpp.py b/sphinx/domains/cpp.py
+index fe52d881d..a0521cea7 100644
+--- a/sphinx/domains/cpp.py
++++ b/sphinx/domains/cpp.py
+@@ -882,6 +882,25 @@ class ASTCharLiteral(ASTLiteral):
+         signode.append(nodes.Text(txt, txt))
+ 
+ 
++class ASTUserDefinedLiteral(ASTLiteral):
++    def __init__(self, literal: ASTLiteral, ident: str) -> None:
++        self.literal = literal
++        self.ident = ident
++
++    def _stringify(self, transform: StringifyTransform) -> str:
++        return transform(self.literal) + self.ident
++
++    def get_id(self, version: int) -> str:
++        # User-defined literals can be mangled in different ways
++        # For simplicity, we'll use a basic approach
++        return "L" + self.literal.get_id(version)[1:-1] + "_" + self.ident + "E"
++
++    def describe_signature(self, signode: TextElement, mode: str,
++                           env: "BuildEnvironment", symbol: "Symbol") -> None:
++        self.literal.describe_signature(signode, mode, env, symbol)
++        signode.append(nodes.Text(self.ident))
++
++
+ class ASTThisLiteral(ASTExpression):
+     def _stringify(self, transform: StringifyTransform) -> str:
+         return "this"
+@@ -4642,6 +4661,26 @@ class DefinitionParser(BaseParser):
+                 escape = False
+             self.pos += 1
+         return self.definition[startPos:self.pos]
++    
++    def _parse_udl_suffix(self) -> str:
++        """Parse a user-defined literal suffix.
++        
++        A UDL suffix is an identifier that begins immediately after a literal,
++        without any whitespace. It must start with _ or a letter.
++        """
++        # Check if current position starts with a valid identifier character
++        if not self.current_char or not (self.current_char.isalpha() or self.current_char == '_'):
++            return None
++        
++        startPos = self.pos
++        # First character is valid, consume it
++        self.pos += 1
++        
++        # Continue with alphanumeric characters and underscores
++        while not self.eof and (self.current_char.isalnum() or self.current_char == '_'):
++            self.pos += 1
++            
++        return self.definition[startPos:self.pos]
+ 
+     def _parse_literal(self) -> ASTLiteral:
+         # -> integer-literal
+@@ -4658,31 +4697,54 @@ class DefinitionParser(BaseParser):
+             return ASTBooleanLiteral(True)
+         if self.skip_word('false'):
+             return ASTBooleanLiteral(False)
++        
++        # First, try to parse numeric literals
+         for regex in [float_literal_re, binary_literal_re, hex_literal_re,
+                       integer_literal_re, octal_literal_re]:
+             pos = self.pos
+             if self.match(regex):
++                # Handle standard suffixes
+                 while self.current_char in 'uUlLfF':
+                     self.pos += 1
+-                return ASTNumberLiteral(self.definition[pos:self.pos])
++                numberEnd = self.pos
++                
++                # Check for user-defined literal suffix
++                suffix = self._parse_udl_suffix()
++                if suffix:
++                    # Got a user-defined literal
++                    number = ASTNumberLiteral(self.definition[pos:numberEnd])
++                    return ASTUserDefinedLiteral(number, suffix)
++                else:
++                    # Just a regular number literal
++                    return ASTNumberLiteral(self.definition[pos:numberEnd])
+ 
++        # Try string literal
+         string = self._parse_string()
+         if string is not None:
++            # Check for user-defined literal suffix on string
++            suffix = self._parse_udl_suffix()
++            if suffix:
++                stringLit = ASTStringLiteral(string)
++                return ASTUserDefinedLiteral(stringLit, suffix)
+             return ASTStringLiteral(string)
+ 
+-        # character-literal
++        # Try character-literal
+         if self.match(char_literal_re):
+             prefix = self.last_match.group(1)  # may be None when no prefix
+             data = self.last_match.group(2)
+             try:
+-                return ASTCharLiteral(prefix, data)
++                charLit = ASTCharLiteral(prefix, data)
++                # Check for user-defined literal suffix on char
++                suffix = self._parse_udl_suffix()
++                if suffix:
++                    return ASTUserDefinedLiteral(charLit, suffix)
++                return charLit
+             except UnicodeDecodeError as e:
+                 self.fail("Can not handle character literal. Internal error was: %s" % e)
+             except UnsupportedMultiCharacterCharLiteral:
+                 self.fail("Can not handle character literal"
+                           " resulting in multiple decoded characters.")
+ 
+-        # TODO: user-defined lit
+         return None
+ 
+     def _parse_fold_or_paren_expression(self) -> ASTExpression:
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..36298124e
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python3
++import sys
++sys.path.insert(0, '.')
++
++from sphinx.domains.cpp import DefinitionParser
++from sphinx.config import Config
++
++# Test various C++ constructs to ensure we haven't broken anything
++test_cases = [
++    # Basic literals (should still work)
++    ("int x = 42;", "member"),
++    ("float y = 3.14f;", "member"),
++    ("char c = 'a';", "member"),
++    ("const char* s = \"hello\";", "member"),
++    
++    # User-defined literals from the issue
++    ("constexpr auto planck_constant = 6.62607015e-34q_J * 1q_s;", "member"),
++    
++    # Various UDL patterns
++    ("auto distance = 100_km;", "member"),
++    ("auto time = 2.5_h;", "member"),
++    ("auto angle = 45_deg;", "member"),
++    ("auto binary = 0b1010_b;", "member"),
++    ("auto hex = 0xFF_h;", "member"),
++    
++    # Complex expressions with UDLs
++    ("auto result = 10_m + 20_m * 3_s;", "member"),
++    
++    # String and char UDLs
++    ("auto str = \"test\"_s;", "member"),
++    ("auto ch = 'x'_ch;", "member"),
++    
++    # Ensure standard suffixes still work
++    ("unsigned long long x = 42ULL;", "member"),
++    ("long double y = 3.14L;", "member"),
++    
++    # Functions (to ensure we didn't break other parsing)
++    ("void foo();", "function"),
++    ("int bar(int x, int y);", "function"),
++]
++
++config = Config()
++config.cpp_id_attributes = []
++config.cpp_paren_attributes = []
++
++passed = 0
++failed = 0
++
++for test_code, obj_type in test_cases:
++    print(f"\nTesting: {test_code}")
++    parser = DefinitionParser(test_code, location=None, config=config)
++    try:
++        ast = parser.parse_declaration(obj_type, obj_type)
++        print(f"  ✓ Parsed successfully: {ast}")
++        passed += 1
++    except Exception as e:
++        print(f"  ✗ Error: {e}")
++        failed += 1
++
++print(f"\n\nSummary: {passed} passed, {failed} failed")
++if failed > 0:
++    sys.exit(1)
+diff --git a/test_udl.py b/test_udl.py
+new file mode 100644
+index 000000000..dcfe2f035
+--- /dev/null
++++ b/test_udl.py
+@@ -0,0 +1,24 @@
++#!/usr/bin/env python3
++import sys
++sys.path.insert(0, '.')
++
++from sphinx.domains.cpp import DefinitionParser
++from sphinx.config import Config
++
++# Test case from the issue
++test_code = "constexpr auto units::si::planck_constant = 6.62607015e-34q_J * 1q_s"
++
++# Create a minimal config
++config = Config()
++config.cpp_id_attributes = []
++config.cpp_paren_attributes = []
++
++parser = DefinitionParser(test_code, location=None, config=config)
++try:
++    ast = parser.parse_declaration("member", "member")
++    print("Parsed successfully!")
++    print(f"AST: {ast}")
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_udl_debug.py b/test_udl_debug.py
+new file mode 100644
+index 000000000..ad3e2a727
+--- /dev/null
++++ b/test_udl_debug.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python3
++import sys
++sys.path.insert(0, '.')
++
++from sphinx.domains.cpp import DefinitionParser
++from sphinx.config import Config
++
++# Test specific case
++test = "6.62607015e-34q_J"
++
++config = Config()
++config.cpp_id_attributes = []
++config.cpp_paren_attributes = []
++
++print(f"Testing: {test}")
++parser = DefinitionParser(test, location=None, config=config)
++
++# Add some debug
++import re
++from sphinx.util.cfamily import identifier_re, float_literal_re
++
++# Check regex matches
++print(f"Float regex match: {float_literal_re.match(test)}")
++print(f"Identifier regex pattern: {identifier_re.pattern}")
++
++# Manual step through
++parser.skip_ws()
++pos = parser.pos
++if parser.match(float_literal_re):
++    print(f"Matched float at pos {pos}: '{parser.matched_text}'")
++    print(f"Current pos after match: {parser.pos}")
++    
++    # Handle standard suffixes
++    while parser.current_char in 'uUlLfF':
++        parser.pos += 1
++    numberEnd = parser.pos
++    print(f"After standard suffixes, pos: {parser.pos}")
++    print(f"Remaining: '{parser.definition[parser.pos:]}'")
++    
++    # Check for user-defined literal suffix
++    if parser.match(identifier_re):
++        print(f"Matched identifier: '{parser.matched_text}'")
++    else:
++        print("No identifier match")
++        # Let's check manually what's at current position
++        print(f"Current char: '{parser.current_char}' (ord: {ord(parser.current_char) if parser.current_char else 'EOF'})")
+diff --git a/test_udl_simple.py b/test_udl_simple.py
+new file mode 100644
+index 000000000..9b6a45df4
+--- /dev/null
++++ b/test_udl_simple.py
+@@ -0,0 +1,39 @@
++#!/usr/bin/env python3
++import sys
++sys.path.insert(0, '.')
++
++from sphinx.domains.cpp import DefinitionParser
++from sphinx.config import Config
++
++# Test various cases
++test_cases = [
++    "6.62607015e-34",         # Regular float literal
++    "6.62607015e-34f",        # Float with standard suffix
++    "6.62607015e-34q_J",      # Float with user-defined literal
++    "42q_m",                  # Integer with user-defined literal
++    "1q_s",                   # Simple UDL
++    '"hello"q_str',           # String UDL (not in original issue but should be supported)
++    "'c'q_char",              # Char UDL
++]
++
++config = Config()
++config.cpp_id_attributes = []
++config.cpp_paren_attributes = []
++
++for test in test_cases:
++    print(f"\nTesting: {test}")
++    parser = DefinitionParser(test, location=None, config=config)
++    try:
++        # Try to parse just a literal expression
++        parser.skip_ws()
++        literal = parser._parse_literal()
++        if literal:
++            print(f"  Parsed literal: {literal}")
++        else:
++            print(f"  Failed to parse literal")
++            # Check position after parse attempt
++            print(f"  Parser stopped at position {parser.pos}: '{parser.definition[parser.pos:] if parser.pos < len(parser.definition) else 'EOF'}'")
++    except Exception as e:
++        print(f"  Error: {e}")
++        import traceback
++        traceback.print_exc()
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

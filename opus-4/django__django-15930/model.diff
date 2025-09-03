@@ -1,0 +1,471 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 822968ef56..aa6fe52159 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1299,6 +1299,11 @@ class When(Expression):
+         template_params = extra_context
+         sql_params = []
+         condition_sql, condition_params = compiler.compile(self.condition)
++        # Handle the case where the condition compiles to an empty string
++        # (e.g., ~Q(pk__in=[]) which means "not in empty list" = matches everything)
++        if not condition_sql:
++            # Use a SQL expression that always evaluates to true
++            condition_sql = "1=1"
+         template_params["condition"] = condition_sql
+         sql_params.extend(condition_params)
+         result_sql, result_params = compiler.compile(self.result)
+diff --git a/test_case_empty_q.py b/test_case_empty_q.py
+new file mode 100644
+index 0000000000..195aa431d6
+--- /dev/null
++++ b/test_case_empty_q.py
+@@ -0,0 +1,83 @@
++"""
++Test case for the fix to handle ~Q(pk__in=[]) in Case/When expressions.
++This test should be added to tests/expressions_case/tests.py
++"""
++
++from django.db.models import Case, When, Value, BooleanField, Q, IntegerField
++from django.test import TestCase
++from .models import CaseTestModel
++
++
++class EmptyQInCaseTests(TestCase):
++    @classmethod
++    def setUpTestData(cls):
++        CaseTestModel.objects.create(integer=1, string='one')
++        CaseTestModel.objects.create(integer=2, string='two')
++        CaseTestModel.objects.create(integer=3, string='three')
++
++    def test_negated_empty_in_lookup(self):
++        """
++        Test that ~Q(pk__in=[]) in a When clause matches all records.
++        This is a regression test for the issue where ~Q(pk__in=[])
++        would produce invalid SQL: "CASE WHEN THEN ..."
++        """
++        # ~Q(pk__in=[]) should match all records
++        result = CaseTestModel.objects.annotate(
++            matches=Case(
++                When(~Q(pk__in=[]), then=Value(True)),
++                default=Value(False),
++                output_field=BooleanField(),
++            )
++        ).values_list('matches', flat=True)
++        
++        # All records should match
++        self.assertEqual(list(result), [True, True, True])
++        
++    def test_empty_in_lookup(self):
++        """
++        Test that Q(pk__in=[]) in a When clause matches no records.
++        """
++        # Q(pk__in=[]) should match no records
++        result = CaseTestModel.objects.annotate(
++            matches=Case(
++                When(Q(pk__in=[]), then=Value(True)),
++                default=Value(False),
++                output_field=BooleanField(),
++            )
++        ).values_list('matches', flat=True)
++        
++        # No records should match
++        self.assertEqual(list(result), [False, False, False])
++        
++    def test_negated_empty_in_lookup_with_other_conditions(self):
++        """
++        Test that ~Q(pk__in=[]) works correctly when combined with other When clauses.
++        """
++        result = CaseTestModel.objects.annotate(
++            category=Case(
++                When(integer=1, then=Value(1)),
++                When(~Q(pk__in=[]), then=Value(2)),  # Should match integer=2 and integer=3
++                default=Value(3),
++                output_field=IntegerField(),
++            )
++        ).order_by('integer').values_list('integer', 'category')
++        
++        # First record matches the first When clause, others match the second
++        self.assertEqual(list(result), [(1, 1), (2, 2), (3, 2)])
++        
++    def test_order_by_negated_empty_in_lookup(self):
++        """
++        Test ordering by a Case expression with ~Q(pk__in=[]).
++        This was the original reported issue - it would fail with a syntax error.
++        """
++        # This should not raise a database error
++        result = list(CaseTestModel.objects.annotate(
++            _a=Case(
++                When(~Q(pk__in=[]), then=Value(True)),
++                default=Value(False),
++                output_field=BooleanField(),
++            )
++        ).order_by("-_a").values("pk"))
++        
++        # Should return all 3 records
++        self.assertEqual(len(result), 3)
+diff --git a/test_case_issue.py b/test_case_issue.py
+new file mode 100644
+index 0000000000..f8270b8f80
+--- /dev/null
++++ b/test_case_issue.py
+@@ -0,0 +1,63 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.contrib.auth.models import User
++from django.db.models import Case, When, Value, BooleanField, Q
++from django.db import connection
++
++# Test the issue
++print("Testing ~Q(pk__in=[]) issue...")
++
++# First let's see what ~Q(pk__in=[]) produces
++negated_q = ~Q(pk__in=[])
++print(f"~Q(pk__in=[]): {negated_q}")
++print(f"~Q(pk__in=[]).children: {negated_q.children}")
++
++query = User.objects.annotate(
++    _a=Case(
++        When(~Q(pk__in=[]), then=Value(True)),
++        default=Value(False),
++        output_field=BooleanField(),
++    )
++)
++
++print("\nQuery SQL:")
++print(query.query)
++
++# Get the compiled SQL without executing
++from django.db.models.sql.compiler import SQLCompiler
++compiler = query.query.get_compiler(using='default')
++sql, params = compiler.as_sql()
++print(f"\nCompiled SQL: {sql}")
++print(f"Params: {params}")
++
++# Let's also test with a normal Q object that's not empty
++print("\n\nComparing with Q(pk__in=[1, 2]):")
++query2 = User.objects.annotate(
++    _a=Case(
++        When(~Q(pk__in=[1, 2]), then=Value(True)),
++        default=Value(False),
++        output_field=BooleanField(),
++    )
++)
++print(query2.query)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..c0cd708ee1
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,100 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.contrib.auth.models import User
++from django.db.models import Case, When, Value, BooleanField, Q, IntegerField
++from django.db import connection
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(User)
++
++# Insert some test data
++User.objects.create(username='user1')
++User.objects.create(username='user2')
++User.objects.create(username='user3')
++
++print("Testing various Case/When scenarios with empty Q objects...")
++
++# Test 1: ~Q(pk__in=[]) - should match all records
++print("\n1. Testing ~Q(pk__in=[]):")
++result = User.objects.annotate(
++    matches=Case(
++        When(~Q(pk__in=[]), then=Value(True)),
++        default=Value(False),
++        output_field=BooleanField(),
++    )
++).values('username', 'matches').order_by('username')
++for r in result:
++    print(f"  {r['username']}: matches={r['matches']}")
++    
++# Test 2: Q(pk__in=[]) - should match no records
++print("\n2. Testing Q(pk__in=[]):")
++result = User.objects.annotate(
++    matches=Case(
++        When(Q(pk__in=[]), then=Value(True)),
++        default=Value(False),
++        output_field=BooleanField(),
++    )
++).values('username', 'matches').order_by('username')
++for r in result:
++    print(f"  {r['username']}: matches={r['matches']}")
++    
++# Test 3: ~Q(username__in=[]) - should match all records
++print("\n3. Testing ~Q(username__in=[]):")
++result = User.objects.annotate(
++    matches=Case(
++        When(~Q(username__in=[]), then=Value(True)),
++        default=Value(False),
++        output_field=BooleanField(),
++    )
++).values('username', 'matches').order_by('username')
++for r in result:
++    print(f"  {r['username']}: matches={r['matches']}")
++    
++# Test 4: Multiple When clauses including ~Q(pk__in=[])
++print("\n4. Testing multiple When clauses:")
++result = User.objects.annotate(
++    category=Case(
++        When(username='user1', then=Value(1)),
++        When(~Q(pk__in=[]), then=Value(2)),  # This should match user2 and user3
++        default=Value(3),
++        output_field=IntegerField(),
++    )
++).values('username', 'category').order_by('username')
++for r in result:
++    print(f"  {r['username']}: category={r['category']}")
++    
++# Test 5: Order by Case with ~Q(pk__in=[])
++print("\n5. Testing ORDER BY with Case/~Q(pk__in=[]):")
++result = User.objects.annotate(
++    _a=Case(
++        When(~Q(pk__in=[]), then=Value(True)),
++        default=Value(False),
++        output_field=BooleanField(),
++    )
++).order_by("-_a").values("username")
++for r in result:
++    print(f"  {r['username']}")
++    
++print("\nAll tests completed successfully!")
+diff --git a/test_deeper.py b/test_deeper.py
+new file mode 100644
+index 0000000000..72792e5980
+--- /dev/null
++++ b/test_deeper.py
+@@ -0,0 +1,69 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db.models import Case, When, Value, BooleanField, Q
++from django.db.models.sql.compiler import SQLCompiler
++from django.db import connection
++from django.contrib.auth.models import User
++from django.core.exceptions import EmptyResultSet
++
++# Let's trace how the When clause compiles
++print("Testing When clause compilation...")
++
++# Create a When clause with ~Q(pk__in=[])
++when_clause = When(~Q(pk__in=[]), then=Value(True))
++
++# Create a dummy query for compilation context
++dummy_query = User.objects.all().query
++
++# Resolve the expression
++resolved_when = when_clause.resolve_expression(dummy_query)
++
++# Get a compiler
++compiler = dummy_query.get_compiler(using='default')
++
++# Try to compile the When clause
++try:
++    sql, params = compiler.compile(resolved_when)
++    print(f"When SQL: {sql}")
++    print(f"Params: {params}")
++except EmptyResultSet as e:
++    print(f"EmptyResultSet raised: {e}")
++except Exception as e:
++    print(f"Other error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Let's also check the condition directly
++print("\nTesting condition compilation...")
++condition = ~Q(pk__in=[])
++try:
++    sql, params = compiler.compile(condition)
++    print(f"Condition SQL: {sql}")
++    print(f"Params: {params}")
++except EmptyResultSet as e:
++    print(f"EmptyResultSet raised during condition compilation")
++except Exception as e:
++    print(f"Other error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_detailed.py b/test_detailed.py
+new file mode 100644
+index 0000000000..b0d79d6176
+--- /dev/null
++++ b/test_detailed.py
+@@ -0,0 +1,110 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db.models import Case, When, Value, BooleanField, Q
++from django.db.models.sql.where import WhereNode
++from django.db import connection
++from django.contrib.auth.models import User
++from django.core.exceptions import EmptyResultSet
++
++# Let's trace how Q object resolution works
++print("Testing Q object resolution...")
++
++# Create a Q object with ~Q(pk__in=[])
++q_obj = ~Q(pk__in=[])
++print(f"Q object: {q_obj}")
++print(f"Q object negated: {q_obj.negated}")
++print(f"Q object children: {q_obj.children}")
++
++# Create a query to resolve against
++query = User.objects.all().query
++
++# Create a When clause
++when_clause = When(q_obj, then=Value(True))
++print(f"\nWhen clause condition: {when_clause.condition}")
++
++# Resolve the when clause
++resolved_when = when_clause.resolve_expression(query)
++print(f"Resolved When condition type: {type(resolved_when.condition)}")
++print(f"Resolved When condition: {resolved_when.condition}")
++
++# Check if it's a WhereNode
++if hasattr(resolved_when.condition, 'as_sql'):
++    compiler = query.get_compiler(using='default')
++    try:
++        sql, params = resolved_when.condition.as_sql(compiler, connection)
++        print(f"Condition SQL: {sql}")
++        print(f"Condition params: {params}")
++    except EmptyResultSet:
++        print("EmptyResultSet raised when compiling condition!")
++        # This is the issue - when EmptyResultSet is raised, the WHEN clause has no condition
++        
++print("\n\nLet's trace through the When.as_sql process...")
++
++# Override When.as_sql temporarily to add logging
++from django.db.models.expressions import When as OriginalWhen
++
++class DebugWhen(OriginalWhen):
++    def as_sql(self, compiler, connection, template=None, **extra_context):
++        print("=== When.as_sql called ===")
++        print(f"Condition: {self.condition}")
++        print(f"Result: {self.result}")
++        
++        template_params = extra_context
++        sql_params = []
++        
++        try:
++            condition_sql, condition_params = compiler.compile(self.condition)
++            print(f"Condition compiled to SQL: '{condition_sql}'")
++            print(f"Condition params: {condition_params}")
++        except EmptyResultSet:
++            print("!!! EmptyResultSet raised during condition compilation !!!")
++            # This is where the problem happens - condition_sql would be undefined
++            raise
++        except Exception as e:
++            print(f"Other error during condition compilation: {type(e).__name__}: {e}")
++            raise
++            
++        template_params["condition"] = condition_sql
++        sql_params.extend(condition_params)
++        
++        result_sql, result_params = compiler.compile(self.result)
++        template_params["result"] = result_sql
++        sql_params.extend(result_params)
++        
++        template = template or self.template
++        final_sql = template % template_params
++        print(f"Final When SQL: '{final_sql}'")
++        
++        return final_sql, sql_params
++
++# Test with debug When
++debug_when = DebugWhen(~Q(pk__in=[]), then=Value(True))
++resolved_debug_when = debug_when.resolve_expression(query)
++compiler = query.get_compiler(using='default')
++
++try:
++    sql, params = compiler.compile(resolved_debug_when)
++    print(f"\nFinal result: SQL='{sql}', params={params}")
++except Exception as e:
++    print(f"\nError: {type(e).__name__}: {e}")

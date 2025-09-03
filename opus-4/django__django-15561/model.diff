@@ -1,0 +1,423 @@
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index 9d6952df21..85d53e3b1a 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -1378,6 +1378,7 @@ class BaseDatabaseSchemaEditor:
+         # - adding only a db_column and the column name is not changed
+         non_database_attrs = [
+             "blank",
++            "choices",
+             "db_column",
+             "editable",
+             "error_messages",
+diff --git a/test_alter_field_choices_noop.py b/test_alter_field_choices_noop.py
+new file mode 100644
+index 0000000000..761b709933
+--- /dev/null
++++ b/test_alter_field_choices_noop.py
+@@ -0,0 +1,123 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    USE_TZ=False,
++)
++django.setup()
++
++from django.db import models, connection
++from django.test.utils import CaptureQueriesContext
++
++class TestModel(models.Model):
++    status = models.CharField(max_length=20)
++    category = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_model'
++
++def test_alter_field_choices_noop():
++    """
++    No queries are performed when adding/changing/removing choices since
++    they are a Python-only construct.
++    """
++    # Disable FK constraints for SQLite
++    if connection.vendor == 'sqlite':
++        connection.disable_constraint_checking()
++    
++    try:
++        # Create the table
++        with connection.schema_editor() as editor:
++            editor.create_model(TestModel)
++        
++        # Test 1: Add choices to a field without choices
++        print("Test 1: Adding choices to a field")
++        old_field = TestModel._meta.get_field("status")
++        new_field = models.CharField(
++            max_length=20,
++            choices=[("active", "Active"), ("inactive", "Inactive")]
++        )
++        new_field.set_attributes_from_name("status")
++        new_field.model = TestModel
++        
++        with CaptureQueriesContext(connection) as queries:
++            with connection.schema_editor() as editor:
++                editor.alter_field(TestModel, old_field, new_field, strict=True)
++        
++        print(f"  Queries executed: {len(queries)}")
++        assert len(queries) == 0, f"Expected 0 queries but got {len(queries)}"
++        
++        # Test 2: Change existing choices
++        print("\nTest 2: Changing existing choices")
++        old_field = TestModel._meta.get_field("category")
++        new_field = models.IntegerField(
++            choices=[(1, "Category One"), (2, "Category Two"), (3, "Category Three")]
++        )
++        new_field.set_attributes_from_name("category")
++        new_field.model = TestModel
++        
++        with CaptureQueriesContext(connection) as queries:
++            with connection.schema_editor() as editor:
++                editor.alter_field(TestModel, old_field, new_field, strict=True)
++        
++        print(f"  Queries executed: {len(queries)}")
++        assert len(queries) == 0, f"Expected 0 queries but got {len(queries)}"
++        
++        # Test 3: Remove choices
++        print("\nTest 3: Removing choices")
++        old_field = new_field
++        new_field = models.IntegerField()
++        new_field.set_attributes_from_name("category")
++        new_field.model = TestModel
++        
++        with CaptureQueriesContext(connection) as queries:
++            with connection.schema_editor() as editor:
++                editor.alter_field(TestModel, old_field, new_field, strict=True)
++        
++        print(f"  Queries executed: {len(queries)}")
++        assert len(queries) == 0, f"Expected 0 queries but got {len(queries)}"
++        
++        # Test 4: Choices with other non-schema attributes
++        print("\nTest 4: Changing choices with other non-schema attributes")
++        old_field = TestModel._meta.get_field("status")
++        new_field = models.CharField(
++            max_length=20,
++            choices=[("a", "A"), ("b", "B")],
++            blank=True,
++            verbose_name="Status Field",
++            help_text="Choose a status"
++        )
++        new_field.set_attributes_from_name("status")
++        new_field.model = TestModel
++        
++        with CaptureQueriesContext(connection) as queries:
++            with connection.schema_editor() as editor:
++                editor.alter_field(TestModel, old_field, new_field, strict=True)
++        
++        print(f"  Queries executed: {len(queries)}")
++        assert len(queries) == 0, f"Expected 0 queries but got {len(queries)}"
++        
++        # Clean up
++        with connection.schema_editor() as editor:
++            editor.delete_model(TestModel)
++        
++        print("\nAll tests passed!")
++        
++    finally:
++        # Re-enable FK constraints for SQLite
++        if connection.vendor == 'sqlite':
++            connection.enable_constraint_checking()
++
++if __name__ == "__main__":
++    test_alter_field_choices_noop()
+diff --git a/test_choices_alter.py b/test_choices_alter.py
+new file mode 100644
+index 0000000000..818cec7045
+--- /dev/null
++++ b/test_choices_alter.py
+@@ -0,0 +1,95 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++import sys
++# Check if we should test PostgreSQL (passed as command line argument)
++use_postgres = len(sys.argv) > 1 and sys.argv[1] == '--postgres'
++
++if use_postgres:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.postgresql',
++                'NAME': 'test_db',
++                'USER': 'postgres',
++                'PASSWORD': 'postgres',
++                'HOST': 'localhost',
++                'PORT': '5432',
++            }
++        },
++        INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++        USE_TZ=False,
++    )
++else:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++        USE_TZ=False,
++    )
++django.setup()
++
++from django.db import models, connection
++
++# Create a simple test model
++class TestModel(models.Model):
++    status = models.CharField(max_length=10)
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_model'
++
++# Test
++print(f"Database: {connection.vendor}")
++
++# Create the table
++with connection.schema_editor() as editor:
++    editor.create_model(TestModel)
++
++# Now let's see what SQL is generated when we alter a field to add choices
++sql_statements = []
++
++# Monkey patch execute to capture SQL
++original_execute = None
++
++def capture_execute(self, sql, params=()):
++    if params:
++        try:
++            sql = sql % params
++        except:
++            pass
++    sql_statements.append(sql)
++    return original_execute(self, sql, params)
++
++# Create old and new fields
++old_field = models.CharField(max_length=10)
++old_field.set_attributes_from_name('status')
++old_field.model = TestModel
++
++new_field = models.CharField(max_length=10, choices=[("active", "Active"), ("inactive", "Inactive")])
++new_field.set_attributes_from_name('status')
++new_field.model = TestModel
++
++# Alter the field
++with connection.schema_editor() as editor:
++    original_execute = editor.__class__.execute
++    editor.__class__.execute = capture_execute
++    try:
++        editor.alter_field(TestModel, old_field, new_field)
++    finally:
++        editor.__class__.execute = original_execute
++
++print(f"Number of SQL statements: {len(sql_statements)}")
++for i, sql in enumerate(sql_statements):
++    print(f"Statement {i+1}: {sql}")
++
++# Clean up
++with connection.schema_editor() as editor:
++    editor.delete_model(TestModel)
+diff --git a/test_comprehensive_alter.py b/test_comprehensive_alter.py
+new file mode 100644
+index 0000000000..357a10e1f8
+--- /dev/null
++++ b/test_comprehensive_alter.py
+@@ -0,0 +1,175 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    USE_TZ=False,
++)
++django.setup()
++
++from django.db import models, connection
++
++# Create a simple test model
++class TestModel(models.Model):
++    status = models.CharField(max_length=10)
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_model'
++
++# Monkey patch execute to capture SQL
++def capture_sql(editor_class):
++    sql_statements = []
++    original_execute = editor_class.execute
++    
++    def capture_execute(self, sql, params=()):
++        if params:
++            try:
++                sql = sql % params
++            except:
++                pass
++        sql_statements.append(sql)
++        return original_execute(self, sql, params)
++    
++    editor_class.execute = capture_execute
++    return sql_statements, original_execute
++
++def test_alter_scenarios():
++    # Create the table
++    with connection.schema_editor() as editor:
++        editor.create_model(TestModel)
++    
++    print("Testing various field alteration scenarios on", connection.vendor)
++    print("="*60)
++    
++    # Test 1: Adding choices (should not generate SQL)
++    print("\n1. Adding choices to a field:")
++    old_field = models.CharField(max_length=10)
++    old_field.set_attributes_from_name('status')
++    old_field.model = TestModel
++    
++    new_field = models.CharField(max_length=10, choices=[("active", "Active"), ("inactive", "Inactive")])
++    new_field.set_attributes_from_name('status')
++    new_field.model = TestModel
++    
++    with connection.schema_editor() as editor:
++        sql_statements, original_execute = capture_sql(editor.__class__)
++        try:
++            editor.alter_field(TestModel, old_field, new_field)
++        finally:
++            editor.__class__.execute = original_execute
++    
++    print(f"   SQL statements generated: {len(sql_statements)}")
++    if sql_statements:
++        for sql in sql_statements:
++            print(f"   - {sql}")
++    
++    # Test 2: Changing max_length (should generate SQL)
++    print("\n2. Changing max_length:")
++    old_field = models.CharField(max_length=10)
++    old_field.set_attributes_from_name('status')
++    old_field.model = TestModel
++    
++    new_field = models.CharField(max_length=20)
++    new_field.set_attributes_from_name('status')
++    new_field.model = TestModel
++    
++    with connection.schema_editor() as editor:
++        sql_statements, original_execute = capture_sql(editor.__class__)
++        try:
++            editor.alter_field(TestModel, old_field, new_field)
++        finally:
++            editor.__class__.execute = original_execute
++    
++    print(f"   SQL statements generated: {len(sql_statements)}")
++    if len(sql_statements) > 0:
++        print("   (This is expected - max_length affects the database schema)")
++    
++    # Test 3: Changing verbose_name (should not generate SQL)
++    print("\n3. Changing verbose_name:")
++    old_field = models.CharField(max_length=20)
++    old_field.set_attributes_from_name('status')
++    old_field.model = TestModel
++    
++    new_field = models.CharField(max_length=20, verbose_name="Status Label")
++    new_field.set_attributes_from_name('status')
++    new_field.model = TestModel
++    
++    with connection.schema_editor() as editor:
++        sql_statements, original_execute = capture_sql(editor.__class__)
++        try:
++            editor.alter_field(TestModel, old_field, new_field)
++        finally:
++            editor.__class__.execute = original_execute
++    
++    print(f"   SQL statements generated: {len(sql_statements)}")
++    if sql_statements:
++        for sql in sql_statements:
++            print(f"   - {sql}")
++    
++    # Test 4: Changing null (should generate SQL)
++    print("\n4. Changing null constraint:")
++    old_field = models.CharField(max_length=20)
++    old_field.set_attributes_from_name('status')
++    old_field.model = TestModel
++    
++    new_field = models.CharField(max_length=20, null=True)
++    new_field.set_attributes_from_name('status')
++    new_field.model = TestModel
++    
++    with connection.schema_editor() as editor:
++        sql_statements, original_execute = capture_sql(editor.__class__)
++        try:
++            editor.alter_field(TestModel, old_field, new_field)
++        finally:
++            editor.__class__.execute = original_execute
++    
++    print(f"   SQL statements generated: {len(sql_statements)}")
++    if len(sql_statements) > 0:
++        print("   (This is expected - null constraint affects the database schema)")
++    
++    # Test 5: Changing both choices and help_text (should not generate SQL)
++    print("\n5. Changing choices and help_text:")
++    old_field = models.CharField(max_length=20, null=True)
++    old_field.set_attributes_from_name('status')
++    old_field.model = TestModel
++    
++    new_field = models.CharField(
++        max_length=20, 
++        null=True,
++        choices=[("a", "A"), ("b", "B")],
++        help_text="Choose a status"
++    )
++    new_field.set_attributes_from_name('status')
++    new_field.model = TestModel
++    
++    with connection.schema_editor() as editor:
++        sql_statements, original_execute = capture_sql(editor.__class__)
++        try:
++            editor.alter_field(TestModel, old_field, new_field)
++        finally:
++            editor.__class__.execute = original_execute
++    
++    print(f"   SQL statements generated: {len(sql_statements)}")
++    if sql_statements:
++        for sql in sql_statements:
++            print(f"   - {sql}")
++    
++    # Clean up
++    with connection.schema_editor() as editor:
++        editor.delete_model(TestModel)
++    
++    print("\n" + "="*60)
++    print("Test completed successfully!")
++
++if __name__ == "__main__":
++    test_alter_scenarios()

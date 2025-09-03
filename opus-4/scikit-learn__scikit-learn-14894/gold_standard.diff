@@ -1,0 +1,298 @@
+From 060a639a37a34cfeb28451e329c818e742efb8fb Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Tue, 3 Sep 2019 12:41:18 -0400
+Subject: [PATCH 01/10] add logic
+
+---
+ sklearn/svm/base.py           | 13 ++++++++-----
+ sklearn/svm/tests/test_svm.py | 14 ++++++++++++++
+ 2 files changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/sklearn/svm/base.py b/sklearn/svm/base.py
+index 64cebe837514a..a2f31ac7340fd 100644
+--- a/sklearn/svm/base.py
++++ b/sklearn/svm/base.py
+@@ -287,11 +287,14 @@ def _sparse_fit(self, X, y, sample_weight, solver_type, kernel,
+         n_SV = self.support_vectors_.shape[0]
+ 
+         dual_coef_indices = np.tile(np.arange(n_SV), n_class)
+-        dual_coef_indptr = np.arange(0, dual_coef_indices.size + 1,
+-                                     dual_coef_indices.size / n_class)
+-        self.dual_coef_ = sp.csr_matrix(
+-            (dual_coef_data, dual_coef_indices, dual_coef_indptr),
+-            (n_class, n_SV))
++        if dual_coef_indices.size == 0:
++            self.dual_coef_ = sp.csr_matrix([])
++        else:
++            dual_coef_indptr = np.arange(0, dual_coef_indices.size + 1,
++                                         dual_coef_indices.size / n_class)
++            self.dual_coef_ = sp.csr_matrix(
++                (dual_coef_data, dual_coef_indices, dual_coef_indptr),
++                (n_class, n_SV))
+ 
+     def predict(self, X):
+         """Perform regression on samples in X.
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index 6ba141811e39d..d2f584514912c 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -690,6 +690,20 @@ def test_sparse_precomputed():
+         assert "Sparse precomputed" in str(e)
+ 
+ 
++def test_sparse_fit_no_support_vectors():
++    x_train = sparse.csr_matrix([[0, 1, 0, 0],
++                                 [0, 0, 0, 1],
++                                 [0, 0, 1, 0],
++                                 [0, 0, 0, 1]])
++    y_train = np.array([0.04, 0.04, 0.10, 0.16])
++    model = svm.SVR(C=316.227766017, cache_size=200, coef0=0.0, degree=3, epsilon=0.1,
++                    gamma=1.0, kernel='linear', max_iter=15000,
++                    shrinking=True, tol=0.001, verbose=False)
++    model.fit(x_train, y_train)
++    assert not model.support_vectors_
++    assert model.dual_coef_ == sparse.csr_matrix([])
++
++
+ def test_linearsvc_parameters():
+     # Test possible parameter combinations in LinearSVC
+     # Generate list of possible parameter combinations
+
+From c44a9ae4cd310f0737d092aa5262a7ec4fd6d8d7 Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Thu, 5 Sep 2019 13:14:40 -0400
+Subject: [PATCH 02/10] fix test
+
+---
+ sklearn/svm/tests/test_svm.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index d2f584514912c..c0141e5be3d03 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -700,8 +700,8 @@ def test_sparse_fit_no_support_vectors():
+                     gamma=1.0, kernel='linear', max_iter=15000,
+                     shrinking=True, tol=0.001, verbose=False)
+     model.fit(x_train, y_train)
+-    assert not model.support_vectors_
+-    assert model.dual_coef_ == sparse.csr_matrix([])
++    assert not model.support_vectors_.data
++    assert not model.dual_coef_.data
+ 
+ 
+ def test_linearsvc_parameters():
+
+From 1b5735e551d25700e6222a700b2bc9929ff5d9c3 Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Thu, 5 Sep 2019 13:17:41 -0400
+Subject: [PATCH 03/10] rename test
+
+---
+ sklearn/svm/tests/test_svm.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index c0141e5be3d03..95f7be1d9992d 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -690,7 +690,7 @@ def test_sparse_precomputed():
+         assert "Sparse precomputed" in str(e)
+ 
+ 
+-def test_sparse_fit_no_support_vectors():
++def test_sparse_fit_support_vectors_empty():
+     x_train = sparse.csr_matrix([[0, 1, 0, 0],
+                                  [0, 0, 0, 1],
+                                  [0, 0, 1, 0],
+
+From 35d1f1ef4dc50d5374b00a416f1823c04631c99c Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Thu, 5 Sep 2019 13:46:37 -0400
+Subject: [PATCH 04/10] test
+
+---
+ sklearn/svm/tests/test_svm.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index 95f7be1d9992d..fe357379d591f 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -700,8 +700,8 @@ def test_sparse_fit_support_vectors_empty():
+                     gamma=1.0, kernel='linear', max_iter=15000,
+                     shrinking=True, tol=0.001, verbose=False)
+     model.fit(x_train, y_train)
+-    assert not model.support_vectors_.data
+-    assert not model.dual_coef_.data
++    assert model.support_vectors_.data.size == 0
++    assert model.dual_coef_.data.size == 0
+ 
+ 
+ def test_linearsvc_parameters():
+
+From 3cfe4bde38a7d9436ebd7a7d4918364ed5eda275 Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Thu, 5 Sep 2019 13:53:45 -0400
+Subject: [PATCH 05/10] linting
+
+---
+ sklearn/svm/tests/test_svm.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index fe357379d591f..cf611d482f184 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -696,8 +696,8 @@ def test_sparse_fit_support_vectors_empty():
+                                  [0, 0, 1, 0],
+                                  [0, 0, 0, 1]])
+     y_train = np.array([0.04, 0.04, 0.10, 0.16])
+-    model = svm.SVR(C=316.227766017, cache_size=200, coef0=0.0, degree=3, epsilon=0.1,
+-                    gamma=1.0, kernel='linear', max_iter=15000,
++    model = svm.SVR(C=316.227766017, cache_size=200, coef0=0.0, degree=3,
++		    epsilon=0.1, gamma=1.0, kernel='linear', max_iter=15000,
+                     shrinking=True, tol=0.001, verbose=False)
+     model.fit(x_train, y_train)
+     assert model.support_vectors_.data.size == 0
+
+From 3f3977bf29ae54604cb4ef443789f4fede1173f9 Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Thu, 5 Sep 2019 14:05:49 -0400
+Subject: [PATCH 06/10] linting again
+
+---
+ sklearn/svm/tests/test_svm.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index cf611d482f184..18c9c50070177 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -697,7 +697,7 @@ def test_sparse_fit_support_vectors_empty():
+                                  [0, 0, 0, 1]])
+     y_train = np.array([0.04, 0.04, 0.10, 0.16])
+     model = svm.SVR(C=316.227766017, cache_size=200, coef0=0.0, degree=3,
+-		    epsilon=0.1, gamma=1.0, kernel='linear', max_iter=15000,
++                    epsilon=0.1, gamma=1.0, kernel='linear', max_iter=15000,
+                     shrinking=True, tol=0.001, verbose=False)
+     model.fit(x_train, y_train)
+     assert model.support_vectors_.data.size == 0
+
+From 85e6d41ee5031225cf6c189a931e3a0351452e61 Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Wed, 2 Oct 2019 15:48:24 -0400
+Subject: [PATCH 07/10] make test simpler:
+
+---
+ sklearn/svm/tests/test_svm.py | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index 18c9c50070177..dff420dadf861 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -691,15 +691,13 @@ def test_sparse_precomputed():
+ 
+ 
+ def test_sparse_fit_support_vectors_empty():
+-    x_train = sparse.csr_matrix([[0, 1, 0, 0],
++    X_train = sparse.csr_matrix([[0, 1, 0, 0],
+                                  [0, 0, 0, 1],
+                                  [0, 0, 1, 0],
+                                  [0, 0, 0, 1]])
+     y_train = np.array([0.04, 0.04, 0.10, 0.16])
+-    model = svm.SVR(C=316.227766017, cache_size=200, coef0=0.0, degree=3,
+-                    epsilon=0.1, gamma=1.0, kernel='linear', max_iter=15000,
+-                    shrinking=True, tol=0.001, verbose=False)
+-    model.fit(x_train, y_train)
++    model = svm.SVR(kernel='linear')
++    model.fit(X_train, y_train)
+     assert model.support_vectors_.data.size == 0
+     assert model.dual_coef_.data.size == 0
+ 
+
+From e1d04937e5d929d769dfc398fb5b7edc3042273b Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Fri, 4 Oct 2019 09:15:15 -0400
+Subject: [PATCH 08/10] comment about test
+
+---
+ sklearn/svm/tests/test_svm.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index dff420dadf861..23720333102fc 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -691,6 +691,7 @@ def test_sparse_precomputed():
+ 
+ 
+ def test_sparse_fit_support_vectors_empty():
++    # Regression test for #14893
+     X_train = sparse.csr_matrix([[0, 1, 0, 0],
+                                  [0, 0, 0, 1],
+                                  [0, 0, 1, 0],
+
+From 76a40d86d2abcfe4ad51d179f19a70c8eb56190c Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Mon, 7 Oct 2019 15:21:04 -0400
+Subject: [PATCH 09/10] fixed based on suggestions
+
+---
+ sklearn/svm/base.py           | 2 +-
+ sklearn/svm/tests/test_svm.py | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/sklearn/svm/base.py b/sklearn/svm/base.py
+index a2f31ac7340fd..fb2b734c0f7f2 100644
+--- a/sklearn/svm/base.py
++++ b/sklearn/svm/base.py
+@@ -287,7 +287,7 @@ def _sparse_fit(self, X, y, sample_weight, solver_type, kernel,
+         n_SV = self.support_vectors_.shape[0]
+ 
+         dual_coef_indices = np.tile(np.arange(n_SV), n_class)
+-        if dual_coef_indices.size == 0:
++        if not n_SV:
+             self.dual_coef_ = sp.csr_matrix([])
+         else:
+             dual_coef_indptr = np.arange(0, dual_coef_indices.size + 1,
+diff --git a/sklearn/svm/tests/test_svm.py b/sklearn/svm/tests/test_svm.py
+index 23720333102fc..c82092dd93e1d 100644
+--- a/sklearn/svm/tests/test_svm.py
++++ b/sklearn/svm/tests/test_svm.py
+@@ -699,8 +699,8 @@ def test_sparse_fit_support_vectors_empty():
+     y_train = np.array([0.04, 0.04, 0.10, 0.16])
+     model = svm.SVR(kernel='linear')
+     model.fit(X_train, y_train)
+-    assert model.support_vectors_.data.size == 0
+-    assert model.dual_coef_.data.size == 0
++    assert not model.support_vectors_.data.size
++    assert not model.dual_coef_.data.size
+ 
+ 
+ def test_linearsvc_parameters():
+
+From 0e58862cac308583b0376116e72d032b765eda33 Mon Sep 17 00:00:00 2001
+From: Danna Naser <danna.naser@datarobot.com>
+Date: Mon, 7 Oct 2019 15:29:08 -0400
+Subject: [PATCH 10/10] change log rebase
+
+---
+ doc/whats_new/v0.22.rst | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/doc/whats_new/v0.22.rst b/doc/whats_new/v0.22.rst
+index 0b60f1a05dcc2..5a6f7d2663e61 100644
+--- a/doc/whats_new/v0.22.rst
++++ b/doc/whats_new/v0.22.rst
+@@ -572,6 +572,9 @@ Changelog
+   :class:`svm.OneClassSVM` was previously non-initialized, and had size 2. It
+   has now size 1 with the correct value. :pr:`15099` by `Nicolas Hug`_.
+ 
++- |Fix| fixed a bug in :class:`BaseLibSVM._sparse_fit` where n_SV=0 raised a
++  ZeroDivisionError. :pr:`14894` by :user:`Danna Naser <danna-naser>`.
++
+ :mod:`sklearn.tree`
+ ...................
+ 

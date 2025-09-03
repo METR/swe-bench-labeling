@@ -1,0 +1,453 @@
+diff --git a/demo_frozen_support.py b/demo_frozen_support.py
+new file mode 100644
+index 0000000000..53597db421
+--- /dev/null
++++ b/demo_frozen_support.py
+@@ -0,0 +1,32 @@
++"""
++Demo showing how the improved namespace detection helps frozen Python environments.
++"""
++
++print("Django Migration Loader - Improved Namespace Package Detection")
++print("=" * 60)
++print()
++print("PROBLEM:")
++print("In frozen Python environments (e.g., py2exe, PyInstaller, cx_Freeze),")
++print("regular packages often don't have __file__ attributes set.")
++print("Django's migration loader previously rejected ALL modules without __file__,")
++print("incorrectly treating frozen regular packages as namespace packages.")
++print()
++print("SOLUTION:")
++print("The improved check now properly distinguishes between:")
++print("1. Regular packages without __file__ (has list __path__) - ACCEPTED")
++print("2. Namespace packages (has non-list __path__) - REJECTED")
++print()
++print("IMPACT:")
++print("This change enables Django to find and load migrations in frozen")
++print("Python environments, while still correctly rejecting namespace packages.")
++print()
++print("The check changed from:")
++print("  if getattr(module, '__file__', None) is None:")
++print("      # Reject as namespace package")
++print()
++print("To:")
++print("  if getattr(module, '__file__', None) is None and not isinstance(module.__path__, list):")
++print("      # Reject only if it's actually a namespace package")
++print()
++print("This narrow change maintains backward compatibility while enabling")
++print("Django to work better in frozen environments!")
+diff --git a/django/db/migrations/loader.py b/django/db/migrations/loader.py
+index 95a5062ec9..c84a17f14b 100644
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -88,15 +88,17 @@ class MigrationLoader:
+                     continue
+                 raise
+             else:
+-                # Empty directories are namespaces.
+-                # getattr() needed on PY36 and older (replace w/attribute access).
+-                if getattr(module, '__file__', None) is None:
+-                    self.unmigrated_apps.add(app_config.label)
+-                    continue
+                 # Module is not a package (e.g. migrations.py).
+                 if not hasattr(module, '__path__'):
+                     self.unmigrated_apps.add(app_config.label)
+                     continue
++                # Namespace packages have no __file__ and don't use a regular list for __path__.
++                # Check for namespace packages more accurately - avoid rejecting regular packages
++                # in frozen environments that don't set __file__.
++                # getattr() needed on PY36 and older (replace w/attribute access).
++                if getattr(module, '__file__', None) is None and not isinstance(module.__path__, list):
++                    self.unmigrated_apps.add(app_config.label)
++                    continue
+                 # Force a reload if it's already loaded (tests need this)
+                 if was_loaded:
+                     reload(module)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..83ef266a9a
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,75 @@
++"""Test edge cases for the namespace package detection."""
++from types import ModuleType
++
++
++def test_edge_cases():
++    """Test various edge cases for module identification."""
++    
++    # Case 1: Module with __file__ set (normal case)
++    normal_module = ModuleType('normal')
++    normal_module.__file__ = '/some/path/normal.py'
++    normal_module.__path__ = ['/some/path']
++    
++    # Case 2: Module without __path__ (not a package, e.g., migrations.py file)
++    non_package = ModuleType('non_package')
++    non_package.__file__ = '/some/path/migrations.py'
++    # No __path__ attribute
++    
++    # Case 3: Frozen regular package (no __file__, list __path__)
++    frozen_regular = ModuleType('frozen_regular')
++    # No __file__
++    frozen_regular.__path__ = ['/frozen/path']
++    
++    # Case 4: Namespace package (no __file__, non-list __path__)
++    class FakePath:
++        def __init__(self, paths):
++            self.paths = paths
++        def __iter__(self):
++            return iter(self.paths)
++    
++    namespace_pkg = ModuleType('namespace')
++    # No __file__
++    namespace_pkg.__path__ = FakePath(['/namespace/path'])
++    
++    # Test each case
++    print("Testing edge cases:")
++    
++    for name, module in [
++        ('normal_module', normal_module),
++        ('non_package', non_package),
++        ('frozen_regular', frozen_regular),
++        ('namespace_pkg', namespace_pkg)
++    ]:
++        has_file = getattr(module, '__file__', None) is not None
++        has_path = hasattr(module, '__path__')
++        has_list_path = has_path and isinstance(module.__path__, list)
++        
++        # Old check (would reject if no __file__)
++        old_would_reject = getattr(module, '__file__', None) is None
++        
++        # New check (reject if no __file__ AND __path__ is not a list)
++        new_would_reject = (getattr(module, '__file__', None) is None and 
++                           has_path and not isinstance(module.__path__, list))
++        
++        print(f"\n{name}:")
++        print(f"  has __file__: {has_file}")
++        print(f"  has __path__: {has_path}")
++        print(f"  __path__ is list: {has_list_path}")
++        print(f"  OLD check would reject: {old_would_reject}")
++        print(f"  NEW check would reject: {new_would_reject}")
++        
++        # Verify the logic makes sense
++        if name == 'normal_module':
++            assert not old_would_reject and not new_would_reject
++        elif name == 'non_package':
++            assert not old_would_reject and not new_would_reject
++        elif name == 'frozen_regular':
++            assert old_would_reject and not new_would_reject  # This is the key improvement!
++        elif name == 'namespace_pkg':
++            assert old_would_reject and new_would_reject
++    
++    print("\nAll edge case tests passed!")
++
++
++if __name__ == '__main__':
++    test_edge_cases()
+diff --git a/test_frozen_environment.py b/test_frozen_environment.py
+new file mode 100644
+index 0000000000..114a9571f9
+--- /dev/null
++++ b/test_frozen_environment.py
+@@ -0,0 +1,148 @@
++"""
++Test for the improved namespace package detection in frozen environments.
++"""
++import os
++import sys
++import tempfile
++from types import ModuleType
++from importlib.machinery import ModuleSpec
++from django.db.migrations.loader import MigrationLoader
++from django.db import connection
++from django.test import TestCase, override_settings
++from django.apps import apps
++
++
++class MockFrozenModule(ModuleType):
++    """A mock module that simulates a regular package in a frozen environment.
++    
++    This has no __file__ attribute but has a list __path__ attribute.
++    """
++    def __init__(self, name, path):
++        super().__init__(name)
++        self.__path__ = [path]  # Regular list path, not _NamespacePath
++
++
++class NamespacePathMock:
++    """Mock of the _NamespacePath type used by namespace packages."""
++    def __init__(self, paths):
++        self._paths = paths
++    
++    def __iter__(self):
++        return iter(self._paths)
++
++
++class MockNamespaceModule(ModuleType):
++    """A mock module that simulates a namespace package.
++    
++    This has no __file__ attribute and has a non-list __path__ attribute.
++    """
++    def __init__(self, name, path):
++        super().__init__(name)
++        self.__path__ = NamespacePathMock([path])
++
++
++def test_namespace_detection():
++    """Test the improved namespace package detection logic directly."""
++    print("Testing namespace package detection logic...")
++    
++    # Create test modules
++    frozen_regular = MockFrozenModule('frozen_regular', '/some/path')
++    namespace_pkg = MockNamespaceModule('namespace_pkg', '/some/namespace')
++    
++    # Test the new logic
++    for name, module in [('frozen_regular', frozen_regular), ('namespace_pkg', namespace_pkg)]:
++        has_file = getattr(module, '__file__', None) is not None
++        has_list_path = hasattr(module, '__path__') and isinstance(module.__path__, list)
++        is_namespace = not has_file and not has_list_path
++        
++        print(f"\n{name}:")
++        print(f"  has __file__: {has_file}")
++        print(f"  has list __path__: {has_list_path}")
++        print(f"  is namespace package: {is_namespace}")
++    
++    # The frozen regular package should NOT be detected as namespace
++    assert not (getattr(frozen_regular, '__file__', None) is None and 
++                not isinstance(frozen_regular.__path__, list))
++    
++    # The namespace package SHOULD be detected as namespace
++    assert (getattr(namespace_pkg, '__file__', None) is None and 
++            not isinstance(namespace_pkg.__path__, list))
++    
++    print("\nAll assertions passed!")
++
++
++def test_migration_loader_with_frozen_module():
++    """Test that MigrationLoader accepts regular packages without __file__."""
++    print("\nTesting MigrationLoader with frozen-style module...")
++    
++    # Create a temporary directory for our test app
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create app structure
++        app_dir = os.path.join(tmpdir, 'test_app')
++        migrations_dir = os.path.join(app_dir, 'migrations')
++        os.makedirs(migrations_dir)
++        
++        # Create __init__.py files (regular package, not namespace)
++        with open(os.path.join(app_dir, '__init__.py'), 'w') as f:
++            f.write('')
++        with open(os.path.join(migrations_dir, '__init__.py'), 'w') as f:
++            f.write('')
++        
++        # Create a migration
++        with open(os.path.join(migrations_dir, '0001_initial.py'), 'w') as f:
++            f.write('''
++from django.db import migrations
++
++class Migration(migrations.Migration):
++    initial = True
++    dependencies = []
++    operations = []
++''')
++        
++        # Add to sys.path
++        sys.path.insert(0, tmpdir)
++        
++        try:
++            # Import the modules
++            import test_app
++            import test_app.migrations
++            
++            # Simulate frozen environment by removing __file__
++            original_file = getattr(test_app.migrations, '__file__', None)
++            if hasattr(test_app.migrations, '__file__'):
++                delattr(test_app.migrations, '__file__')
++            
++            # Verify it's a regular package (has list __path__)
++            assert isinstance(test_app.migrations.__path__, list), \
++                f"Expected list path, got {type(test_app.migrations.__path__)}"
++            
++            # Mock the app config
++            class MockAppConfig:
++                label = 'test_app'
++                name = 'test_app'
++            
++            # Test that our module would NOT be rejected by the new check
++            module = test_app.migrations
++            would_be_rejected = (getattr(module, '__file__', None) is None and 
++                               not isinstance(module.__path__, list))
++            
++            print(f"Module has __file__: {hasattr(module, '__file__')}")
++            print(f"Module __path__ is list: {isinstance(module.__path__, list)}")
++            print(f"Would be rejected as namespace: {would_be_rejected}")
++            
++            assert not would_be_rejected, "Regular package without __file__ should not be rejected!"
++            
++            print("Test passed: Regular packages without __file__ are accepted!")
++            
++        finally:
++            # Cleanup
++            sys.path.remove(tmpdir)
++            # Remove imported modules
++            for mod in list(sys.modules.keys()):
++                if mod.startswith('test_app'):
++                    del sys.modules[mod]
++
++
++if __name__ == '__main__':
++    test_namespace_detection()
++    test_migration_loader_with_frozen_module()
+diff --git a/test_frozen_package_support.py b/test_frozen_package_support.py
+new file mode 100644
+index 0000000000..0b06bc033f
+--- /dev/null
++++ b/test_frozen_package_support.py
+@@ -0,0 +1,85 @@
++"""
++Test to add to Django's test suite for frozen environment support.
++This test could be added to tests/migrations/test_loader.py
++"""
++
++from django.test import TestCase, override_settings
++from django.db.migrations.loader import MigrationLoader
++from django.db import connection
++import sys
++from types import ModuleType
++from unittest import mock
++
++
++class FrozenEnvironmentTests(TestCase):
++    """Tests for migration loader behavior in frozen Python environments."""
++    
++    def test_frozen_regular_package_accepted(self):
++        """
++        Regular packages without __file__ (as in frozen environments) should be
++        accepted by the migration loader, not rejected as namespace packages.
++        """
++        # Create a mock module that simulates a regular package in frozen env
++        mock_module = ModuleType('test_frozen_migrations')
++        mock_module.__path__ = ['/some/frozen/path']  # List path = regular package
++        # No __file__ attribute (frozen environment characteristic)
++        
++        # The module should NOT be identified as a namespace package
++        is_namespace = (getattr(mock_module, '__file__', None) is None and 
++                       not isinstance(mock_module.__path__, list))
++        self.assertFalse(is_namespace, 
++                        "Regular package without __file__ incorrectly identified as namespace")
++    
++    def test_namespace_package_still_rejected(self):
++        """
++        True namespace packages (with non-list __path__) should still be rejected.
++        """
++        # Create a mock namespace package
++        class _NamespacePath:
++            def __init__(self, paths):
++                self._paths = paths
++            def __iter__(self):
++                return iter(self._paths)
++        
++        mock_module = ModuleType('test_namespace_migrations')
++        mock_module.__path__ = _NamespacePath(['/some/namespace/path'])
++        # No __file__ attribute
++        
++        # The module SHOULD be identified as a namespace package
++        is_namespace = (getattr(mock_module, '__file__', None) is None and 
++                       not isinstance(mock_module.__path__, list))
++        self.assertTrue(is_namespace, 
++                       "Namespace package not correctly identified")
++    
++    @mock.patch('django.db.migrations.loader.import_module')
++    def test_loader_accepts_frozen_package(self, mock_import):
++        """
++        MigrationLoader should process regular packages without __file__.
++        """
++        # Create a mock frozen module
++        mock_module = ModuleType('test_app.migrations')
++        mock_module.__path__ = ['/frozen/test_app/migrations']
++        # No __file__ attribute
++        
++        # Configure the mock
++        mock_import.return_value = mock_module
++        
++        # Override settings to test our app
++        with override_settings(
++            INSTALLED_APPS=['test_app'],
++            MIGRATION_MODULES={'test_app': 'test_app.migrations'}
++        ):
++            # Mock apps.get_app_configs to return our test app
++            from django.apps import apps
++            
++            class MockAppConfig:
++                label = 'test_app'
++                name = 'test_app'
++            
++            with mock.patch.object(apps, 'get_app_configs', return_value=[MockAppConfig()]):
++                loader = MigrationLoader(connection, load=False)
++                loader.load_disk()
++                
++                # The app should be in migrated_apps, not unmigrated_apps
++                self.assertIn('test_app', loader.migrated_apps)
++                self.assertNotIn('test_app', loader.unmigrated_apps)
+diff --git a/test_namespace_check.py b/test_namespace_check.py
+new file mode 100644
+index 0000000000..8e516d6d82
+--- /dev/null
++++ b/test_namespace_check.py
+@@ -0,0 +1,56 @@
++"""Test script to verify namespace package detection behavior."""
++import sys
++from types import ModuleType
++from importlib.machinery import ModuleSpec
++
++# Create a mock module that has no __file__ but has a list __path__ (regular package)
++regular_package_no_file = ModuleType('regular_package_no_file')
++regular_package_no_file.__path__ = ['/some/path']  # List path (regular package)
++# No __file__ attribute set
++
++# Create a mock namespace package (has no __file__ and non-list __path__)
++class _NamespacePath:
++    """Mock of the _NamespacePath type used by namespace packages."""
++    def __init__(self, paths):
++        self._paths = paths
++    
++    def __iter__(self):
++        return iter(self._paths)
++
++namespace_package = ModuleType('namespace_package')
++namespace_package.__path__ = _NamespacePath(['/some/namespace/path'])
++# No __file__ attribute set
++
++# Test current behavior
++def test_current_check():
++    """Test the current implementation's behavior."""
++    print("Testing current implementation:")
++    
++    # Current check: getattr(module, '__file__', None) is None
++    print(f"regular_package_no_file has __file__: {hasattr(regular_package_no_file, '__file__')}")
++    print(f"regular_package_no_file.__file__ is None: {getattr(regular_package_no_file, '__file__', None) is None}")
++    print(f"namespace_package has __file__: {hasattr(namespace_package, '__file__')}")
++    print(f"namespace_package.__file__ is None: {getattr(namespace_package, '__file__', None) is None}")
++    
++    print("\nCurrent check would reject both packages!")
++
++def test_proposed_check():
++    """Test the proposed implementation's behavior."""
++    print("\nTesting proposed implementation:")
++    
++    for name, module in [('regular_package_no_file', regular_package_no_file), 
++                         ('namespace_package', namespace_package)]:
++        has_file = getattr(module, '__file__', None) is not None
++        has_list_path = hasattr(module, '__path__') and isinstance(module.__path__, list)
++        
++        # Proposed check: reject if no __file__ AND __path__ is not a list
++        is_namespace = not has_file and not has_list_path
++        
++        print(f"\n{name}:")
++        print(f"  has __file__: {has_file}")
++        print(f"  has list __path__: {has_list_path}")
++        print(f"  Would be rejected as namespace: {is_namespace}")
++
++if __name__ == "__main__":
++    test_current_check()
++    test_proposed_check()

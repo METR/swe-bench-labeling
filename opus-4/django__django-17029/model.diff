@@ -1,0 +1,42 @@
+diff --git a/django/apps/registry.py b/django/apps/registry.py
+index 0683f3ad3c..a5a4b85f92 100644
+--- a/django/apps/registry.py
++++ b/django/apps/registry.py
+@@ -376,6 +376,8 @@ class Apps:
+         # Call expire cache on each model. This will purge
+         # the relation tree and the fields cache.
+         self.get_models.cache_clear()
++        # Clear the cache for get_swappable_settings_name
++        self.get_swappable_settings_name.cache_clear()
+         if self.ready:
+             # Circumvent self.get_models() to prevent that the cache is refilled.
+             # This particularly prevents that an empty value is cached while cloning.
+diff --git a/tests/apps/tests.py b/tests/apps/tests.py
+index 9f989c5d9a..7896f3eebb 100644
+--- a/tests/apps/tests.py
++++ b/tests/apps/tests.py
+@@ -373,6 +373,24 @@ class AppsTests(SimpleTestCase):
+         # Everything should be loaded - make sure the callback was executed properly.
+         self.assertEqual(model_classes, [LazyA, LazyB, LazyB, LazyC, LazyA])
+ 
++    def test_clear_cache_clears_get_swappable_settings_name_cache(self):
++        """
++        apps.clear_cache() should clear the cache of get_swappable_settings_name.
++        """
++        # First, call get_swappable_settings_name to populate the cache
++        apps.get_swappable_settings_name("auth.User")
++        
++        # Check that the cache has been populated
++        cache_info_before = apps.get_swappable_settings_name.cache_info()
++        self.assertGreater(cache_info_before.currsize, 0)
++        
++        # Clear the cache
++        apps.clear_cache()
++        
++        # Check that the cache has been cleared
++        cache_info_after = apps.get_swappable_settings_name.cache_info()
++        self.assertEqual(cache_info_after.currsize, 0)
++
+ 
+ class Stub:
+     def __init__(self, **kwargs):

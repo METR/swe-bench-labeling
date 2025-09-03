@@ -1,0 +1,300 @@
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index fff7da80ae..e64cd1fa41 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -153,6 +153,15 @@ class ArcsinDistribution(SingleContinuousDistribution):
+     def pdf(self, x):
+         return 1/(pi*sqrt((x - self.a)*(self.b - x)))
+ 
++    def _cdf(self, x):
++        from sympy import asin
++        a, b = self.a, self.b
++        return Piecewise(
++            (S.Zero, x <= a),
++            (2*asin(sqrt((x - a)/(b - a)))/pi, x <= b),
++            (S.One, True)
++        )
++
+ def Arcsin(name, a=0, b=1):
+     r"""
+     Create a Continuous Random Variable with an arcsin distribution.
+@@ -670,6 +679,13 @@ def pdf(self, x):
+         p, a, b = self.p, self.a, self.b
+         return a*p/x*((x/b)**(a*p)/(((x/b)**a + 1)**(p + 1)))
+ 
++    def _cdf(self, x):
++        p, a, b = self.p, self.a, self.b
++        return Piecewise(
++            ((1 + (x/b)**(-a))**(-p), x > 0),
++            (S.Zero, True)
++        )
++
+ 
+ def Dagum(name, p, a, b):
+     r"""
+@@ -1042,6 +1058,13 @@ def pdf(self, x):
+         a, s, m = self.a, self.s, self.m
+         return a/s * ((x-m)/s)**(-1-a) * exp(-((x-m)/s)**(-a))
+ 
++    def _cdf(self, x):
++        a, s, m = self.a, self.s, self.m
++        return Piecewise(
++            (exp(-((x - m)/s)**(-a)), x > m),
++            (S.Zero, True)
++        )
++
+ def Frechet(name, a, s=1, m=0):
+     r"""
+     Create a continuous random variable with a Frechet distribution.
+@@ -1111,6 +1134,13 @@ def pdf(self, x):
+     def sample(self):
+         return random.gammavariate(self.k, self.theta)
+ 
++    def _cdf(self, x):
++        k, theta = self.k, self.theta
++        return Piecewise(
++            (lowergamma(k, x/theta)/gamma(k), x >= 0),
++            (S.Zero, True)
++        )
++
+ 
+ def Gamma(name, k, theta):
+     r"""
+@@ -1200,6 +1230,14 @@ def pdf(self, x):
+         a, b = self.a, self.b
+         return b**a/gamma(a) * x**(-a-1) * exp(-b/x)
+ 
++    def _cdf(self, x):
++        from sympy import uppergamma
++        a, b = self.a, self.b
++        return Piecewise(
++            (uppergamma(a, b/x)/gamma(a), x > 0),
++            (S.Zero, True)
++        )
++
+ def GammaInverse(name, a, b):
+     r"""
+     Create a continuous random variable with an inverse Gamma distribution.
+@@ -1385,6 +1423,14 @@ def pdf(self, x):
+         a, b = self.a, self.b
+         return a * b * x**(a-1) * (1-x**a)**(b-1)
+ 
++    def _cdf(self, x):
++        a, b = self.a, self.b
++        return Piecewise(
++            (S.Zero, x <= 0),
++            (1 - (1 - x**a)**b, x <= 1),
++            (S.One, True)
++        )
++
+ def Kumaraswamy(name, a, b):
+     r"""
+     Create a Continuous Random Variable with a Kumaraswamy distribution.
+@@ -1445,6 +1491,13 @@ def pdf(self, x):
+         mu, b = self.mu, self.b
+         return 1/(2*b)*exp(-Abs(x - mu)/b)
+ 
++    def _cdf(self, x):
++        mu, b = self.mu, self.b
++        return Piecewise(
++            (exp((x - mu)/b)/2, x < mu),
++            (1 - exp(-(x - mu)/b)/2, True)
++        )
++
+ 
+ def Laplace(name, mu, b):
+     r"""
+@@ -1501,6 +1554,10 @@ def pdf(self, x):
+         mu, s = self.mu, self.s
+         return exp(-(x - mu)/s)/(s*(1 + exp(-(x - mu)/s))**2)
+ 
++    def _cdf(self, x):
++        mu, s = self.mu, self.s
++        return 1/(1 + exp(-(x - mu)/s))
++
+ 
+ def Logistic(name, mu, s):
+     r"""
+@@ -1711,6 +1768,13 @@ def pdf(self, x):
+         mu, omega = self.mu, self.omega
+         return 2*mu**mu/(gamma(mu)*omega**mu)*x**(2*mu - 1)*exp(-mu/omega*x**2)
+ 
++    def _cdf(self, x):
++        mu, omega = self.mu, self.omega
++        return Piecewise(
++            (lowergamma(mu, mu*x**2/omega)/gamma(mu), x >= 0),
++            (S.Zero, True)
++        )
++
+ 
+ def Nakagami(name, mu, omega):
+     r"""
+@@ -2227,6 +2291,11 @@ def pdf(self, x):
+         nu = self.nu
+         return 1/(sqrt(nu)*beta_fn(S(1)/2, nu/2))*(1 + x**2/nu)**(-(nu + 1)/2)
+ 
++    def _cdf(self, x):
++        from sympy import hyper
++        nu = self.nu
++        return S.Half + x*gamma((nu + 1)/2)*hyper((S.Half, (nu + 1)/2), (S(3)/2,), -x**2/nu)/(sqrt(pi*nu)*gamma(nu/2))
++
+ 
+ def StudentT(name, nu):
+     r"""
+@@ -2554,6 +2623,15 @@ def pdf(self, x):
+         return 1/factorial(
+             n - 1)*Sum((-1)**k*binomial(n, k)*(x - k)**(n - 1), (k, 0, floor(x)))
+ 
++    def _cdf(self, x):
++        n = self.n
++        k = Dummy("k")
++        return Piecewise(
++            (S.Zero, x < 0),
++            (1/factorial(n)*Sum((-1)**k*binomial(n, k)*(x - k)**n, (k, 0, floor(x))), x <= n),
++            (S.One, True)
++        )
++
+ 
+ 
+ def UniformSum(name, n):
+diff --git a/test_cdfs.py b/test_cdfs.py
+new file mode 100644
+index 0000000000..bd0519337b
+--- /dev/null
++++ b/test_cdfs.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python
++"""Test script for CDF implementations"""
++
++from sympy import S, simplify, diff
++from sympy.stats import *
++
++print("Testing Arcsin CDF...")
++result = cdf(Arcsin("x", 0, 3))(1)
++print(f"cdf(Arcsin('x', 0, 3))(1) = {result}")
++
++print("\nTesting Dagum CDF...")
++result = cdf(Dagum("x", S(1)/3, S(1)/5, 2))(3)
++print(f"cdf(Dagum('x', S(1)/3, S(1)/5, 2))(3) = {result}")
++
++print("\nTesting Erlang CDF...")
++result = cdf(Erlang("x", 1, 1))(1) 
++print(f"cdf(Erlang('x', 1, 1))(1) = {result}")
++
++print("\nTesting Frechet CDF...")
++result = cdf(Frechet("x", S(4)/3, 1, 2))(3)
++print(f"cdf(Frechet('x', S(4)/3, 1, 2))(3) = {result}")
++
++print("\nTesting Gamma CDF...")
++result = cdf(Gamma("x", 0.1, 2))(3)
++print(f"cdf(Gamma('x', 0.1, 2))(3) = {result}")
++
++print("\nTesting GammaInverse CDF...")
++result = cdf(GammaInverse("x", S(5)/7, 2))(3)
++print(f"cdf(GammaInverse('x', S(5)/7, 2))(3) = {result}")
++
++print("\nTesting Kumaraswamy CDF...")
++result = cdf(Kumaraswamy("x", S(1)/123, 5))(S(1)/3)
++print(f"cdf(Kumaraswamy('x', S(1)/123, 5))(S(1)/3) = {result}")
++
++print("\nTesting Laplace CDF...")
++result = cdf(Laplace("x", 2, 3))(5)
++print(f"cdf(Laplace('x', 2, 3))(5) = {result}")
++
++print("\nTesting Logistic CDF...")
++try:
++    result = cdf(Logistic("x", 1, 0.1))(2)
++    print(f"cdf(Logistic('x', 1, 0.1))(2) = {result}")
++except Exception as e:
++    print(f"Error with Logistic: {e}")
++
++print("\nTesting Nakagami CDF...")
++result = cdf(Nakagami("x", S(7)/3, 1))(2)
++print(f"cdf(Nakagami('x', S(7)/3, 1))(2) = {result}")
++
++print("\nTesting StudentT CDF...")
++result = cdf(StudentT("x", 10))(2)
++print(f"cdf(StudentT('x', 10))(2) = {result}")
++
++print("\nTesting UniformSum CDF...")
++result = cdf(UniformSum("x", 5))(2) 
++print(f"cdf(UniformSum('x', 5))(2) = {result}")
++
++# Additional test: verify that diff(CDF) = PDF for a few distributions
++print("\n\nVerifying that diff(CDF) = PDF...")
++
++print("\nFor Arcsin(0,1):")
++X = Arcsin("x", 0, 1)
++pdf_from_cdf = diff(cdf(X)(S('z')), S('z'))
++pdf_direct = density(X)(S('z'))
++print(f"diff(CDF) = {pdf_from_cdf}")
++print(f"PDF = {pdf_direct}")
++print(f"Simplified difference = {simplify(pdf_from_cdf - pdf_direct)}")
++
++print("\nFor Laplace(0,1):")
++X = Laplace("x", 0, 1)
++pdf_from_cdf = diff(cdf(X)(S('z')), S('z'))
++pdf_direct = density(X)(S('z'))
++print(f"diff(CDF) = {pdf_from_cdf}")
++print(f"PDF = {pdf_direct}")
++print(f"Simplified difference = {simplify(pdf_from_cdf - pdf_direct)}")
+diff --git a/test_issue_cases.py b/test_issue_cases.py
+new file mode 100644
+index 0000000000..d213ecfcf1
+--- /dev/null
++++ b/test_issue_cases.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python
++"""Test the specific cases mentioned in the issue"""
++
++from sympy import S
++from sympy.stats import *
++
++def test_case(name, expr, expected_type=None):
++    print(f"\n{name}:")
++    print(f"  Expression: {expr}")
++    try:
++        result = expr
++        print(f"  Result: {result}")
++        if expected_type:
++            if isinstance(result, expected_type):
++                print(f"  ✓ Result has correct type {expected_type.__name__}")
++            else:
++                print(f"  ✗ Result type is {type(result).__name__}, expected {expected_type.__name__}")
++        # Check if it's numeric (float)
++        if isinstance(result, float):
++            print(f"  ✗ Result is a float, should be symbolic")
++        else:
++            print(f"  ✓ Result is symbolic (not a float)")
++    except Exception as e:
++        print(f"  ✗ Error: {e}")
++
++# Original issue test cases
++print("Testing original issue cases...")
++
++test_case("Arcsin", cdf(Arcsin("x", 0, 3))(1))
++test_case("Dagum", cdf(Dagum("x", S(1)/3, S(1)/5, 2))(3))
++test_case("Erlang", cdf(Erlang("x", 1, 1))(1))
++test_case("Frechet", cdf(Frechet("x", S(4)/3, 1, 2))(3))
++test_case("Gamma", cdf(Gamma("x", 0.1, 2))(3))
++test_case("GammaInverse", cdf(GammaInverse("x", S(5)/7, 2))(3))
++test_case("Kumaraswamy", cdf(Kumaraswamy("x", S(1)/123, 5))(S(1)/3))
++test_case("Laplace", cdf(Laplace("x", 2, 3))(5))
++test_case("Logistic", cdf(Logistic("x", 1, 0.1))(2))
++test_case("Nakagami", cdf(Nakagami("x", S(7)/3, 1))(2))
++test_case("StudentT", cdf(StudentT("x", 10))(2))
++test_case("UniformSum", cdf(UniformSum("x", 5))(2))
++
++# Additional edge case tests
++print("\n\nTesting edge cases...")
++
++# Test at boundaries
++test_case("Arcsin at left boundary", cdf(Arcsin("x", 0, 3))(0))
++test_case("Arcsin at right boundary", cdf(Arcsin("x", 0, 3))(3))
++test_case("Dagum at zero", cdf(Dagum("x", S(1)/3, S(1)/5, 2))(0))
++test_case("Frechet at m", cdf(Frechet("x", S(4)/3, 1, 2))(2))
++
++# Test symbolic evaluation
++from sympy import Symbol
++z = Symbol('z', positive=True)
++test_case("Laplace symbolic", cdf(Laplace("x", 2, 3))(z))

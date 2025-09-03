@@ -1,0 +1,160 @@
+From a0f6fa6267a0e7feee1ed21c77a9a41cbb79bca5 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Wed, 21 Aug 2019 18:28:57 +0200
+Subject: [PATCH 1/3] FIX encode target for scoring when using early stopping
+ in HistGradientBoostingClassifier
+
+---
+ doc/whats_new/v0.22.rst                                  | 3 +++
+ .../_hist_gradient_boosting/gradient_boosting.py         | 5 ++++-
+ .../tests/test_gradient_boosting.py                      | 9 +++++++++
+ 3 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/doc/whats_new/v0.22.rst b/doc/whats_new/v0.22.rst
+index e1aa1cd8641f5..e6185949ffd87 100644
+--- a/doc/whats_new/v0.22.rst
++++ b/doc/whats_new/v0.22.rst
+@@ -132,6 +132,9 @@ Changelog
+     method for both estimators. :pr:`13769` by `Nicolas Hug`_.
+   - |Fix| Estimators now bin the training and validation data separately to
+     avoid any data leak. :pr:`13933` by `Nicolas Hug`_.
++  - |Fix| Targets are encoded before to compute score when using early stopping
++    to avoid inconsistent target data types.
++    :pr:`14710` by :user:`Guillaume Lemaitre <glemaitre>`.
+ 
+   Note that pickles from 0.21 will not work in 0.22.
+ 
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+index ad6a5a8ca381b..3f7d20a1e919f 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+@@ -248,7 +248,6 @@ def fit(self, X, y):
+                     (X_binned_small_train,
+                      y_small_train) = self._get_small_trainset(
+                         X_binned_train, y_train, self._small_trainset_seed)
+-
+                     self._check_early_stopping_scorer(
+                         X_binned_small_train, y_small_train,
+                         X_binned_val, y_val,
+@@ -426,11 +425,15 @@ def _check_early_stopping_scorer(self, X_binned_small_train, y_small_train,
+ 
+         Scores are computed on validation data or on training data.
+         """
++        if hasattr(self, 'classes_'):
++            y_small_train = self.classes_[y_small_train.astype(int)]
+         self.train_score_.append(
+             self.scorer_(self, X_binned_small_train, y_small_train)
+         )
+ 
+         if self._use_validation_data:
++            if hasattr(self, 'classes_'):
++                y_val = self.classes_[y_val.astype(int)]
+             self.validation_score_.append(
+                 self.scorer_(self, X_binned_val, y_val)
+             )
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py
+index 1eebdefd5288d..86dcb582a23a0 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py
+@@ -415,3 +415,12 @@ def test_infinite_values_missing_values():
+ 
+     assert stump_clf.fit(X, y_isinf).score(X, y_isinf) == 1
+     assert stump_clf.fit(X, y_isnan).score(X, y_isnan) == 1
++
++
++def test_string_target_early_stopping():
++    # Regression tests for #14709 where the targets need to be encoded before
++    # to compute the score
++    X = np.random.randn(100, 10)
++    y = np.array(['x'] * 50 + ['y'] * 50, dtype=object)
++    gbrt = HistGradientBoostingClassifier(n_iter_no_change=10)
++    gbrt.fit(X, y)
+
+From f49864daa58e020aeabd5380c34440f5f74e8402 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Wed, 21 Aug 2019 18:30:56 +0200
+Subject: [PATCH 2/3] add line
+
+---
+ sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+index 3f7d20a1e919f..3170e4000ecc5 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+@@ -248,6 +248,7 @@ def fit(self, X, y):
+                     (X_binned_small_train,
+                      y_small_train) = self._get_small_trainset(
+                         X_binned_train, y_train, self._small_trainset_seed)
++
+                     self._check_early_stopping_scorer(
+                         X_binned_small_train, y_small_train,
+                         X_binned_val, y_val,
+
+From 1e5a5cf9f4434abeea32535322ee01f7fc820add Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Thu, 22 Aug 2019 10:25:28 +0200
+Subject: [PATCH 3/3] reviews
+
+---
+ doc/whats_new/v0.22.rst                                   | 3 +--
+ .../ensemble/_hist_gradient_boosting/gradient_boosting.py | 4 ++--
+ .../tests/test_gradient_boosting.py                       | 8 +++++---
+ 3 files changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/doc/whats_new/v0.22.rst b/doc/whats_new/v0.22.rst
+index e6185949ffd87..770b48b0cb69a 100644
+--- a/doc/whats_new/v0.22.rst
++++ b/doc/whats_new/v0.22.rst
+@@ -132,8 +132,7 @@ Changelog
+     method for both estimators. :pr:`13769` by `Nicolas Hug`_.
+   - |Fix| Estimators now bin the training and validation data separately to
+     avoid any data leak. :pr:`13933` by `Nicolas Hug`_.
+-  - |Fix| Targets are encoded before to compute score when using early stopping
+-    to avoid inconsistent target data types.
++  - |Fix| Fixed a bug where early stopping would break with string targets.
+     :pr:`14710` by :user:`Guillaume Lemaitre <glemaitre>`.
+ 
+   Note that pickles from 0.21 will not work in 0.22.
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+index 3170e4000ecc5..70a507d09c1c6 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+@@ -426,14 +426,14 @@ def _check_early_stopping_scorer(self, X_binned_small_train, y_small_train,
+ 
+         Scores are computed on validation data or on training data.
+         """
+-        if hasattr(self, 'classes_'):
++        if is_classifier(self):
+             y_small_train = self.classes_[y_small_train.astype(int)]
+         self.train_score_.append(
+             self.scorer_(self, X_binned_small_train, y_small_train)
+         )
+ 
+         if self._use_validation_data:
+-            if hasattr(self, 'classes_'):
++            if is_classifier(self):
+                 y_val = self.classes_[y_val.astype(int)]
+             self.validation_score_.append(
+                 self.scorer_(self, X_binned_val, y_val)
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py
+index 86dcb582a23a0..5de49ef740295 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/tests/test_gradient_boosting.py
+@@ -417,10 +417,12 @@ def test_infinite_values_missing_values():
+     assert stump_clf.fit(X, y_isnan).score(X, y_isnan) == 1
+ 
+ 
+-def test_string_target_early_stopping():
++@pytest.mark.parametrize("scoring", [None, 'loss'])
++def test_string_target_early_stopping(scoring):
+     # Regression tests for #14709 where the targets need to be encoded before
+     # to compute the score
+-    X = np.random.randn(100, 10)
++    rng = np.random.RandomState(42)
++    X = rng.randn(100, 10)
+     y = np.array(['x'] * 50 + ['y'] * 50, dtype=object)
+-    gbrt = HistGradientBoostingClassifier(n_iter_no_change=10)
++    gbrt = HistGradientBoostingClassifier(n_iter_no_change=10, scoring=scoring)
+     gbrt.fit(X, y)

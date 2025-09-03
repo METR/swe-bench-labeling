@@ -1,0 +1,245 @@
+diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py
+index f9b4bfb477..7b01a1198c 100644
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -128,6 +128,14 @@ class Command(BaseCommand):
+                             field_type = '%s(%s' % (rel_type, rel_to)
+                         else:
+                             field_type = "%s('%s'" % (rel_type, rel_to)
++                        
++                        # Check if the foreign key references a non-primary key field
++                        ref_field_name = relations[column_name][0]
++                        ref_table_name = relations[column_name][1]
++                        ref_pk_column = connection.introspection.get_primary_key_column(cursor, ref_table_name)
++                        # Add to_field if the FK references a non-primary key field
++                        if ref_field_name and ref_field_name != ref_pk_column:
++                            extra_params['to_field'] = ref_field_name
+                     else:
+                         # Calling `get_field_type` to get the field type string and any
+                         # additional parameters and notes.
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..d1ed541fcf
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,77 @@
++import os
++import django
++from django.core.management import call_command
++from django.db import connection
++from io import StringIO
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++from django.conf import settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++django.setup()
++
++def test_fk_to_non_pk_field():
++    """Test that foreign keys to non-primary key fields include to_field parameter"""
++    
++    with connection.cursor() as cursor:
++        # Test case 1: FK to unique field
++        cursor.execute("""
++            CREATE TABLE parent1 (
++                id integer primary key,
++                unique_field integer UNIQUE
++            )
++        """)
++        
++        cursor.execute("""
++            CREATE TABLE child1 (
++                id integer primary key,
++                parent_field integer,
++                FOREIGN KEY(parent_field) references parent1(unique_field)
++            )
++        """)
++        
++        # Test case 2: Multiple FKs, one to PK and one to unique field  
++        cursor.execute("""
++            CREATE TABLE parent2 (
++                id integer primary key,
++                unique_field varchar(50) UNIQUE
++            )
++        """)
++        
++        cursor.execute("""
++            CREATE TABLE child2 (
++                id integer primary key,
++                parent_id integer,
++                parent_unique_ref varchar(50),
++                FOREIGN KEY(parent_id) references parent2(id),
++                FOREIGN KEY(parent_unique_ref) references parent2(unique_field)
++            )
++        """)
++
++    # Run inspectdb and capture output
++    output = StringIO()
++    call_command('inspectdb', 'parent1', 'child1', 'parent2', 'child2', stdout=output)
++    result = output.getvalue()
++    
++    print("Generated models:")
++    print(result)
++    
++    # Verify the results
++    assert "to_field='unique_field'" in result, "FK to unique_field should have to_field parameter"
++    
++    # Check that FK to primary key doesn't have to_field
++    lines = result.split('\n')
++    for i, line in enumerate(lines):
++        if 'parent_id' in line and 'ForeignKey' in line:
++            assert 'to_field' not in line, "FK to primary key should not have to_field parameter"
++    
++    print("\nAll tests passed!")
++
++test_fk_to_non_pk_field()
+diff --git a/test_fk_to_field.py b/test_fk_to_field.py
+new file mode 100644
+index 0000000000..dcf31320db
+--- /dev/null
++++ b/test_fk_to_field.py
+@@ -0,0 +1,87 @@
++"""
++Test for inspectdb handling of foreign keys to non-primary key fields.
++This test can be added to the Django test suite.
++"""
++from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
++from django.db import connection
++from django.core.management import call_command
++from io import StringIO
++
++
++class InspectDBForeignKeyToFieldTests(TransactionTestCase):
++    """Test that foreign keys to non-primary key fields are properly handled."""
++    
++    available_apps = ['inspectdb']
++    
++    def test_foreign_key_to_non_pk_field(self):
++        """Foreign keys to non-primary key fields should include to_field parameter."""
++        with connection.cursor() as cursor:
++            # Create tables with FK to non-PK field
++            cursor.execute("""
++                CREATE TABLE inspectdb_parent (
++                    id INTEGER PRIMARY KEY,
++                    unique_field INTEGER UNIQUE
++                )
++            """)
++            cursor.execute("""
++                CREATE TABLE inspectdb_child (
++                    id INTEGER PRIMARY KEY,
++                    parent_field INTEGER,
++                    FOREIGN KEY(parent_field) REFERENCES inspectdb_parent(unique_field)
++                )
++            """)
++            
++        try:
++            # Run inspectdb
++            out = StringIO()
++            call_command('inspectdb', 'inspectdb_parent', 'inspectdb_child', stdout=out)
++            output = out.getvalue()
++            
++            # Check that to_field is included for FK to non-PK field
++            self.assertIn("to_field='unique_field'", output)
++            
++            # Verify the complete field definition
++            self.assertRegex(
++                output,
++                r"parent_field = models\.ForeignKey\(InspectdbParent, models\.DO_NOTHING.*to_field='unique_field'.*\)"
++            )
++        finally:
++            # Clean up
++            with connection.cursor() as cursor:
++                cursor.execute("DROP TABLE IF EXISTS inspectdb_child")
++                cursor.execute("DROP TABLE IF EXISTS inspectdb_parent")
++    
++    def test_foreign_key_to_pk_field(self):
++        """Foreign keys to primary key fields should not include to_field parameter."""
++        with connection.cursor() as cursor:
++            # Create tables with regular FK to PK
++            cursor.execute("""
++                CREATE TABLE inspectdb_parent2 (
++                    id INTEGER PRIMARY KEY,
++                    other_field INTEGER
++                )
++            """)
++            cursor.execute("""
++                CREATE TABLE inspectdb_child2 (
++                    id INTEGER PRIMARY KEY,
++                    parent_id INTEGER,
++                    FOREIGN KEY(parent_id) REFERENCES inspectdb_parent2(id)
++                )
++            """)
++            
++        try:
++            # Run inspectdb
++            out = StringIO()
++            call_command('inspectdb', 'inspectdb_parent2', 'inspectdb_child2', stdout=out)
++            output = out.getvalue()
++            
++            # Check that to_field is NOT included for FK to PK field
++            lines = output.split('\n')
++            for line in lines:
++                if 'parent' in line and 'ForeignKey' in line:
++                    self.assertNotIn("to_field", line)
++        finally:
++            # Clean up
++            with connection.cursor() as cursor:
++                cursor.execute("DROP TABLE IF EXISTS inspectdb_child2")
++                cursor.execute("DROP TABLE IF EXISTS inspectdb_parent2")
+diff --git a/test_inspectdb_fk_field.py b/test_inspectdb_fk_field.py
+new file mode 100644
+index 0000000000..fc4dbe45fd
+--- /dev/null
++++ b/test_inspectdb_fk_field.py
+@@ -0,0 +1,44 @@
++import os
++import django
++from django.core.management import call_command
++from django.db import connection
++from io import StringIO
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++from django.conf import settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++django.setup()
++
++# Create test tables
++with connection.cursor() as cursor:
++    # Create the test tables as described in the issue
++    cursor.execute("""
++        CREATE TABLE foo (
++            id integer primary key,
++            other_id integer UNIQUE
++        )
++    """)
++    
++    cursor.execute("""
++        CREATE TABLE bar (
++            id integer primary key,
++            other_id integer,
++            FOREIGN KEY(other_id) references foo(other_id)
++        )
++    """)
++
++# Run inspectdb and capture output
++output = StringIO()
++call_command('inspectdb', 'foo', 'bar', stdout=output)
++result = output.getvalue()
++
++print("Generated models:")
++print(result)

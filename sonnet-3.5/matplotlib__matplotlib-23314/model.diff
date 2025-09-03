@@ -1,0 +1,27 @@
+diff --git a/lib/mpl_toolkits/mplot3d/axes3d.py b/lib/mpl_toolkits/mplot3d/axes3d.py
+index 9db44b7994..8868e68c64 100644
+--- a/lib/mpl_toolkits/mplot3d/axes3d.py
++++ b/lib/mpl_toolkits/mplot3d/axes3d.py
+@@ -53,6 +53,22 @@ class Axes3D(Axes):
+ 
+     dist = _api.deprecate_privatize_attribute("3.6")
+ 
++    def set_visible(self, b):
++        """
++        Set the artist's visibility.
++
++        Parameters
++        ----------
++        b : bool
++            Whether the artist should be visible.
++        """
++        self._visible = b
++        for axis in self._axis_names:
++            getattr(self, f"{axis}axis").set_visible(b)
++        self.patch.set_visible(b)
++        self.stale = True
++
++
+     def __init__(
+             self, fig, rect=None, *args,
+             elev=30, azim=-60, roll=0, sharez=None, proj_type='persp',

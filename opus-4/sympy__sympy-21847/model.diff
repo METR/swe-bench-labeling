@@ -1,0 +1,281 @@
+diff --git a/sympy/polys/monomials.py b/sympy/polys/monomials.py
+index 0e84403307..8a0eef6527 100644
+--- a/sympy/polys/monomials.py
++++ b/sympy/polys/monomials.py
+@@ -120,27 +120,33 @@ def itermonomials(variables, max_degrees, min_degrees=None):
+         variables = list(variables) + [S.One]
+         if all(variable.is_commutative for variable in variables):
+             monomials_list_comm = []
+-            for item in combinations_with_replacement(variables, max_degree):
+-                powers = dict()
+-                for variable in variables:
+-                    powers[variable] = 0
+-                for variable in item:
+-                    if variable != 1:
+-                        powers[variable] += 1
+-                if max(powers.values()) >= min_degree:
+-                    monomials_list_comm.append(Mul(*item))
++            # Generate monomials for all degrees from min_degree to max_degree
++            for degree in range(min_degree, max_degree + 1):
++                for item in combinations_with_replacement(variables, degree):
++                    powers = dict()
++                    for variable in variables:
++                        powers[variable] = 0
++                    for variable in item:
++                        if variable != 1:
++                            powers[variable] += 1
++                    # Check if total degree equals the current degree
++                    if sum(powers.values()) == degree:
++                        monomials_list_comm.append(Mul(*item))
+             yield from set(monomials_list_comm)
+         else:
+             monomials_list_non_comm = []
+-            for item in product(variables, repeat=max_degree):
+-                powers = dict()
+-                for variable in variables:
+-                    powers[variable] = 0
+-                for variable in item:
+-                    if variable != 1:
+-                        powers[variable] += 1
+-                if max(powers.values()) >= min_degree:
+-                    monomials_list_non_comm.append(Mul(*item))
++            # Generate monomials for all degrees from min_degree to max_degree
++            for degree in range(min_degree, max_degree + 1):
++                for item in product(variables, repeat=degree):
++                    powers = dict()
++                    for variable in variables:
++                        powers[variable] = 0
++                    for variable in item:
++                        if variable != 1:
++                            powers[variable] += 1
++                    # Check if total degree equals the current degree
++                    if sum(powers.values()) == degree:
++                        monomials_list_non_comm.append(Mul(*item))
+             yield from set(monomials_list_non_comm)
+     else:
+         if any(min_degrees[i] > max_degrees[i] for i in range(n)):
+diff --git a/sympy/polys/tests/test_monomials.py b/sympy/polys/tests/test_monomials.py
+index 482cbee30d..daa3e6beb7 100644
+--- a/sympy/polys/tests/test_monomials.py
++++ b/sympy/polys/tests/test_monomials.py
+@@ -50,6 +50,14 @@ def test_monomials():
+     assert set(itermonomials([x, y], 3)) == \
+             {S.One, x, y, x**2, x**3, y**2, y**3, x*y, x*y**2, y*x**2}
+ 
++    # Test min_degrees with total degree (issue regression test)
++    assert set(itermonomials([x, y], 3, min_degrees=3)) == \
++            {x**3, y**3, x**2*y, x*y**2}
++    assert set(itermonomials([x, y, z], 3, min_degrees=3)) == \
++            {x**3, y**3, z**3, x**2*y, x**2*z, y**2*x, y**2*z, z**2*x, z**2*y, x*y*z}
++    assert set(itermonomials([x, y], 3, min_degrees=2)) == \
++            {x**2, y**2, x*y, x**3, y**3, x**2*y, x*y**2}
++
+     i, j, k = symbols('i j k', commutative=False)
+     assert set(itermonomials([i, j, k], 0)) == {S.One}
+     assert set(itermonomials([i, j, k], 1)) == {S.One, i, j, k}
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..c141c6be29
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,75 @@
++import sympy as sp
++from sympy.polys.orderings import monomial_key
++from sympy.polys.monomials import itermonomials
++
++x, y, z = sp.symbols('x y z')
++
++# Test 1: Basic case - total degree = 3
++print("Test 1: Total degree = 3")
++monomials = list(itermonomials([x, y, z], 3, min_degrees=3))
++print(f"Count: {len(monomials)}")
++expected_count = 10  # C(3+3-1, 3) = C(5, 3) = 10
++assert len(monomials) == expected_count, f"Expected {expected_count}, got {len(monomials)}"
++
++# Test 2: min_degree < max_degree
++print("\nTest 2: Total degree from 2 to 3")
++monomials = list(itermonomials([x, y, z], 3, min_degrees=2))
++print(f"Count: {len(monomials)}")
++# degree 2: C(3+2-1, 2) = C(4, 2) = 6
++# degree 3: C(3+3-1, 3) = C(5, 3) = 10
++# total: 16
++expected_count = 16
++assert len(monomials) == expected_count, f"Expected {expected_count}, got {len(monomials)}"
++
++# Test 3: min_degree = 0 (default case)
++print("\nTest 3: Total degree from 0 to 2")
++monomials = list(itermonomials([x, y], 2))
++sorted_monomials = sorted(monomials, key=monomial_key('grlex', [y, x]))
++print(sorted_monomials)
++# Should include: 1, x, y, x**2, x*y, y**2
++assert len(monomials) == 6
++
++# Test 4: min_degree = 1
++print("\nTest 4: Total degree from 1 to 2")
++monomials = list(itermonomials([x, y], 2, min_degrees=1))
++sorted_monomials = sorted(monomials, key=monomial_key('grlex', [y, x]))
++print(sorted_monomials)
++# Should include: x, y, x**2, x*y, y**2 (no constant term)
++assert len(monomials) == 5
++
++# Test 5: Single variable
++print("\nTest 5: Single variable, degree 3")
++monomials = list(itermonomials([x], 3, min_degrees=3))
++print(monomials)
++assert monomials == [x**3]
++
++# Test 6: Two variables, total degree = 4
++print("\nTest 6: Two variables, total degree = 4")
++monomials = list(itermonomials([x, y], 4, min_degrees=4))
++print(f"Count: {len(monomials)}")
++# Should have: x^4, x^3*y, x^2*y^2, x*y^3, y^4
++expected_count = 5
++assert len(monomials) == expected_count
++
++# Test 7: Edge case - max_degree = 0
++print("\nTest 7: max_degree = 0")
++monomials = list(itermonomials([x, y], 0))
++print(monomials)
++assert monomials == [sp.S.One]
++
++# Test 8: Edge case - empty variables
++print("\nTest 8: Empty variables list")
++monomials = list(itermonomials([], 2))
++print(monomials)
++assert monomials == [sp.S.One]
++
++# Test 9: Non-commutative variables
++print("\nTest 9: Non-commutative variables")
++a, b = sp.symbols('a b', commutative=False)
++monomials = set(itermonomials([a, b], 2, min_degrees=2))
++print(f"Count: {len(monomials)}")
++# Should have: a^2, a*b, b*a, b^2
++expected = {a**2, a*b, b*a, b**2}
++assert monomials == expected
++
++print("\nAll tests passed!")
+diff --git a/test_edge_case.py b/test_edge_case.py
+new file mode 100644
+index 0000000000..b7561d66ed
+--- /dev/null
++++ b/test_edge_case.py
+@@ -0,0 +1,24 @@
++import sympy as sp
++from sympy.polys.monomials import itermonomials
++
++x, y = sp.symbols('x y')
++
++# Test edge case: min_degree = 0, max_degree = 0
++print("Test: min_degree=0, max_degree=0")
++monomials = list(itermonomials([x, y], 0, min_degrees=0))
++print(f"Monomials: {monomials}")
++assert monomials == [sp.S.One]
++
++# Special case in implementation
++print("\nTest: empty variables, max_degree=0")
++monomials = list(itermonomials([], 0))
++print(f"Monomials: {monomials}")
++assert monomials == [sp.S.One]
++
++# Another edge case
++print("\nTest: one variable, min_degree=0, max_degree=0")
++monomials = list(itermonomials([x], 0, min_degrees=0))
++print(f"Monomials: {monomials}")
++assert monomials == [sp.S.One]
++
++print("\nAll edge case tests passed!")
+diff --git a/test_edge_case2.py b/test_edge_case2.py
+new file mode 100644
+index 0000000000..4ec62e8836
+--- /dev/null
++++ b/test_edge_case2.py
+@@ -0,0 +1,12 @@
++import sympy as sp
++from sympy.polys.monomials import itermonomials
++
++x, y = sp.symbols('x y')
++
++# Test edge case: min_degree > 0, max_degree = 0
++# This should return empty since there are no monomials with total degree in [1, 0]
++print("Test: min_degree=1, max_degree=0")
++monomials = list(itermonomials([x, y], 0, min_degrees=1))
++print(f"Monomials: {monomials}")
++print(f"Expected: empty list")
++# Since min_degree > max_degree, this should return empty
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..9def656cfe
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,44 @@
++import sympy as sp
++from sympy.polys.orderings import monomial_key
++
++x1, x2, x3 = sp.symbols('x1, x2, x3')
++states = [x1, x2, x3]
++max_degrees = 3
++min_degrees = 3
++
++# Test the issue
++monomials = sorted(sp.itermonomials(states, max_degrees, min_degrees=min_degrees), 
++                   key=monomial_key('grlex', states))
++print("Monomials with total degree = 3:")
++print(monomials)
++print(f"Number of monomials: {len(monomials)}")
++
++# Expected monomials of total degree 3
++expected = []
++# All combinations with sum of powers = 3
++for a in range(4):
++    for b in range(4):
++        for c in range(4):
++            if a + b + c == 3:
++                expected.append((a, b, c))
++
++print("\nExpected combinations (powers for x1, x2, x3):")
++for comb in expected:
++    print(comb)
++print(f"Expected count: {len(expected)}")
++
++# Let's also test with min_degrees < max_degrees
++print("\n\nTest with min_degrees=2, max_degrees=3:")
++monomials2 = sorted(sp.itermonomials(states, max_degrees=3, min_degrees=2), 
++                    key=monomial_key('grlex', states))
++print(monomials2)
++print(f"Number of monomials: {len(monomials2)}")
++
++# Count expected
++expected2 = []
++for a in range(4):
++    for b in range(4):
++        for c in range(4):
++            if 2 <= a + b + c <= 3:
++                expected2.append((a, b, c))
++print(f"Expected count for degree 2-3: {len(expected2)}")
+diff --git a/test_noncomm.py b/test_noncomm.py
+new file mode 100644
+index 0000000000..28eb8cf2e0
+--- /dev/null
++++ b/test_noncomm.py
+@@ -0,0 +1,21 @@
++import sympy as sp
++from sympy.polys.monomials import itermonomials
++
++# Test non-commutative variables
++a, b = sp.symbols('a b', commutative=False)
++
++print("Test: Non-commutative variables, total degree = 2")
++monomials = set(itermonomials([a, b], 2, min_degrees=2))
++print(f"Monomials: {monomials}")
++expected = {a**2, a*b, b*a, b**2}
++print(f"Expected: {expected}")
++assert monomials == expected
++
++print("\nTest: Non-commutative variables, total degree from 1 to 2")
++monomials = set(itermonomials([a, b], 2, min_degrees=1))
++print(f"Count: {len(monomials)}")
++# Should have: a, b (degree 1) + a^2, a*b, b*a, b^2 (degree 2)
++expected_count = 6
++assert len(monomials) == expected_count
++
++print("\nAll non-commutative tests passed!")

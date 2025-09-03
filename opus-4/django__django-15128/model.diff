@@ -1,0 +1,543 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index aaf35ee37c..b7eaa65cd6 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -596,6 +596,14 @@ class Query(BaseExpression):
+         joinpromoter.add_votes(
+             j for j in self.alias_map if self.alias_map[j].join_type == INNER)
+         rhs_votes = set()
++        
++        # Pre-calculate all the aliases that will be used to ensure the change_map
++        # doesn't have keys that intersect with values. This prevents the
++        # AssertionError in change_aliases().
++        # We need to ensure that any new aliases generated don't conflict with
++        # aliases from rhs that haven't been processed yet.
++        reserved_aliases = set(rhs.alias_map.keys())
++        
+         # Now, add the joins from rhs query into the new query (skipping base
+         # table).
+         rhs_tables = list(rhs.alias_map)[1:]
+@@ -604,7 +612,41 @@ class Query(BaseExpression):
+             # If the left side of the join was already relabeled, use the
+             # updated alias.
+             join = join.relabeled_clone(change_map)
++            
++            # Store the current state to potentially generate a conflict-free alias
++            if alias in reserved_aliases:
++                current_alias_count = len(self.alias_map)
++                
+             new_alias = self.join(join, reuse=reuse)
++            
++            # If we generated an alias that conflicts with a reserved alias,
++            # we need to generate a new one that doesn't conflict
++            if new_alias in reserved_aliases and new_alias != alias:
++                # Generate a new alias that doesn't conflict
++                table_name = join.table_name
++                alias_list = self.table_map.get(table_name, [])
++                # Remove the conflicting alias we just added
++                if new_alias in alias_list:
++                    alias_list.remove(new_alias)
++                if new_alias in self.alias_map:
++                    del self.alias_map[new_alias]
++                    del self.alias_refcount[new_alias]
++                
++                # Generate a non-conflicting alias
++                alias_num = current_alias_count + 1
++                while True:
++                    candidate = '%s%d' % (self.alias_prefix, alias_num)
++                    if candidate not in self.alias_map and candidate not in reserved_aliases:
++                        new_alias = candidate
++                        break
++                    alias_num += 1
++                
++                # Add the new non-conflicting alias
++                alias_list.append(new_alias)
++                self.alias_refcount[new_alias] = 1
++                join.table_alias = new_alias
++                self.alias_map[new_alias] = join
++            
+             if join.join_type == INNER:
+                 rhs_votes.add(new_alias)
+             # We can't reuse the same join again in the query. If we have two
+@@ -619,6 +661,9 @@ class Query(BaseExpression):
+                 # unref the alias so that join promotion has information of
+                 # the join type for the unused alias.
+                 self.unref_alias(new_alias)
++            
++            # Remove processed alias from reserved set
++            reserved_aliases.discard(alias)
+         joinpromoter.add_votes(rhs_votes)
+         joinpromoter.update_join_types(self)
+ 
+diff --git a/fix_query.py b/fix_query.py
+new file mode 100644
+index 0000000000..41113a02a0
+--- /dev/null
++++ b/fix_query.py
+@@ -0,0 +1,50 @@
++"""
++Fix for the Query.change_aliases AssertionError
++
++The issue is that when combining queries with OR (|), the alias generation can create
++a change_map where keys intersect with values, causing the assertion to fail.
++
++The fix is to modify the combine method to ensure that newly generated aliases
++don't conflict with any aliases from the rhs query.
++"""
++
++def create_patch():
++    # The fix needs to be in the combine method, around line 600
++    # We need to collect all rhs aliases and ensure new aliases don't conflict
++    
++    patch = '''
++# In Query.combine method, around line 600, we need to modify the alias generation logic
++
++# Original code:
++#         rhs_tables = list(rhs.alias_map)[1:]
++#         for alias in rhs_tables:
++#             join = rhs.alias_map[alias]
++#             # If the left side of the join was already relabeled, use the
++#             # updated alias.
++#             join = join.relabeled_clone(change_map)
++#             new_alias = self.join(join, reuse=reuse)
++
++# Modified code:
++        # Collect all rhs aliases to avoid conflicts
++        rhs_aliases = set(rhs.alias_map.keys())
++        
++        rhs_tables = list(rhs.alias_map)[1:]
++        for alias in rhs_tables:
++            join = rhs.alias_map[alias]
++            # If the left side of the join was already relabeled, use the
++            # updated alias.
++            join = join.relabeled_clone(change_map)
++            
++            # When creating a new alias, we need to ensure it doesn't conflict
++            # with any remaining rhs aliases to avoid creating a change_map
++            # where keys intersect with values
++            new_alias = self.join(join, reuse=reuse, avoid_aliases=rhs_aliases)
++            
++            # Remove the current alias from the set of aliases to avoid
++            # since it's now been processed
++            rhs_aliases.discard(alias)
++'''
++    
++    return patch
++
++print(create_patch())
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..214cc0b989
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,36 @@
++#!/usr/bin/env python
++"""Debug script to understand the query alias generation issue"""
++
++# First, let's trace through the code that's failing
++# According to the issue, the problem is in Query.combine() and Query.table_alias()
++
++# Let's create a minimal test case to debug the issue
++def test_alias_generation():
++    """Test how aliases are generated during query combination"""
++    
++    # Simulate the problem:
++    # 1. qs1 has a simple join (e.g., test_foo with qux_id = 1)
++    # 2. qs2 has sequential aliases T4, T5 that correspond to tables already in qs1
++    # 3. When combining qs1 | qs2, the join() method creates new aliases T5, T6
++    # 4. This causes change_map = {'T4': 'T5', 'T5': 'T6'} where keys intersect values
++    
++    print("Understanding the problem:")
++    print("1. When combining qs1 | qs2:")
++    print("   - qs1 is the 'self' query")
++    print("   - qs2 is the 'rhs' query")
++    print("   - rhs aliases are added to self via join()")
++    print("   - If rhs has aliases T4, T5 and self already has those table names,")
++    print("     new aliases T5, T6 are created")
++    print("   - This creates change_map = {'T4': 'T5', 'T5': 'T6'}")
++    print("   - The assertion fails because T5 appears in both keys and values")
++    print()
++    
++    # The fix should ensure that new aliases don't conflict with existing rhs aliases
++    print("Solution approach:")
++    print("1. When generating new aliases in table_alias(), check both:")
++    print("   - self.alias_map (current implementation)")
++    print("   - rhs.alias_map (missing - needs to be passed through)")
++    print("2. Keep incrementing the suffix until no conflict exists")
++
++if __name__ == "__main__":
++    test_alias_generation()
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..af5ad7f937
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,116 @@
++#!/usr/bin/env python
++"""Test edge cases for the alias conflict fix"""
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes'],
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Q
++
++# Drop tables
++with connection.cursor() as cursor:
++    for table in ['test_a', 'test_b', 'test_c', 'test_d', 'test_e']:
++        cursor.execute(f"DROP TABLE IF EXISTS {table}")
++
++# Define simple models for testing
++class A(models.Model):
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_a'
++
++class B(models.Model):
++    a = models.ForeignKey(A, on_delete=models.CASCADE, related_name='bs')
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_b'
++
++class C(models.Model):
++    b = models.ForeignKey(B, on_delete=models.CASCADE, related_name='cs')
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_c'
++
++class D(models.Model):
++    c = models.ForeignKey(C, on_delete=models.CASCADE, related_name='ds')
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_d'
++
++class E(models.Model):
++    d = models.ForeignKey(D, on_delete=models.CASCADE, related_name='es')
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_e'
++
++# Create tables
++with connection.schema_editor() as editor:
++    editor.create_model(A)
++    editor.create_model(B)
++    editor.create_model(C)
++    editor.create_model(D)
++    editor.create_model(E)
++
++print("Testing edge cases for alias conflicts...")
++
++# Test 1: Long chain of joins
++print("\n1. Testing long chain of joins")
++a = A.objects.create()
++b = B.objects.create(a=a)
++c = C.objects.create(b=b)
++d = D.objects.create(c=c)
++e = E.objects.create(d=d)
++
++qs1 = A.objects.filter(bs__cs__ds__es=e)
++qs2 = A.objects.filter(pk=a.pk)
++
++print(f"qs1 aliases: {list(qs1.query.alias_map.keys())}")
++print(f"qs2 aliases: {list(qs2.query.alias_map.keys())}")
++
++try:
++    result = qs1 | qs2
++    print("✓ qs1 | qs2 succeeded")
++except AssertionError as ex:
++    print(f"✗ qs1 | qs2 failed: {ex}")
++
++try:
++    result = qs2 | qs1
++    print("✓ qs2 | qs1 succeeded")
++except AssertionError as ex:
++    print(f"✗ qs2 | qs1 failed: {ex}")
++
++# Test 2: Multiple OR conditions with overlapping joins
++print("\n2. Testing multiple OR conditions")
++qs3 = A.objects.filter(Q(bs__cs__ds=d) | Q(bs__cs__b__a=a))
++qs4 = A.objects.filter(bs__a=a)
++
++print(f"qs3 aliases: {list(qs3.query.alias_map.keys())}")
++print(f"qs4 aliases: {list(qs4.query.alias_map.keys())}")
++
++try:
++    result = qs3 | qs4
++    print("✓ qs3 | qs4 succeeded")
++except AssertionError as ex:
++    print(f"✗ qs3 | qs4 failed: {ex}")
++
++try:
++    result = qs4 | qs3
++    print("✓ qs4 | qs3 succeeded")
++except AssertionError as ex:
++    print(f"✗ qs4 | qs3 failed: {ex}")
++
++print("\nAll edge case tests completed!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..38cb942b08
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,101 @@
++#!/usr/bin/env python
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++# Import after setup
++from django.db import models, connection
++from django.db.models import Q
++
++# Drop and recreate tables
++with connection.cursor() as cursor:
++    cursor.execute("DROP TABLE IF EXISTS test_qux_bazes")
++    cursor.execute("DROP TABLE IF EXISTS test_bar") 
++    cursor.execute("DROP TABLE IF EXISTS test_foo")
++    cursor.execute("DROP TABLE IF EXISTS test_qux")
++    cursor.execute("DROP TABLE IF EXISTS test_baz")
++
++# Define models
++class Foo(models.Model):
++    qux = models.ForeignKey("Qux", on_delete=models.CASCADE, related_name="foos")
++    
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_foo'
++
++class Bar(models.Model):
++    foo = models.ForeignKey("Foo", on_delete=models.CASCADE, related_name="bars")
++    another_foo = models.ForeignKey("Foo", on_delete=models.CASCADE, related_name="other_bars")
++    baz = models.ForeignKey("Baz", on_delete=models.CASCADE, related_name="bars")
++    
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_bar'
++
++class Baz(models.Model):
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_baz'
++
++class Qux(models.Model):
++    bazes = models.ManyToManyField("Baz", related_name="quxes", db_table='test_qux_bazes')
++    
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_qux'
++
++# Create tables
++with connection.schema_editor() as editor:
++    editor.create_model(Baz)
++    editor.create_model(Qux)
++    editor.create_model(Foo)
++    editor.create_model(Bar)
++    # M2M table is created automatically by Django
++
++# Test the issue
++print("Creating test data...")
++qux = Qux.objects.create()
++
++print("\nCreating querysets...")
++qs1 = qux.foos.all()
++print(f"qs1 aliases: {list(qs1.query.alias_map.keys())}")
++
++qs2 = Foo.objects.filter(
++    Q(bars__baz__in=qux.bazes.all()) | Q(other_bars__baz__in=qux.bazes.all())
++)
++print(f"qs2 aliases: {list(qs2.query.alias_map.keys())}")
++
++print("\nTrying qs2 | qs1 (should work)...")
++try:
++    result = qs2 | qs1
++    print(f"✓ Success! Aliases: {list(result.query.alias_map.keys())}")
++except AssertionError as e:
++    print(f"✗ Failed: {e}")
++    import traceback
++    traceback.print_exc()
++
++print("\nTrying qs1 | qs2 (the failing case)...")
++try:
++    result = qs1 | qs2
++    print(f"✓ Success! Aliases: {list(result.query.alias_map.keys())}")
++except AssertionError as e:
++    print(f"✗ Failed: {e}")
++    import traceback
++    traceback.print_exc()
++
++print("\nTest completed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..0d713241bb
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,107 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++# Create test app models
++from django.db import models
++
++# Define models
++class Foo(models.Model):
++    qux = models.ForeignKey("Qux", on_delete=models.CASCADE, related_name="foos")
++    
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_foo'
++
++class Bar(models.Model):
++    foo = models.ForeignKey("Foo", on_delete=models.CASCADE, related_name="bars")
++    another_foo = models.ForeignKey("Foo", on_delete=models.CASCADE, related_name="other_bars")
++    baz = models.ForeignKey("Baz", on_delete=models.CASCADE, related_name="bars")
++    
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_bar'
++
++class Baz(models.Model):
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_baz'
++
++class Qux(models.Model):
++    bazes = models.ManyToManyField("Baz", related_name="quxes")
++    
++    class Meta:
++        app_label = 'contenttypes'
++        db_table = 'test_qux'
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Qux)
++    schema_editor.create_model(Baz)
++    schema_editor.create_model(Foo)
++    schema_editor.create_model(Bar)
++    # Create the M2M table
++    field = Qux._meta.get_field('bazes')
++    schema_editor.create_model(field.remote_field.through)
++
++# Run the failing test
++from django.db.models import Q
++
++print("Creating test data...")
++qux = Qux.objects.create()
++print("Qux created:", qux.id)
++
++print("\nCreating querysets...")
++qs1 = qux.foos.all()
++print("qs1 query:", str(qs1.query))
++print("qs1 aliases:", list(qs1.query.alias_map.keys()))
++
++qs2 = Foo.objects.filter(
++    Q(bars__baz__in=qux.bazes.all()) | Q(other_bars__baz__in=qux.bazes.all())
++)
++print("\nqs2 query:", str(qs2.query))
++print("qs2 aliases:", list(qs2.query.alias_map.keys()))
++
++print("\nTrying qs2 | qs1 (works)...")
++try:
++    result = qs2 | qs1
++    print("Success! Query:", str(result.query))
++    print("Result aliases:", list(result.query.alias_map.keys()))
++except AssertionError as e:
++    print("AssertionError:", e)
++    import traceback
++    traceback.print_exc()
++
++print("\nTrying qs1 | qs2 (fails)...")
++try:
++    result = qs1 | qs2
++    print("Success! Query:", str(result.query))
++    print("Result aliases:", list(result.query.alias_map.keys()))
++except AssertionError as e:
++    print("AssertionError:", e)
++    import traceback
++    traceback.print_exc()
+diff --git a/test_models.py b/test_models.py
+new file mode 100644
+index 0000000000..95942bae31
+--- /dev/null
++++ b/test_models.py
+@@ -0,0 +1,26 @@
++from django.db import models
++
++# Define models
++class Foo(models.Model):
++    qux = models.ForeignKey("Qux", on_delete=models.CASCADE, related_name="foos")
++    
++    class Meta:
++        db_table = 'test_foo'
++
++class Bar(models.Model):
++    foo = models.ForeignKey("Foo", on_delete=models.CASCADE, related_name="bars")
++    another_foo = models.ForeignKey("Foo", on_delete=models.CASCADE, related_name="other_bars")
++    baz = models.ForeignKey("Baz", on_delete=models.CASCADE, related_name="bars")
++    
++    class Meta:
++        db_table = 'test_bar'
++
++class Baz(models.Model):
++    class Meta:
++        db_table = 'test_baz'
++
++class Qux(models.Model):
++    bazes = models.ManyToManyField("Baz", related_name="quxes", db_table='test_qux_bazes')
++    
++    class Meta:
++        db_table = 'test_qux'

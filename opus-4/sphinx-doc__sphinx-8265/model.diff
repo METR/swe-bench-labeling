@@ -1,0 +1,263 @@
+diff --git a/setup.py b/setup.py
+index a404f1fa5..2c6848797 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index f4bc58b69..ad2ba4935 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -225,7 +225,35 @@ def _pseudo_parse_arglist(signode: desc_signature, arglist: str) -> None:
+     paramlist = addnodes.desc_parameterlist()
+     stack = [paramlist]  # type: List[Element]
+     try:
+-        for argument in arglist.split(','):
++        # Smart split that respects parentheses, brackets, and braces
++        arguments = []
++        current = []
++        depth = {'(': 0, '[': 0, '{': 0}
++        matching = {'(': ')', '[': ']', '{': '}'}
++        
++        i = 0
++        while i < len(arglist):
++            char = arglist[i]
++            
++            if char in depth:
++                depth[char] += 1
++            elif char in matching.values():
++                for opener, closer in matching.items():
++                    if char == closer:
++                        depth[opener] = max(0, depth[opener] - 1)
++            
++            if char == ',' and all(d == 0 for d in depth.values()):
++                arguments.append(''.join(current).strip())
++                current = []
++            else:
++                current.append(char)
++            
++            i += 1
++        
++        if current:
++            arguments.append(''.join(current).strip())
++        
++        for argument in arguments:
+             argument = argument.strip()
+             ends_open = ends_close = 0
+             while argument.startswith('['):
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1 @@
++
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..382fff0ff
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,81 @@
++"""Test the fix for tuple default arguments in function signatures."""
++
++import os
++import sys
++import tempfile
++import shutil
++sys.path.insert(0, os.path.abspath('.'))
++
++from sphinx.application import Sphinx
++from sphinx.util.docutils import docutils_namespace
++
++# Create a minimal test case
++test_source = '''
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++def add_lines(lines, color=(1, 1, 1), width=5, label=None, name=None):
++    """Test function with tuple default argument."""
++    pass
++
++class TestClass:
++    def add_lines(self, lines, color=(1, 1, 1), width=5, label=None, name=None):
++        """Test method with tuple default argument."""
++        pass
++'''
++
++conf_py = '''
++project = 'Test'
++extensions = ['sphinx.ext.autodoc']
++'''
++
++index_rst = '''
++Test
++====
++
++.. autofunction:: test_module.add_lines
++
++.. autoclass:: test_module.TestClass
++   :members:
++'''
++
++# Create temporary directory structure
++with tempfile.TemporaryDirectory() as tmpdir:
++    srcdir = os.path.join(tmpdir, 'source')
++    outdir = os.path.join(tmpdir, 'build')
++    doctreedir = os.path.join(tmpdir, 'doctree')
++    
++    os.makedirs(srcdir)
++    
++    # Add srcdir to sys.path so test_module can be imported
++    sys.path.insert(0, srcdir)
++    
++    # Write test files
++    with open(os.path.join(srcdir, 'test_module.py'), 'w') as f:
++        f.write(test_source)
++    
++    with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++        f.write(conf_py)
++    
++    with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++        f.write(index_rst)
++    
++    # Build documentation
++    with docutils_namespace():
++        app = Sphinx(srcdir, srcdir, outdir, doctreedir, 'text')
++        app.build()
++    
++    # Read output
++    with open(os.path.join(outdir, 'index.txt'), 'r') as f:
++        output = f.read()
++    
++    print("Generated documentation:")
++    print(output)
++    
++    # Check that tuple default values are preserved
++    if 'color=(1, 1, 1)' in output:
++        print("\n✓ SUCCESS: Tuple default values are correctly preserved!")
++    else:
++        print("\n✗ FAILURE: Tuple default values are not preserved correctly.")
++        print("Looking for 'color=(1, 1, 1)' in the output.")
+diff --git a/test_improved_parse.py b/test_improved_parse.py
+new file mode 100644
+index 000000000..c9338d06e
+--- /dev/null
++++ b/test_improved_parse.py
+@@ -0,0 +1,44 @@
++import re
++
++def smart_split_args(arglist):
++    """Split an argument list by commas, but not commas inside parentheses, brackets, or braces."""
++    result = []
++    current = []
++    depth = {'(': 0, '[': 0, '{': 0}
++    matching = {'(': ')', '[': ']', '{': '}'}
++    
++    i = 0
++    while i < len(arglist):
++        char = arglist[i]
++        
++        if char in depth:
++            depth[char] += 1
++        elif char in matching.values():
++            for opener, closer in matching.items():
++                if char == closer:
++                    depth[opener] = max(0, depth[opener] - 1)
++        
++        if char == ',' and all(d == 0 for d in depth.values()):
++            result.append(''.join(current).strip())
++            current = []
++        else:
++            current.append(char)
++        
++        i += 1
++    
++    if current:
++        result.append(''.join(current).strip())
++    
++    return result
++
++# Test the function
++test_cases = [
++    "lines, color=(1, 1, 1), width=5, label=None, name=None",
++    "a, b=[1, 2, 3], c={1: 2, 3: 4}, d=None",
++    "simple, args, without, tuples"
++]
++
++for test in test_cases:
++    print(f"Input: {test}")
++    print(f"Output: {smart_split_args(test)}")
++    print()
+diff --git a/test_parse_issue.py b/test_parse_issue.py
+new file mode 100644
+index 000000000..f46d5843b
+--- /dev/null
++++ b/test_parse_issue.py
+@@ -0,0 +1,9 @@
++from sphinx.util.inspect import signature_from_str
++
++# Test what happens when we parse the arglist
++arglist = "lines, color=(1, 1, 1), width=5, label=None, name=None"
++try:
++    sig = signature_from_str('(%s)' % arglist)
++    print("Successfully parsed signature:", sig)
++except Exception as e:
++    print("Failed to parse signature:", e)
+diff --git a/test_tuple_default.py b/test_tuple_default.py
+new file mode 100644
+index 000000000..7e66f9be8
+--- /dev/null
++++ b/test_tuple_default.py
+@@ -0,0 +1,9 @@
++import inspect
++from sphinx.util.inspect import stringify_signature
++
++def add_lines(lines, color=(1, 1, 1), width=5, label=None, name=None):
++    pass
++
++sig = inspect.signature(add_lines)
++print("Original signature:", sig)
++print("Stringified signature:", stringify_signature(sig, show_annotation=False))
+diff --git a/tox.ini b/tox.ini
+index a61299979..e2baccc07 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = --color yes
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

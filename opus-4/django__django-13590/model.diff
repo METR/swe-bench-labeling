@@ -1,0 +1,138 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 4648daf395..f843c60089 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1077,10 +1077,10 @@ class Query(BaseExpression):
+         elif isinstance(value, (list, tuple)):
+             # The items of the iterable may be expressions and therefore need
+             # to be resolved independently.
+-            return type(value)(
++            return type(value)(*(
+                 self.resolve_lookup_value(sub_value, can_reuse, allow_joins)
+                 for sub_value in value
+-            )
++            ))
+         return value
+ 
+     def solve_lookup_type(self, lookup):
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..4b82743522
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,39 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from collections import namedtuple
++from datetime import datetime
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++django.setup()
++
++# Create a test to demonstrate the fix works
++from django.db.models.sql.query import Query
++
++# Create a named tuple
++DateRange = namedtuple('DateRange', ['near', 'far'])
++
++# Create a test query object
++query = Query(None)
++
++# Test the resolve_lookup_value method with a named tuple
++date_range = DateRange(near=datetime(2020, 1, 1), far=datetime(2020, 12, 31))
++
++try:
++    result = query.resolve_lookup_value(date_range, None, None)
++    print(f"Success! Named tuple resolution now works correctly")
++    print(f"Input: {date_range}")
++    print(f"Output: {result}")
++    print(f"Output type: {type(result)}")
++    assert isinstance(result, DateRange), "Result should be a DateRange named tuple"
++    assert result.near == datetime(2020, 1, 1), "Near date should be preserved"
++    assert result.far == datetime(2020, 12, 31), "Far date should be preserved"
++    print("All assertions passed!")
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
++    sys.exit(1)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..0b4091ec6c
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from collections import namedtuple
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++django.setup()
++
++# Create a test to reproduce the issue
++from django.db.models.sql.query import Query
++
++# Create a named tuple
++DateRange = namedtuple('DateRange', ['near', 'far'])
++
++# Create a test query object
++query = Query(None)
++
++# Test the resolve_lookup_value method with a named tuple
++date_range = DateRange(near='2020-01-01', far='2020-12-31')
++
++try:
++    result = query.resolve_lookup_value(date_range, None, None)
++    print(f"Success! Result: {result}")
++except TypeError as e:
++    print(f"Error reproduced: {e}")
++    print(f"Error type: {type(e)}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_namedtuple_fix.py b/test_namedtuple_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_namedtuple_range.py b/test_namedtuple_range.py
+new file mode 100644
+index 0000000000..5da3546286
+--- /dev/null
++++ b/test_namedtuple_range.py
+@@ -0,0 +1,30 @@
++from collections import namedtuple
++from django.db import models
++from django.test import TestCase
++from django.db.models import Q
++
++# Create a named tuple for testing
++DateRange = namedtuple('DateRange', ['near', 'far'])
++
++class TestModel(models.Model):
++    created = models.DateTimeField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++class NamedTupleRangeTest(TestCase):
++    def test_named_tuple_in_range_filter(self):
++        """Test that named tuples work correctly in __range filters."""
++        from datetime import datetime
++        
++        # Create test data
++        date_range = DateRange(
++            near=datetime(2020, 1, 1),
++            far=datetime(2020, 12, 31)
++        )
++        
++        # This should not raise an error
++        queryset = TestModel.objects.filter(created__range=date_range)
++        
++        # Force evaluation to trigger resolve_lookup_value
++        list(queryset)

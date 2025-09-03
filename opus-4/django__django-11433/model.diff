@@ -1,0 +1,486 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 5edbbd376f..c621e60578 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -42,13 +42,13 @@ def construct_instance(form, instance, fields=None, exclude=None):
+         if not f.editable or isinstance(f, models.AutoField) \
+                 or f.name not in cleaned_data:
+             continue
+-        if fields is not None and f.name not in fields:
+-            continue
++        # Don't skip fields based on the fields list if they are in cleaned_data.
++        # This allows cleaned_data to override default values for fields not in the form.
+         if exclude and f.name in exclude:
+             continue
+         # Leave defaults for fields that aren't in POST data, except for
+         # checkbox inputs because they don't appear in POST data if not checked.
+-        if (f.has_default() and
++        if (f.has_default() and f.name in form.fields and
+                 form[f.name].field.widget.value_omitted_from_data(form.data, form.files, form.add_prefix(f.name))):
+             continue
+         # Defer saving file-type fields until after the other fields, so a
+diff --git a/test_cleaned_data_default.py b/test_cleaned_data_default.py
+new file mode 100644
+index 0000000000..ca7b60b9c9
+--- /dev/null
++++ b/test_cleaned_data_default.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django import forms
++from django.db import models
++from django.forms import ModelForm
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    status = models.CharField(max_length=20, default='pending')
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create a form that doesn't include the 'status' field
++class TestForm(ModelForm):
++    class Meta:
++        model = TestModel
++        fields = ['name']
++    
++    def clean(self):
++        cleaned_data = super().clean()
++        # Try to set status in cleaned_data
++        cleaned_data['status'] = 'active'
++        return cleaned_data
++
++# Test the issue
++print("Testing the issue...")
++form = TestForm(data={'name': 'Test Name'})
++if form.is_valid():
++    instance = form.save(commit=False)
++    print(f"Instance name: {instance.name}")
++    print(f"Instance status: {instance.status}")
++    print(f"Expected status: active")
++    print(f"Actual status: {instance.status}")
++    print(f"Status was overridden: {instance.status == 'active'}")
++else:
++    print("Form is not valid")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..2f04560867
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,128 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django import forms
++from django.db import models
++from django.forms import ModelForm
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    status = models.CharField(max_length=20, default='pending')
++    priority = models.IntegerField(default=5)
++    active = models.BooleanField(default=False)
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++print("=== Test 1: Basic cleaned_data override ===")
++# Test 1: Form that doesn't include fields with defaults
++class TestForm1(ModelForm):
++    class Meta:
++        model = TestModel
++        fields = ['name']
++    
++    def clean(self):
++        cleaned_data = super().clean()
++        # Set values for fields not in the form
++        cleaned_data['status'] = 'active'
++        cleaned_data['priority'] = 10
++        cleaned_data['active'] = True
++        return cleaned_data
++
++form1 = TestForm1(data={'name': 'Test Name'})
++if form1.is_valid():
++    instance = form1.save(commit=False)
++    print(f"Instance name: {instance.name}")
++    print(f"Instance status: {instance.status} (expected: active)")
++    print(f"Instance priority: {instance.priority} (expected: 10)")
++    print(f"Instance active: {instance.active} (expected: True)")
++    print(f"Test 1 passed: {instance.status == 'active' and instance.priority == 10 and instance.active == True}")
++else:
++    print("Form is not valid")
++
++print("\n=== Test 2: Override with excluded fields ===")
++# Test 2: Form with excluded fields  
++class TestForm2(ModelForm):
++    class Meta:
++        model = TestModel
++        exclude = ['status', 'priority']
++    
++    def clean(self):
++        cleaned_data = super().clean()
++        # Try to set excluded fields - these should NOT be saved
++        cleaned_data['status'] = 'excluded'
++        cleaned_data['priority'] = 99
++        return cleaned_data
++
++form2 = TestForm2(data={'name': 'Test Name 2', 'active': True})
++if form2.is_valid():
++    instance = form2.save(commit=False)
++    print(f"Instance name: {instance.name}")
++    print(f"Instance status: {instance.status} (expected: pending - excluded fields should not be saved)")
++    print(f"Instance priority: {instance.priority} (expected: 5 - excluded fields should not be saved)")
++    print(f"Instance active: {instance.active} (expected: True)")
++    print(f"Test 2 passed: {instance.status == 'pending' and instance.priority == 5}")
++else:
++    print("Form is not valid")
++
++print("\n=== Test 3: Fields without defaults ===")
++# Create another model without defaults
++class TestModel2(models.Model):
++    name = models.CharField(max_length=100)
++    description = models.TextField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel2)
++
++class TestForm3(ModelForm):
++    class Meta:
++        model = TestModel2
++        fields = ['name']
++    
++    def clean(self):
++        cleaned_data = super().clean()
++        # Set a field that doesn't have a default
++        cleaned_data['description'] = 'Added via cleaned_data'
++        return cleaned_data
++
++form3 = TestForm3(data={'name': 'Test Name 3'})
++if form3.is_valid():
++    instance = form3.save(commit=False)
++    print(f"Instance name: {instance.name}")
++    print(f"Instance description: {instance.description} (expected: Added via cleaned_data)")
++    print(f"Test 3 passed: {instance.description == 'Added via cleaned_data'}")
++else:
++    print("Form is not valid")
++
++print("\n=== All tests completed ===")
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..151ad35ab0
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,70 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django import forms
++from django.db import models
++from django.forms import ModelForm
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    status = models.CharField(max_length=20, default='pending')
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create a form that doesn't include the 'status' field
++class TestForm(ModelForm):
++    class Meta:
++        model = TestModel
++        fields = ['name']
++    
++    def clean(self):
++        cleaned_data = super().clean()
++        # Try to set status in cleaned_data
++        cleaned_data['status'] = 'active'
++        print(f"In clean(), cleaned_data: {cleaned_data}")
++        return cleaned_data
++
++# Test the issue
++print("Testing the issue...")
++form = TestForm(data={'name': 'Test Name'})
++print(f"Form fields: {list(form.fields.keys())}")
++if form.is_valid():
++    print(f"Form cleaned_data: {form.cleaned_data}")
++    print(f"'status' in form.fields: {'status' in form.fields}")
++    print(f"'status' in form.cleaned_data: {'status' in form.cleaned_data}")
++    instance = form.save(commit=False)
++    print(f"Instance name: {instance.name}")
++    print(f"Instance status: {instance.status}")
++    print(f"Expected status: active")
++    print(f"Actual status: {instance.status}")
++    print(f"Status was overridden: {instance.status == 'active'}")
++else:
++    print("Form is not valid")
+diff --git a/test_direct_debug.py b/test_direct_debug.py
+new file mode 100644
+index 0000000000..255766ecab
+--- /dev/null
++++ b/test_direct_debug.py
+@@ -0,0 +1,122 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django import forms
++from django.db import models
++from django.forms import ModelForm, model_to_dict
++
++# Add debugging code to construct_instance
++from django.forms import models as forms_models
++original_construct_instance = forms_models.construct_instance
++
++def debug_construct_instance(form, instance, fields=None, exclude=None):
++    from django.db import models
++    opts = instance._meta
++    
++    cleaned_data = form.cleaned_data
++    print(f"[DEBUG] construct_instance called")
++    print(f"[DEBUG] cleaned_data: {cleaned_data}")
++    print(f"[DEBUG] form.fields: {list(form.fields.keys())}")
++    
++    file_field_list = []
++    for f in opts.fields:
++        print(f"[DEBUG] Processing field: {f.name}")
++        
++        if not f.editable or isinstance(f, models.AutoField) or f.name not in cleaned_data:
++            print(f"[DEBUG]   Skipping {f.name}: editable={f.editable}, AutoField={isinstance(f, models.AutoField)}, in_cleaned_data={f.name in cleaned_data}")
++            continue
++            
++        if fields is not None and f.name not in fields:
++            print(f"[DEBUG]   Skipping {f.name}: not in fields list")
++            continue
++            
++        if exclude and f.name in exclude:
++            print(f"[DEBUG]   Skipping {f.name}: in exclude list")
++            continue
++            
++        # Check the condition that's causing the issue
++        has_default = f.has_default()
++        in_form_fields = f.name in form.fields
++        if has_default and in_form_fields:
++            value_omitted = form[f.name].field.widget.value_omitted_from_data(form.data, form.files, form.add_prefix(f.name))
++            print(f"[DEBUG]   {f.name}: has_default={has_default}, in_form_fields={in_form_fields}, value_omitted={value_omitted}")
++            if value_omitted:
++                print(f"[DEBUG]   Skipping {f.name}: value omitted from data")
++                continue
++        else:
++            print(f"[DEBUG]   {f.name}: has_default={has_default}, in_form_fields={in_form_fields} - proceeding")
++        
++        # Defer saving file-type fields until after the other fields, so a
++        # callable upload_to can use the values from other fields.
++        if isinstance(f, models.FileField):
++            file_field_list.append(f)
++        else:
++            print(f"[DEBUG]   Saving {f.name} = {cleaned_data[f.name]}")
++            f.save_form_data(instance, cleaned_data[f.name])
++    
++    for f in file_field_list:
++        f.save_form_data(instance, cleaned_data[f.name])
++    
++    return instance
++
++# Monkey patch for debugging
++forms_models.construct_instance = debug_construct_instance
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    status = models.CharField(max_length=20, default='pending')
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create a form that doesn't include the 'status' field
++class TestForm(ModelForm):
++    class Meta:
++        model = TestModel
++        fields = ['name']
++    
++    def clean(self):
++        cleaned_data = super().clean()
++        # Try to set status in cleaned_data
++        cleaned_data['status'] = 'active'
++        return cleaned_data
++
++# Test the issue
++print("\n=== Testing the issue ===")
++form = TestForm(data={'name': 'Test Name'})
++if form.is_valid():
++    instance = form.save(commit=False)
++    print(f"\nResult:")
++    print(f"  Instance name: {instance.name}")
++    print(f"  Instance status: {instance.status}")
++    print(f"  Expected status: active")
++    print(f"  Status was overridden: {instance.status == 'active'}")
++else:
++    print("Form is not valid")
+diff --git a/test_field_access.py b/test_field_access.py
+new file mode 100644
+index 0000000000..ca73f21de4
+--- /dev/null
++++ b/test_field_access.py
+@@ -0,0 +1,50 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django import forms
++from django.db import models
++from django.forms import ModelForm
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    status = models.CharField(max_length=20, default='pending')
++    
++    class Meta:
++        app_label = 'test'
++
++# Create a form that doesn't include the 'status' field
++class TestForm(ModelForm):
++    class Meta:
++        model = TestModel
++        fields = ['name']
++
++# Test if accessing form['status'] raises an error
++print("Testing field access...")
++form = TestForm(data={'name': 'Test Name'})
++try:
++    field = form['status']
++    print(f"form['status'] = {field}")
++except KeyError as e:
++    print(f"KeyError: {e}")

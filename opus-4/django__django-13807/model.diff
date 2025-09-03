@@ -1,0 +1,379 @@
+diff --git a/django/db/backends/sqlite3/base.py b/django/db/backends/sqlite3/base.py
+index 2eeaf98c0d..5a4fcf89fd 100644
+--- a/django/db/backends/sqlite3/base.py
++++ b/django/db/backends/sqlite3/base.py
+@@ -327,19 +327,21 @@ class DatabaseWrapper(BaseDatabaseWrapper):
+                     violations = cursor.execute('PRAGMA foreign_key_check').fetchall()
+                 else:
+                     violations = chain.from_iterable(
+-                        cursor.execute('PRAGMA foreign_key_check(%s)' % table_name).fetchall()
++                        cursor.execute('PRAGMA foreign_key_check(%s)' % self.ops.quote_name(table_name)).fetchall()
+                         for table_name in table_names
+                     )
+                 # See https://www.sqlite.org/pragma.html#pragma_foreign_key_check
+                 for table_name, rowid, referenced_table_name, foreign_key_index in violations:
+                     foreign_key = cursor.execute(
+-                        'PRAGMA foreign_key_list(%s)' % table_name
++                        'PRAGMA foreign_key_list(%s)' % self.ops.quote_name(table_name)
+                     ).fetchall()[foreign_key_index]
+                     column_name, referenced_column_name = foreign_key[3:5]
+                     primary_key_column_name = self.introspection.get_primary_key_column(cursor, table_name)
+                     primary_key_value, bad_value = cursor.execute(
+                         'SELECT %s, %s FROM %s WHERE rowid = %%s' % (
+-                            primary_key_column_name, column_name, table_name
++                            self.ops.quote_name(primary_key_column_name), 
++                            self.ops.quote_name(column_name), 
++                            self.ops.quote_name(table_name)
+                         ),
+                         (rowid,),
+                     ).fetchone()
+diff --git a/test_backticks.py b/test_backticks.py
+new file mode 100644
+index 0000000000..59f78c240a
+--- /dev/null
++++ b/test_backticks.py
+@@ -0,0 +1,23 @@
++import sqlite3
++
++# Test if SQLite accepts backticks
++conn = sqlite3.connect(':memory:')
++cursor = conn.cursor()
++
++# Create a table with a keyword name
++cursor.execute('CREATE TABLE "order" (id INTEGER PRIMARY KEY, name TEXT)')
++
++# Test different quoting styles
++try:
++    cursor.execute('SELECT * FROM `order`')
++    print("Backticks work in SQLite")
++except Exception as e:
++    print(f"Backticks don't work: {e}")
++
++try:
++    cursor.execute('SELECT * FROM "order"')
++    print("Double quotes work in SQLite")
++except Exception as e:
++    print(f"Double quotes don't work: {e}")
++
++conn.close()
+diff --git a/test_loaddata.py b/test_loaddata.py
+new file mode 100644
+index 0000000000..cdbfa25f43
+--- /dev/null
++++ b/test_loaddata.py
+@@ -0,0 +1,79 @@
++import os
++import sys
++import json
++import tempfile
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import connection
++from django.core import serializers
++from io import StringIO
++
++# Create a table with SQL keyword name directly
++with connection.cursor() as cursor:
++    cursor.execute('CREATE TABLE "order" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++
++# Create fixture data  
++fixture_data = '''[
++{
++    "model": "test.order",
++    "pk": 1,
++    "fields": {
++        "name": "Test Order 1"
++    }
++},
++{
++    "model": "test.order", 
++    "pk": 2,
++    "fields": {
++        "name": "Test Order 2"
++    }
++}
++]'''
++
++print("Testing fixture loading simulation with table name 'order' (SQL keyword)...")
++
++# First insert some data directly
++with connection.cursor() as cursor:
++    cursor.execute('INSERT INTO "order" (id, name) VALUES (1, "Test Order 1")')
++    cursor.execute('INSERT INTO "order" (id, name) VALUES (2, "Test Order 2")')
++
++# Now test that check_constraints works during the loaddata process
++# This simulates what happens in the loaddata command
++try:
++    # Disable constraint checking (as loaddata does)
++    connection.disable_constraint_checking()
++    
++    # Check constraints on the 'order' table (as loaddata does)
++    connection.check_constraints(['order'])
++    
++    # Re-enable constraint checking
++    connection.enable_constraint_checking()
++    
++    print("SUCCESS: constraint checking on 'order' table works correctly!")
++    
++    # Verify data exists
++    with connection.cursor() as cursor:
++        cursor.execute('SELECT COUNT(*) FROM "order"')
++        count = cursor.fetchone()[0]
++        print(f"Table 'order' contains {count} records")
++        
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_sqlite_foreign_keys.py b/test_sqlite_foreign_keys.py
+new file mode 100644
+index 0000000000..795e62b98a
+--- /dev/null
++++ b/test_sqlite_foreign_keys.py
+@@ -0,0 +1,83 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import connection
++from django.db.utils import IntegrityError
++
++# Create tables with SQL keyword names and foreign key relationships
++with connection.cursor() as cursor:
++    # Create a table with a keyword name 'select'
++    cursor.execute('CREATE TABLE "select" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++    
++    # Create another table with keyword name 'order' that references 'select'
++    cursor.execute('''
++        CREATE TABLE "order" (
++            id INTEGER PRIMARY KEY, 
++            select_id INTEGER,
++            FOREIGN KEY (select_id) REFERENCES "select"(id)
++        )
++    ''')
++    
++    # Insert valid data
++    cursor.execute('INSERT INTO "select" (id, name) VALUES (1, "Test")')
++    cursor.execute('INSERT INTO "order" (id, select_id) VALUES (1, 1)')
++    
++    # Disable foreign key constraints to insert invalid data
++    cursor.execute('PRAGMA foreign_keys = OFF')
++    cursor.execute('INSERT INTO "order" (id, select_id) VALUES (2, 999)')
++    cursor.execute('PRAGMA foreign_keys = ON')
++
++# Test check_constraints with foreign key violations
++print("Testing check_constraints with foreign key violations on SQL keyword table names...")
++try:
++    connection.check_constraints(['order', 'select'])
++    print("ERROR: Expected IntegrityError but none was raised!")
++except IntegrityError as e:
++    print(f"SUCCESS: Got expected IntegrityError: {e}")
++except Exception as e:
++    print(f"ERROR: Got unexpected exception: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test with no specific tables (check all tables)
++print("\nTesting check_constraints with no specific tables...")
++try:
++    connection.check_constraints()
++    print("ERROR: Expected IntegrityError but none was raised!")
++except IntegrityError as e:
++    print(f"SUCCESS: Got expected IntegrityError: {e}")
++except Exception as e:
++    print(f"ERROR: Got unexpected exception: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test with valid data only
++print("\nTesting check_constraints with valid data only...")
++with connection.cursor() as cursor:
++    # Remove the invalid row
++    cursor.execute('DELETE FROM "order" WHERE id = 2')
++    
++try:
++    connection.check_constraints(['order', 'select'])
++    print("SUCCESS: No integrity errors with valid data!")
++except Exception as e:
++    print(f"ERROR: Unexpected exception with valid data: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_sqlite_keyword_table.py b/test_sqlite_keyword_table.py
+new file mode 100644
+index 0000000000..51bf08f23a
+--- /dev/null
++++ b/test_sqlite_keyword_table.py
+@@ -0,0 +1,35 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import connection
++
++# Create a table with SQL keyword name directly
++with connection.cursor() as cursor:
++    cursor.execute('CREATE TABLE "order" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++    
++# Test the check_constraints method
++print("Testing check_constraints with table name 'order' (SQL keyword)...")
++try:
++    connection.check_constraints(['order'])
++    print("SUCCESS: check_constraints worked correctly!")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_sqlite_keyword_table_names.py b/test_sqlite_keyword_table_names.py
+new file mode 100644
+index 0000000000..6d9abc233c
+--- /dev/null
++++ b/test_sqlite_keyword_table_names.py
+@@ -0,0 +1,46 @@
++from django.db import connection
++from django.test import TestCase, skipUnlessDBFeature
++from django.db.utils import IntegrityError
++
++
++class SQLiteKeywordTableNamesTests(TestCase):
++    """Test that SQLite can handle table names that are SQL keywords."""
++    
++    @skipUnlessDBFeature('supports_pragma_foreign_key_check')
++    def test_check_constraints_with_keyword_table_names(self):
++        """Test that check_constraints works with SQL keyword table names."""
++        with connection.cursor() as cursor:
++            # Create tables with SQL keyword names
++            cursor.execute('CREATE TABLE "order" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++            cursor.execute('CREATE TABLE "select" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++            cursor.execute('''
++                CREATE TABLE "where" (
++                    id INTEGER PRIMARY KEY,
++                    order_id INTEGER,
++                    FOREIGN KEY (order_id) REFERENCES "order"(id)
++                )
++            ''')
++            
++            # Insert valid data
++            cursor.execute('INSERT INTO "order" (id, name) VALUES (1, "Test")')
++            cursor.execute('INSERT INTO "where" (id, order_id) VALUES (1, 1)')
++            
++            # This should not raise any errors
++            connection.check_constraints(['order', 'select', 'where'])
++            
++            # Insert invalid foreign key data
++            cursor.execute('PRAGMA foreign_keys = OFF')
++            cursor.execute('INSERT INTO "where" (id, order_id) VALUES (2, 999)')
++            cursor.execute('PRAGMA foreign_keys = ON')
++            
++            # This should raise an IntegrityError
++            with self.assertRaises(IntegrityError) as cm:
++                connection.check_constraints(['where'])
++            
++            self.assertIn("order", str(cm.exception))
++            self.assertIn("999", str(cm.exception))
++            
++            # Clean up
++            cursor.execute('DROP TABLE "where"')
++            cursor.execute('DROP TABLE "order"') 
++            cursor.execute('DROP TABLE "select"')
+diff --git a/tests/backends/sqlite/tests.py b/tests/backends/sqlite/tests.py
+index 17a58f32ae..93c351c349 100644
+--- a/tests/backends/sqlite/tests.py
++++ b/tests/backends/sqlite/tests.py
+@@ -196,6 +196,49 @@ class SchemaTests(TransactionTestCase):
+             with connection.schema_editor(atomic=True) as editor:
+                 editor.alter_db_table(Author, "backends_author", "renamed_table")
+ 
++    def test_check_constraints_with_keyword_table_names(self):
++        """
++        SQLite can handle check_constraints when table names are SQL keywords.
++        """
++        from django.db.utils import IntegrityError
++        
++        with connection.cursor() as cursor:
++            # Create tables with SQL keyword names
++            cursor.execute('CREATE TABLE "order" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++            cursor.execute('CREATE TABLE "select" (id INTEGER PRIMARY KEY, name VARCHAR(100))')
++            cursor.execute('''
++                CREATE TABLE "where" (
++                    id INTEGER PRIMARY KEY,
++                    order_id INTEGER,
++                    FOREIGN KEY (order_id) REFERENCES "order"(id)
++                )
++            ''')
++            
++            try:
++                # Insert valid data
++                cursor.execute('INSERT INTO "order" (id, name) VALUES (1, "Test")')
++                cursor.execute('INSERT INTO "where" (id, order_id) VALUES (1, 1)')
++                
++                # This should not raise any errors
++                connection.check_constraints(['order', 'select', 'where'])
++                
++                # Insert invalid foreign key data
++                cursor.execute('PRAGMA foreign_keys = OFF')
++                cursor.execute('INSERT INTO "where" (id, order_id) VALUES (2, 999)')
++                cursor.execute('PRAGMA foreign_keys = ON')
++                
++                # This should raise an IntegrityError
++                with self.assertRaises(IntegrityError) as cm:
++                    connection.check_constraints(['where'])
++                
++                self.assertIn("order", str(cm.exception))
++                self.assertIn("999", str(cm.exception))
++            finally:
++                # Clean up
++                cursor.execute('DROP TABLE IF EXISTS "where"')
++                cursor.execute('DROP TABLE IF EXISTS "order"') 
++                cursor.execute('DROP TABLE IF EXISTS "select"')
++
+ 
+ @unittest.skipUnless(connection.vendor == 'sqlite', 'Test only for SQLite')
+ @override_settings(DEBUG=True)

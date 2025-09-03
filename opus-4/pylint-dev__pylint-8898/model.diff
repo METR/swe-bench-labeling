@@ -1,0 +1,356 @@
+diff --git a/pylint/config/argument.py b/pylint/config/argument.py
+index 30a5fd175..51d83f597 100644
+--- a/pylint/config/argument.py
++++ b/pylint/config/argument.py
+@@ -111,10 +111,77 @@ def _regex_transformer(value: str) -> Pattern[str]:
+         raise argparse.ArgumentTypeError(msg) from e
+ 
+ 
++def _smart_split_regex_csv(value: str) -> list[str]:
++    """Split a comma-separated string while respecting regex syntax.
++    
++    This function splits on commas, but only those that are not inside:
++    - Parentheses ()
++    - Square brackets []
++    - Curly braces {}
++    
++    This allows regex patterns with commas to be preserved.
++    """
++    patterns = []
++    current_pattern = []
++    depth = {
++        '(': 0,
++        '[': 0,
++        '{': 0
++    }
++    escape_next = False
++    in_char_class = False  # Track if we're inside []
++    
++    for char in value:
++        if escape_next:
++            current_pattern.append(char)
++            escape_next = False
++            continue
++            
++        if char == '\\':
++            escape_next = True
++            current_pattern.append(char)
++            continue
++        
++        # Track character classes separately (they have special rules)
++        if char == '[' and not in_char_class:
++            in_char_class = True
++            depth['['] += 1
++        elif char == ']' and in_char_class:
++            in_char_class = False
++            depth['['] -= 1
++        # Only track other brackets if not in character class
++        elif not in_char_class:
++            if char == '(':
++                depth['('] += 1
++            elif char == ')':
++                depth['('] -= 1
++            elif char == '{':
++                depth['{'] += 1
++            elif char == '}':
++                depth['{'] -= 1
++        
++        # Check if we're at a top-level comma
++        if char == ',' and all(d == 0 for d in depth.values()) and not in_char_class:
++            # Found a separator comma
++            pattern = ''.join(current_pattern).strip()
++            if pattern:  # Don't add empty patterns
++                patterns.append(pattern)
++            current_pattern = []
++        else:
++            current_pattern.append(char)
++    
++    # Don't forget the last pattern
++    pattern = ''.join(current_pattern).strip()
++    if pattern:
++        patterns.append(pattern)
++    
++    return patterns
++
++
+ def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+     """Transforms a comma separated list of regular expressions."""
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in _smart_split_regex_csv(value):
+         patterns.append(_regex_transformer(pattern))
+     return patterns
+ 
+@@ -122,7 +189,7 @@ def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+ def _regexp_paths_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+     """Transforms a comma separated list of regular expressions paths."""
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in _smart_split_regex_csv(value):
+         patterns.append(
+             re.compile(
+                 str(pathlib.PureWindowsPath(pattern)).replace("\\", "\\\\")
+diff --git a/test_bad_names_rgxs.py b/test_bad_names_rgxs.py
+new file mode 100644
+index 000000000..f5481e467
+--- /dev/null
++++ b/test_bad_names_rgxs.py
+@@ -0,0 +1,77 @@
++#!/usr/bin/env python3
++"""Test script to verify the fix for bad-names-rgxs with commas in regex"""
++
++import tempfile
++import os
++import subprocess
++
++# Create a test Python file
++test_code = """
++# Test file for pylint
++foo = 1
++fooo = 2
++foooo = 3
++bar = 4
++"""
++
++# Create a config file with regex containing commas
++pyproject_toml = """
++[tool.pylint.basic]
++# capture group ensures that the part after the comma is valid
++bad-name-rgxs = "(foo{1,3})"
++"""
++
++# Create temporary directory and files
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Write test Python file
++    test_file = os.path.join(tmpdir, "test.py")
++    with open(test_file, "w") as f:
++        f.write(test_code)
++    
++    # Write config file
++    config_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(config_file, "w") as f:
++        f.write(pyproject_toml)
++    
++    # Run pylint
++    print("Running pylint with bad-name-rgxs containing commas...")
++    print(f"Config: bad-name-rgxs = \"(foo{{1,3}})\"")
++    print()
++    
++    try:
++        result = subprocess.run(
++            ["python", "-m", "pylint", test_file, "--rcfile", config_file],
++            cwd=tmpdir,
++            capture_output=True,
++            text=True
++        )
++        
++        print("Exit code:", result.returncode)
++        print("\nSTDOUT:")
++        print(result.stdout)
++        if result.stderr:
++            print("\nSTDERR:")
++            print(result.stderr)
++            
++    except Exception as e:
++        print(f"Error running pylint: {e}")
++
++# Test the transformation directly
++print("\n" + "="*60 + "\n")
++print("Testing the transformation directly:")
++from pylint.config.argument import _regexp_csv_transfomer
++
++test_patterns = [
++    "(foo{1,3})",
++    "foo{1,3},bar{2,}",
++    "[a,b,c]+,test",
++    "(?:foo|bar){1,3}"
++]
++
++for pattern in test_patterns:
++    print(f"\nInput: {pattern}")
++    try:
++        result = _regexp_csv_transfomer(pattern)
++        print(f"Success! Compiled patterns: {[p.pattern for p in result]}")
++    except Exception as e:
++        print(f"Error: {type(e).__name__}: {e}")
+diff --git a/test_regex_comma_issue.py b/test_regex_comma_issue.py
+new file mode 100644
+index 000000000..d7c2bca42
+--- /dev/null
++++ b/test_regex_comma_issue.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python3
++"""Test script to reproduce the issue with regex containing commas"""
++
++import re
++from pylint.utils.utils import _splitstrip
++from pylint.config.argument import _regexp_csv_transfomer
++
++# Test the issue
++test_regex = "(foo{1,3})"
++print(f"Original regex: {test_regex}")
++print(f"Split result: {_splitstrip(test_regex)}")
++
++# This should fail
++try:
++    result = _regexp_csv_transfomer(test_regex)
++    print(f"Transformed: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++# Test with other regex patterns that have commas
++test_cases = [
++    "foo{1,3}",
++    "(foo{1,3})",
++    "bar{2,}",
++    "baz{,5}",
++    "test{3,4}|other{1,2}",
++    "[a,b,c]+",
++    "(?:foo|bar){1,3}"
++]
++
++print("\nTesting various regex patterns with commas:")
++for pattern in test_cases:
++    print(f"\nPattern: {pattern}")
++    print(f"Split result: {_splitstrip(pattern)}")
++    try:
++        re.compile(pattern)
++        print("Valid regex: YES")
++    except:
++        print("Valid regex: NO")
++    
++    # Test if _regexp_csv_transfomer can handle it
++    try:
++        result = _regexp_csv_transfomer(pattern)
++        print(f"Transform successful: {result}")
++    except Exception as e:
++        print(f"Transform failed: {type(e).__name__}: {e}")
+diff --git a/test_regex_csv_parser.py b/test_regex_csv_parser.py
+new file mode 100644
+index 000000000..0aa515e64
+--- /dev/null
++++ b/test_regex_csv_parser.py
+@@ -0,0 +1,123 @@
++#!/usr/bin/env python3
++"""Test implementation for a regex-aware CSV parser"""
++
++import re
++from typing import List, Sequence
++
++
++def _smart_split_regex_csv(value: str) -> List[str]:
++    """Split a comma-separated string while respecting regex syntax.
++    
++    This function splits on commas, but only those that are not inside:
++    - Parentheses ()
++    - Square brackets []
++    - Curly braces {}
++    
++    This allows regex patterns with commas to be preserved.
++    """
++    patterns = []
++    current_pattern = []
++    depth = {
++        '(': 0,
++        '[': 0,
++        '{': 0
++    }
++    escape_next = False
++    in_char_class = False  # Track if we're inside []
++    
++    for i, char in enumerate(value):
++        if escape_next:
++            current_pattern.append(char)
++            escape_next = False
++            continue
++            
++        if char == '\\':
++            escape_next = True
++            current_pattern.append(char)
++            continue
++        
++        # Track character classes separately (they have special rules)
++        if char == '[' and not in_char_class:
++            in_char_class = True
++            depth['['] += 1
++        elif char == ']' and in_char_class:
++            in_char_class = False
++            depth['['] -= 1
++        # Only track other brackets if not in character class
++        elif not in_char_class:
++            if char == '(':
++                depth['('] += 1
++            elif char == ')':
++                depth['('] -= 1
++            elif char == '{':
++                depth['{'] += 1
++            elif char == '}':
++                depth['{'] -= 1
++        
++        # Check if we're at a top-level comma
++        if char == ',' and all(d == 0 for d in depth.values()) and not in_char_class:
++            # Found a separator comma
++            pattern = ''.join(current_pattern).strip()
++            if pattern:  # Don't add empty patterns
++                patterns.append(pattern)
++            current_pattern = []
++        else:
++            current_pattern.append(char)
++    
++    # Don't forget the last pattern
++    pattern = ''.join(current_pattern).strip()
++    if pattern:
++        patterns.append(pattern)
++    
++    return patterns
++
++
++# Test cases
++test_cases = [
++    # Single patterns with commas
++    ("foo{1,3}", ["foo{1,3}"]),
++    ("(foo{1,3})", ["(foo{1,3})"]),
++    ("bar{2,}", ["bar{2,}"]),
++    ("baz{,5}", ["baz{,5}"]),
++    ("[a,b,c]+", ["[a,b,c]+"]),
++    ("(?:foo|bar){1,3}", ["(?:foo|bar){1,3}"]),
++    
++    # Multiple patterns
++    ("foo,bar", ["foo", "bar"]),
++    ("foo{1,3},bar{2,}", ["foo{1,3}", "bar{2,}"]),
++    ("(foo{1,3}),bar", ["(foo{1,3})", "bar"]),
++    ("[a,b],foo{1,2}", ["[a,b]", "foo{1,2}"]),
++    
++    # Edge cases
++    ("", []),
++    ("   ", []),
++    ("foo,", ["foo"]),
++    (",foo", ["foo"]),
++    ("foo,,bar", ["foo", "bar"]),
++    
++    # Complex patterns
++    ("test{3,4}|other{1,2},simple", ["test{3,4}|other{1,2}", "simple"]),
++    ("(?:a{1,3}|b{2,}),c{,5}", ["(?:a{1,3}|b{2,})", "c{,5}"]),
++    
++    # Escaped characters  
++    (r"foo\,,bar", [r"foo\,", "bar"]),
++    # Note: foo\{1,3\} has literal braces, not regex quantifier, so comma would split
++]
++
++print("Testing smart regex CSV parser:")
++for input_str, expected in test_cases:
++    result = _smart_split_regex_csv(input_str)
++    status = "✓" if result == expected else "✗"
++    print(f"{status} Input: {repr(input_str)}")
++    print(f"  Expected: {expected}")
++    print(f"  Got:      {result}")
++    if result != expected:
++        print("  MISMATCH!")
++    
++    # Also verify each pattern is valid regex
++    for pattern in result:
++        try:
++            re.compile(pattern)
++        except re.error as e:
++            print(f"  WARNING: Invalid regex pattern '{pattern}': {e}")
++    print()

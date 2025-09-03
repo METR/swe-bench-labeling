@@ -1,0 +1,33 @@
+diff --git a/lib/matplotlib/axes/_base.py b/lib/matplotlib/axes/_base.py
+index 5203e3232c..34520520ea 100644
+--- a/lib/matplotlib/axes/_base.py
++++ b/lib/matplotlib/axes/_base.py
+@@ -4431,16 +4431,26 @@ class _AxesBase(martist.Artist):
+         Notes
+         -----
+         For those who are 'picking' artists while using twinx, pick
+-        events are only called for the artists in the top-most Axes.
++        events are only called for the artists in the top-most axes.
+         """
+         ax2 = self._make_twin_axes(sharex=self)
+         ax2.yaxis.tick_right()
+         ax2.yaxis.set_label_position('right')
+         ax2.yaxis.set_offset_position('right')
+-        ax2.set_autoscalex_on(self.get_autoscalex_on())
++        ax2.set_autoscaley_on(self.get_autoscaley_on())
+         self.yaxis.tick_left()
+         ax2.xaxis.set_visible(False)
+         ax2.patch.set_visible(False)
++
++        # Store the original data limits of the first axis
++        original_dataLim = self.dataLim.frozen()
++
++        # Update the new axis to use the original data limits
++        ax2.update_datalim(original_dataLim.get_points())
++
++        return ax2
++        ax2.xaxis.set_visible(False)
++        ax2.patch.set_visible(False)
+         return ax2
+ 
+     def twiny(self):

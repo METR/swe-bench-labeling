@@ -1,0 +1,178 @@
+diff --git a/analyze_expr.py b/analyze_expr.py
+new file mode 100644
+index 0000000000..c78b186282
+--- /dev/null
++++ b/analyze_expr.py
+@@ -0,0 +1,24 @@
++from sympy import Mod, symbols, srepr
++
++x, y = symbols('x y')
++
++# Analyze the structure of expressions
++expr1 = -Mod(x, y)
++print(f"Expression: -Mod(x, y)")
++print(f"srepr: {srepr(expr1)}")
++print(f"args: {expr1.args}")
++print(f"Type: {type(expr1)}")
++print()
++
++expr2 = 2 * Mod(x, y)
++print(f"Expression: 2 * Mod(x, y)")
++print(f"srepr: {srepr(expr2)}")
++print(f"args: {expr2.args}")
++print(f"Type: {type(expr2)}")
++print()
++
++expr3 = (x + 1) * Mod(x, y)
++print(f"Expression: (x + 1) * Mod(x, y)")
++print(f"srepr: {srepr(expr3)}")
++print(f"args: {expr3.args}")
++print(f"Type: {type(expr3)}")
+diff --git a/check_precedence.py b/check_precedence.py
+new file mode 100644
+index 0000000000..37102b4864
+--- /dev/null
++++ b/check_precedence.py
+@@ -0,0 +1,14 @@
++from sympy import Mod, symbols
++from sympy.printing.precedence import precedence
++
++x, y = symbols('x y')
++mod_expr = Mod(x, y)
++
++print(f"Precedence of Mod(x, y): {precedence(mod_expr)}")
++print(f"Precedence of Add: {precedence(x + y)}")
++print(f"Precedence of Mul: {precedence(x * y)}")
++print(f"Precedence of Pow: {precedence(x ** y)}")
++
++# Check class hierarchy
++print(f"\nMod class MRO: {Mod.__mro__}")
++print(f"Is Mod a Function? {issubclass(Mod, __import__('sympy').Function)}")
+diff --git a/python_precedence.py b/python_precedence.py
+new file mode 100644
+index 0000000000..b6f2423c0f
+--- /dev/null
++++ b/python_precedence.py
+@@ -0,0 +1,28 @@
++# Python operator precedence reference
++# From lowest to highest:
++# 1. lambda
++# 2. if-else (ternary)
++# 3. or
++# 4. and
++# 5. not
++# 6. in, not in, is, is not, <, <=, >, >=, !=, ==
++# 7. |
++# 8. ^
++# 9. &
++# 10. <<, >>
++# 11. +, - (binary)
++# 12. *, @, /, //, %
++# 13. +, -, ~ (unary)
++# 14. **
++# 15. await
++# 16. x[index], x[index:index], x(arguments...), x.attribute
++# 17. (expressions...), [expressions...], {key: value...}, {expressions...}
++
++# So % has the same precedence as * and /, which is 50 in sympy's PRECEDENCE dict
++# But unary - has higher precedence than %
++
++# Test cases to verify Python behavior:
++print("-3 % 7 =", -3 % 7)  # Should be 4 (Python evaluates as (-3) % 7)
++print("-(3 % 7) =", -(3 % 7))  # Should be -3
++print("2 * 3 % 7 =", 2 * 3 % 7)  # Should be 6 (Python evaluates as (2 * 3) % 7)
++print("2 * (3 % 7) =", 2 * (3 % 7))  # Should be 6 too
+diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
+index b669a2c783..1f377ff1c8 100644
+--- a/sympy/printing/pycode.py
++++ b/sympy/printing/pycode.py
+@@ -233,8 +233,13 @@ def _print_ComplexInfinity(self, expr):
+         return self._print_NaN(expr)
+ 
+     def _print_Mod(self, expr):
+-        PREC = precedence(expr)
+-        return ('{} % {}'.format(*map(lambda x: self.parenthesize(x, PREC), expr.args)))
++        # The % operator in Python has the same precedence as *, /, //
++        # which is 50 (same as Mul)
++        PREC = 50  # Use multiplication precedence for % operator
++        result = '{} % {}'.format(*map(lambda x: self.parenthesize(x, PREC), expr.args))
++        # Always wrap mod in parentheses to ensure correct evaluation order
++        # when it's part of a larger expression (e.g., -Mod(x, y) or 2*Mod(x, y))
++        return '({})'.format(result)
+ 
+     def _print_Piecewise(self, expr):
+         result = []
+diff --git a/test_eval_order.py b/test_eval_order.py
+new file mode 100644
+index 0000000000..c1f9cafff8
+--- /dev/null
++++ b/test_eval_order.py
+@@ -0,0 +1,24 @@
++import ast
++import dis
++
++# Test Python's evaluation order for % operator
++code1 = "-x % y"
++code2 = "-(x % y)"
++code3 = "2 * x % y"
++code4 = "2 * (x % y)"
++
++print("AST for '-x % y':")
++print(ast.dump(ast.parse(code1, mode='eval')))
++print("\nAST for '-(x % y)':")
++print(ast.dump(ast.parse(code2, mode='eval')))
++print("\nAST for '2 * x % y':")
++print(ast.dump(ast.parse(code3, mode='eval')))
++print("\nAST for '2 * (x % y)':")
++print(ast.dump(ast.parse(code4, mode='eval')))
++
++# Test evaluation
++x, y = 3, 7
++print(f"\n-x % y = {-x % y}")  # Should be 4
++print(f"-(x % y) = {-(x % y)}")  # Should be -3
++print(f"2 * x % y = {2 * x % y}")  # Should be 6
++print(f"2 * (x % y) = {2 * (x % y)}")  # Should be 6
+diff --git a/test_mod_issue.py b/test_mod_issue.py
+new file mode 100644
+index 0000000000..f4c3ecb690
+--- /dev/null
++++ b/test_mod_issue.py
+@@ -0,0 +1,38 @@
++from sympy import Mod, lambdify, symbols
++import inspect
++
++# Test case from the issue
++x, y = symbols('x y')
++expr = -Mod(x, y)
++
++# Test with default modules
++f = lambdify([x, y], expr)
++print("With default modules:")
++print(f"f(3, 7) = {f(3, 7)}")
++print(f"Source: {inspect.getsource(f)}")
++
++# Test with empty modules
++g = lambdify([x, y], expr, modules=[])
++print("\nWith modules=[]:")
++print(f"g(3, 7) = {g(3, 7)}")
++print(f"Source: {inspect.getsource(g)}")
++
++# Expected result
++print(f"\nExpected result: {-Mod(3, 7)}")
++
++# More test cases
++print("\nAdditional test cases:")
++expr2 = 2 * Mod(x, y)
++h = lambdify([x, y], expr2, modules=[])
++print(f"2 * Mod(3, 7), modules=[]: {h(3, 7)}")
++print(f"Source: {inspect.getsource(h)}")
++
++expr3 = Mod(x, y) * 2
++i = lambdify([x, y], expr3, modules=[])
++print(f"Mod(3, 7) * 2, modules=[]: {i(3, 7)}")
++print(f"Source: {inspect.getsource(i)}")
++
++expr4 = (x + 1) * Mod(x, y)
++j = lambdify([x, y], expr4, modules=[])
++print(f"(x + 1) * Mod(x, y) with x=3, y=7, modules=[]: {j(3, 7)}")
++print(f"Source: {inspect.getsource(j)}")

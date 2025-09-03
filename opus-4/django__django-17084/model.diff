@@ -1,0 +1,170 @@
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index a778cd413b..a8574d0fe0 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -88,6 +88,17 @@ class Aggregate(Func):
+                         "Cannot compute %s('%s'): '%s' is an aggregate"
+                         % (c.name, name, name)
+                     )
++                if expr.contains_over_clause:
++                    before_resolved = self.get_source_expressions()[index]
++                    name = (
++                        before_resolved.name
++                        if hasattr(before_resolved, "name")
++                        else repr(before_resolved)
++                    )
++                    raise FieldError(
++                        "Cannot compute %s('%s'): '%s' is a window function"
++                        % (c.name, name, name)
++                    )
+         if (default := c.default) is None:
+             return c
+         if hasattr(default, "resolve_expression"):
+diff --git a/test_issue_reproduction.py b/test_issue_reproduction.py
+new file mode 100644
+index 0000000000..f1fbb52436
+--- /dev/null
++++ b/test_issue_reproduction.py
+@@ -0,0 +1,52 @@
++import os
++import django
++from django.db import models
++from django.db.models import Window, Sum, F
++from django.db.models.functions import Coalesce
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_settings')
++django.setup()
++
++# Create a simple test model
++class TestModel(models.Model):
++    date = models.DateField()
++    DJR = models.FloatField(default=0)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Try to reproduce the issue
++try:
++    from django.db import connection
++    
++    # Create the table
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(TestModel)
++    
++    # Create sample data
++    TestModel.objects.create(date='2023-01-01', DJR=10)
++    TestModel.objects.create(date='2023-01-02', DJR=20)
++    TestModel.objects.create(date='2023-01-03', DJR=30)
++    
++    # Try the problematic query
++    queryset = TestModel.objects.all()
++    queryset = queryset.annotate(
++        cumul_DJR=Coalesce(Window(Sum("DJR"), order_by=F("date").asc()), 0.0)
++    )
++    
++    # This should fail in Django 4.2
++    aggregate = queryset.aggregate(
++        DJR_total=Sum("DJR"),
++        cumul_DJR_total=Sum("cumul_DJR")
++    )
++    
++    print("Query executed successfully:", aggregate)
++    
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    
++finally:
++    # Clean up
++    with connection.schema_editor() as schema_editor:
++        schema_editor.delete_model(TestModel)
+diff --git a/test_window_aggregate_fix.py b/test_window_aggregate_fix.py
+new file mode 100644
+index 0000000000..5737b65326
+--- /dev/null
++++ b/test_window_aggregate_fix.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++"""
++Test to verify that aggregating over window functions raises a proper error.
++"""
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models import Window, Sum, F
++from django.db.models.functions import Coalesce
++from django.core.exceptions import FieldError
++
++# Minimal Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=['__main__'],
++        USE_TZ=False,
++    )
++    django.setup()
++
++# Create a simple test model
++class TestModel(models.Model):
++    date = models.DateField()
++    DJR = models.FloatField(default=0)
++    
++    class Meta:
++        app_label = '__main__'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create sample data
++TestModel.objects.create(date='2023-01-01', DJR=10)
++TestModel.objects.create(date='2023-01-02', DJR=20)
++TestModel.objects.create(date='2023-01-03', DJR=30)
++
++print("Testing aggregation over window functions...")
++
++# Try the problematic query
++queryset = TestModel.objects.all()
++queryset = queryset.annotate(
++    cumul_DJR=Coalesce(Window(Sum("DJR"), order_by=F("date").asc()), 0.0)
++)
++
++# Let's debug what's happening
++print("\nDebug: Looking at the annotation...")
++print(f"cumul_DJR annotation type: {type(queryset.query.annotations['cumul_DJR'])}")
++print(f"cumul_DJR contains_over_clause: {queryset.query.annotations['cumul_DJR'].contains_over_clause}")
++
++# Check what Sum("cumul_DJR") becomes
++sum_expr = Sum("cumul_DJR")
++print(f"\nSum('cumul_DJR') type: {type(sum_expr)}")
++print(f"Sum('cumul_DJR') source expressions: {sum_expr.get_source_expressions()}")
++print(f"Sum('cumul_DJR') source expression[0] type: {type(sum_expr.get_source_expressions()[0])}")
++print(f"Sum('cumul_DJR') string repr: {sum_expr.get_source_expressions()[0]}")
++
++# This should raise a FieldError with our fix
++try:
++    aggregate = queryset.aggregate(
++        DJR_total=Sum("DJR"),
++        cumul_DJR_total=Sum("cumul_DJR")
++    )
++    print("ERROR: Query should have failed but succeeded!")
++    print("Result:", aggregate)
++except FieldError as e:
++    print("\nSUCCESS: Got expected FieldError:", str(e))
++except Exception as e:
++    print(f"\nERROR: Got unexpected error: {type(e).__name__}: {e}")
++
++# Clean up
++with connection.schema_editor() as schema_editor:
++    schema_editor.delete_model(TestModel)
++
++print("\nTest completed!")

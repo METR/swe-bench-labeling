@@ -1,0 +1,429 @@
+diff --git a/debug_test.py b/debug_test.py
+new file mode 100644
+index 000000000..6bcd07495
+--- /dev/null
++++ b/debug_test.py
+@@ -0,0 +1,14 @@
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++from sphinx.util.docstrings import extract_metadata, prepare_commentdoc
++
++# Test extracting metadata from comment docstrings
++comment_doc = "#: :meta public:"
++lines = prepare_commentdoc(comment_doc)
++print("Comment doc lines:", lines)
++
++# Now test extract_metadata 
++metadata = extract_metadata('\n'.join(lines))
++print("Metadata extracted:", metadata)
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 000000000..13acf1555
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,59 @@
++"""Simple test for :meta public: fix"""
++
++import tempfile
++import shutil
++from pathlib import Path
++from sphinx.testing.util import SphinxTestApp
++from sphinx.testing.path import path as sphinx_path
++
++with tempfile.TemporaryDirectory() as tmpdir:
++    srcdir = sphinx_path(tmpdir) / 'source' 
++    srcdir.makedirs()
++    
++    # Write conf.py
++    (srcdir / 'conf.py').write_text('''
++extensions = ['sphinx.ext.autodoc']
++''')
++    
++    # Create test module
++    module_content = '''
++"""Test module"""
++
++# Variables with comment docstrings
++_private_var = 1  #: This is private (no meta)
++_public_var = 2  #: :meta public:
++_another_public = 3  #: :meta public: This one is also public  
++regular_var = 5
++'''
++    (srcdir / 'test_module.py').write_text(module_content)
++    
++    # Create index.rst
++    (srcdir / 'index.rst').write_text('''
++.. automodule:: test_module
++   :members:
++''')
++    
++    # Build
++    app = SphinxTestApp(srcdir=srcdir, buildername='text')
++    app.build()
++    
++    # Check output
++    content = (app.outdir / 'index.txt').read_text()
++    print("Output content:")
++    print(content)
++    print("\nChecking assertions...")
++    
++    # Verify our fix works
++    assert '_public_var' in content, "FAIL: _public_var with :meta public: should be shown"
++    print("✓ _public_var is shown (has :meta public:)")
++    
++    assert '_another_public' in content, "FAIL: _another_public with :meta public: should be shown"  
++    print("✓ _another_public is shown (has :meta public:)")
++    
++    assert '_private_var' not in content, "FAIL: _private_var without :meta public: should not be shown"
++    print("✓ _private_var is not shown (no :meta public:)")
++    
++    assert 'regular_var' in content, "FAIL: regular_var should be shown"
++    print("✓ regular_var is shown (public by default)")
++    
++    print("\nAll tests passed!")
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index 76265f5be..8a24cb44d 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -729,6 +729,14 @@ class Documenter:
+             has_doc = bool(doc)
+ 
+             metadata = extract_metadata(doc)
++            
++            # Check for metadata in attr_docs (comment docstrings) if regular doc doesn't have it
++            if (namespace, membername) in attr_docs and 'private' not in metadata and 'public' not in metadata:
++                # Extract metadata from comment docstring  
++                attr_doc = '\n'.join(attr_docs[(namespace, membername)])
++                attr_metadata = extract_metadata(attr_doc)
++                metadata.update(attr_metadata)
++            
+             if 'private' in metadata:
+                 # consider a member private if docstring has "private" metadata
+                 isprivate = True
+diff --git a/test_autodoc_meta_public.py b/test_autodoc_meta_public.py
+new file mode 100644
+index 000000000..e07899b76
+--- /dev/null
++++ b/test_autodoc_meta_public.py
+@@ -0,0 +1,133 @@
++"""Test autodoc :meta public: functionality"""
++
++import pytest
++from sphinx.testing.util import SphinxTestApp
++from sphinx.testing.path import path
++
++
++def test_autodoc_meta_public_in_comment_docstring(app_params, make_app):
++    """Test that :meta public: works in comment docstrings for variables"""
++    
++    # Create test module content
++    module_content = '''
++"""Test module"""
++
++# Variables with comment docstrings
++_private_var = 1  #: This is private (no meta)
++_public_var = 2  #: :meta public:
++_another_public = 3  #: :meta public: This one is also public
++_mixed_meta = 4  #: Has content :meta public: and more content
++
++# Variables with regular docstrings can't have metadata
++# (they would need to be in the __doc__ attribute, which doesn't exist for module variables)
++regular_var = 5
++
++# Private variable without any documentation
++_undocumented = 6
++'''
++    
++    # Create test rst content
++    rst_content = '''
++.. automodule:: test_module
++   :members:
++'''
++    
++    # Setup the test app with our content
++    args, kwargs = app_params
++    srcdir = path(kwargs['srcdir'])
++    
++    # Write the test module
++    (srcdir / 'test_module.py').write_text(module_content)
++    
++    # Write the rst file
++    (srcdir / 'index.rst').write_text(rst_content)
++    
++    # Build the app
++    app = make_app(*args, **kwargs)
++    app.build()
++    
++    # Check the output
++    content = (app.outdir / 'index.txt').read_text()
++    
++    # _public_var should be shown (has :meta public:)
++    assert '_public_var' in content, "Variable with :meta public: should be shown"
++    
++    # _another_public should be shown (has :meta public:)
++    assert '_another_public' in content, "Variable with :meta public: should be shown"
++    
++    # _mixed_meta should be shown (has :meta public:)
++    assert '_mixed_meta' in content, "Variable with :meta public: should be shown"
++    
++    # _private_var should NOT be shown (no meta public)
++    assert '_private_var' not in content, "Private variable without :meta public: should not be shown"
++    
++    # _undocumented should NOT be shown (no documentation at all)
++    assert '_undocumented' not in content, "Undocumented private variable should not be shown"
++    
++    # regular_var should be shown (not private)
++    assert 'regular_var' in content, "Public variable should be shown"
++
++
++@pytest.mark.sphinx('text', testroot='ext-autodoc')
++def test_autodoc_meta_private_in_comment_docstring(app):
++    """Test that :meta private: works in comment docstrings for variables"""
++    
++    # Create test module content
++    module_content = '''
++"""Test module"""
++
++# Public variables with :meta private:
++public_but_private = 1  #: :meta private:
++another_private = 2  #: This is private :meta private:
++
++# Public variable without meta
++public_var = 3  #: This is public
++'''
++    
++    # Write the test module  
++    (app.srcdir / 'test_private_module.py').write_text(module_content)
++    
++    # Create index.rst that imports the module
++    index_content = '''
++.. automodule:: test_private_module
++   :members:
++'''
++    (app.srcdir / 'index.rst').write_text(index_content)
++    
++    # Build
++    app.build()
++    
++    # Check the output
++    content = (app.outdir / 'index.txt').read_text()
++    
++    # Variables with :meta private: should NOT be shown
++    assert 'public_but_private' not in content, "Variable with :meta private: should not be shown"
++    assert 'another_private' not in content, "Variable with :meta private: should not be shown"
++    
++    # Regular public variable should be shown
++    assert 'public_var' in content, "Public variable without meta should be shown"
++
++
++if __name__ == '__main__':
++    # Simple standalone test
++    import tempfile
++    import shutil
++    from pathlib import Path
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        srcdir = Path(tmpdir) / 'source'
++        srcdir.mkdir()
++        outdir = Path(tmpdir) / 'build'
++        
++        # Write conf.py
++        (srcdir / 'conf.py').write_text('''
++extensions = ['sphinx.ext.autodoc']
++''')
++        
++        # Test public meta
++        test_autodoc_meta_public_in_comment_docstring(
++            ([], {'srcdir': srcdir, 'outdir': outdir, 'buildername': 'text'}),
++            lambda *args, **kwargs: SphinxTestApp(*args, **kwargs)
++        )
++        
++        print("All tests passed!")
+diff --git a/test_meta_public.py b/test_meta_public.py
+new file mode 100644
+index 000000000..2f97a9e9c
+--- /dev/null
++++ b/test_meta_public.py
+@@ -0,0 +1,50 @@
++"""Test module for :meta public: bug"""
++
++# Create a test module
++import os
++import tempfile
++from sphinx.testing.path import path
++from sphinx.testing.util import SphinxTestApp
++
++# Create temporary directory
++with tempfile.TemporaryDirectory() as tmpdir:
++    srcdir = path(tmpdir) / 'src'
++    srcdir.makedirs()
++    
++    # Create the example.py module
++    (srcdir / 'example.py').write_text("""
++_foo = None  #: :meta public:
++_bar = None  #: This is bar
++_baz = None
++public_var = 1
++""")
++    
++    # Create conf.py
++    (srcdir / 'conf.py').write_text("""
++extensions = ['sphinx.ext.autodoc']
++""")
++    
++    # Create index.rst
++    (srcdir / 'index.rst').write_text("""
++Test
++====
++
++.. automodule:: example
++   :members:
++""")
++    
++    # Build the docs
++    app = SphinxTestApp(srcdir=srcdir)
++    app.build()
++    
++    # Check the output
++    output_file = app.outdir / 'index.html'
++    content = output_file.read_text()
++    
++    print("=== HTML Output ===")
++    print(content)
++    print("\n=== Checking for _foo ===")
++    if '_foo' in content:
++        print("SUCCESS: _foo is shown in the output")
++    else:
++        print("FAIL: _foo is NOT shown in the output")
+diff --git a/test_meta_public2.py b/test_meta_public2.py
+new file mode 100644
+index 000000000..82ae85c28
+--- /dev/null
++++ b/test_meta_public2.py
+@@ -0,0 +1,76 @@
++"""Test module for :meta public: bug"""
++
++# Create a test module  
++import os
++import sys
++import tempfile
++from pathlib import Path
++
++# Create temporary directory
++tmpdir = tempfile.mkdtemp()
++print(f"Working in: {tmpdir}")
++
++# Create the example.py module
++example_content = """
++'''Example module'''
++
++_foo = None  #: :meta public:
++_bar = None  #: This is bar
++_baz = None
++public_var = 1
++"""
++
++with open(os.path.join(tmpdir, 'example.py'), 'w') as f:
++    f.write(example_content)
++
++# Create conf.py
++conf_content = """
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++extensions = ['sphinx.ext.autodoc']
++"""
++
++with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create index.rst
++index_content = """
++Test
++====
++
++.. automodule:: example
++   :members:
++"""
++
++with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Build with sphinx-build command
++import subprocess
++os.chdir(tmpdir)
++result = subprocess.run([sys.executable, '-m', 'sphinx', '-b', 'text', '.', '_build'], 
++                       capture_output=True, text=True)
++
++print("Build stdout:", result.stdout)
++print("Build stderr:", result.stderr)
++
++# Check the text output
++output_file = os.path.join(tmpdir, '_build', 'index.txt')
++if os.path.exists(output_file):
++    with open(output_file, 'r') as f:
++        content = f.read()
++    print("\n=== Text Output ===")
++    print(content)
++    print("\n=== Checking for _foo ===")
++    if '_foo' in content:
++        print("SUCCESS: _foo is shown in the output")
++    else:
++        print("FAIL: _foo is NOT shown in the output")
++else:
++    print("ERROR: Output file not found!")
++
++# Cleanup
++import shutil
++shutil.rmtree(tmpdir)
+diff --git a/tox.ini b/tox.ini
+index dbb705a3a..9f4fc3a32 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

@@ -1,0 +1,54 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index 0c3a981290..dc646cb781 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -95,7 +95,7 @@ class DjangoHelpFormatter(HelpFormatter):
+     """
+     show_last = {
+         '--version', '--verbosity', '--traceback', '--settings', '--pythonpath',
+-        '--no-color', '--force-color',
++        '--no-color', '--force-color', '--skip-checks',
+     }
+ 
+     def _reordered_actions(self, actions):
+@@ -286,6 +286,10 @@ class BaseCommand:
+             '--force-color', action='store_true',
+             help='Force colorization of the command output.',
+         )
++        parser.add_argument(
++            '--skip-checks', action='store_true',
++            help='Skip system checks.',
++        )
+         self.add_arguments(parser)
+         return parser
+ 
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_cmdline_skip_checks.py b/test_cmdline_skip_checks.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_project/test_settings.py b/test_project/test_settings.py
+new file mode 100644
+index 0000000000..2f3c29f33a
+--- /dev/null
++++ b/test_project/test_settings.py
+@@ -0,0 +1,4 @@
++
++SECRET_KEY = 'test'
++INSTALLED_APPS = []
++    
+\ No newline at end of file
+diff --git a/test_skip_checks.py b/test_skip_checks.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_skip_checks_feature.py b/test_skip_checks_feature.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_skip_checks_feature.py
+@@ -0,0 +1 @@
++
+diff --git a/test_skip_checks_final.py b/test_skip_checks_final.py
+new file mode 100644
+index 0000000000..e69de29bb2

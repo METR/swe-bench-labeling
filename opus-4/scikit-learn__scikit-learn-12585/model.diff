@@ -1,0 +1,122 @@
+diff --git a/sklearn/base.py b/sklearn/base.py
+index 56ffb18bf..8f841850b 100644
+--- a/sklearn/base.py
++++ b/sklearn/base.py
+@@ -48,7 +48,7 @@ def clone(estimator, safe=True):
+     # XXX: not handling dictionaries
+     if estimator_type in (list, tuple, set, frozenset):
+         return estimator_type([clone(e, safe=safe) for e in estimator])
+-    elif not hasattr(estimator, 'get_params'):
++    elif not hasattr(estimator, 'get_params') or isinstance(estimator, type):
+         if not safe:
+             return copy.deepcopy(estimator)
+         else:
+@@ -180,7 +180,7 @@ class BaseEstimator(object):
+         out = dict()
+         for key in self._get_param_names():
+             value = getattr(self, key, None)
+-            if deep and hasattr(value, 'get_params'):
++            if deep and hasattr(value, 'get_params') and not isinstance(value, type):
+                 deep_items = value.get_params().items()
+                 out.update((key + '__' + k, val) for k, val in deep_items)
+             out[key] = value
+@@ -219,7 +219,8 @@ class BaseEstimator(object):
+                 valid_params[key] = value
+ 
+         for key, sub_params in nested_params.items():
+-            valid_params[key].set_params(**sub_params)
++            if not isinstance(valid_params[key], type):
++                valid_params[key].set_params(**sub_params)
+ 
+         return self
+ 
+diff --git a/sklearn/tests/test_base.py b/sklearn/tests/test_base.py
+index ebcb38925..197c8caba 100644
+--- a/sklearn/tests/test_base.py
++++ b/sklearn/tests/test_base.py
+@@ -167,6 +167,31 @@ def test_clone_sparse_matrices():
+         assert_array_equal(clf.empty.toarray(), clf_cloned.empty.toarray())
+ 
+ 
++def test_clone_estimator_types():
++    # Check that clone works for parameters that are types (not instances)
++    
++    # Import a minimal estimator for testing
++    from sklearn.preprocessing import StandardScaler
++    
++    # Test with estimator type as parameter value
++    clf = MyEstimator(empty=StandardScaler)
++    clf2 = clone(clf)
++    assert clf.empty is clf2.empty
++    assert clf.empty is StandardScaler
++    
++    # Test with actual sklearn estimator with class parameter
++    scaler = StandardScaler(with_mean=StandardScaler)
++    scaler2 = clone(scaler)
++    assert scaler.get_params()['with_mean'] is StandardScaler
++    assert scaler2.get_params()['with_mean'] is StandardScaler
++    
++    # Test that regular instances still work
++    scaler3 = StandardScaler(with_mean=True)
++    scaler4 = clone(scaler3)
++    assert scaler3.get_params()['with_mean'] == True
++    assert scaler4.get_params()['with_mean'] == True
++
++
+ def test_repr():
+     # Smoke test the repr of the base estimator.
+     my_estimator = MyEstimator()
+diff --git a/test_clone_issue.py b/test_clone_issue.py
+new file mode 100644
+index 000000000..995bb37ef
+--- /dev/null
++++ b/test_clone_issue.py
+@@ -0,0 +1,24 @@
++from sklearn.preprocessing import StandardScaler
++from sklearn.base import clone
++
++# Test case from the issue
++try:
++    result = clone(StandardScaler(with_mean=StandardScaler))
++    print("Test 1 PASSED: No error when cloning estimator with class parameter")
++except TypeError as e:
++    print(f"Test 1 FAILED: {e}")
++
++# Additional test cases
++# Test with a regular instance (should work)
++try:
++    result = clone(StandardScaler())
++    print("Test 2 PASSED: Regular cloning works")
++except Exception as e:
++    print(f"Test 2 FAILED: {e}")
++
++# Test with nested class parameters
++try:
++    result = clone(StandardScaler(with_mean=StandardScaler, with_std=StandardScaler))
++    print("Test 3 PASSED: Multiple class parameters work")
++except TypeError as e:
++    print(f"Test 3 FAILED: {e}")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/test_type_check.py b/test_type_check.py
+new file mode 100644
+index 000000000..9a369dc1a
+--- /dev/null
++++ b/test_type_check.py
+@@ -0,0 +1,12 @@
++from sklearn.preprocessing import StandardScaler
++
++# Check what StandardScaler is
++print(f"StandardScaler type: {type(StandardScaler)}")
++print(f"isinstance(StandardScaler, type): {isinstance(StandardScaler, type)}")
++print(f"hasattr(StandardScaler, 'get_params'): {hasattr(StandardScaler, 'get_params')}")
++
++# Check instance
++instance = StandardScaler()
++print(f"\nStandardScaler instance type: {type(instance)}")
++print(f"isinstance(instance, type): {isinstance(instance, type)}")
++print(f"hasattr(instance, 'get_params'): {hasattr(instance, 'get_params')}")

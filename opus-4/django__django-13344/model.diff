@@ -1,0 +1,644 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..b0a46ccbce
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,109 @@
++import asyncio
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++from django.core.handlers.exception import convert_exception_to_response
++from asgiref.sync import sync_to_async
++
++
++# The actual issue happens when Django's middleware loading creates this scenario:
++# 1. An async handler/middleware is wrapped in convert_exception_to_response
++# 2. That becomes the get_response for the next middleware
++# 3. The next middleware's __call__ returns a coroutine
++# 4. That coroutine is then passed as get_response to another middleware
++# 5. When THAT middleware is wrapped by convert_exception_to_response, it sees
++#    the get_response is NOT a coroutine function (it's a middleware instance)
++# 6. So it creates a sync wrapper
++# 7. The sync wrapper calls the middleware, which returns a coroutine
++# 8. That coroutine gets passed to process_response of the first middleware!
++
++class FirstMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"\nFirstMiddleware.process_response:")
++        print(f"  - response type: {type(response)}")
++        print(f"  - is coroutine: {asyncio.iscoroutine(response)}")
++        if asyncio.iscoroutine(response):
++            print("\n*** BUG REPRODUCED: FirstMiddleware received a coroutine! ***")
++        return response
++
++
++class SecondMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"\nSecondMiddleware.process_response:")
++        print(f"  - response type: {type(response)}")
++        return response
++
++
++def reproduce_issue():
++    print("=== Reproducing the Django ASGI Middleware Issue ===\n")
++    
++    # Step 1: Create an async view
++    async def view(request):
++        print("View executed")
++        return HttpResponse("Hello World")
++    
++    # Step 2: Wrap it like Django does
++    handler = convert_exception_to_response(view)
++    print(f"1. view wrapped, handler is coroutine function: {asyncio.iscoroutinefunction(handler)}")
++    
++    # Step 3: Create SecondMiddleware with this async handler
++    second_mw = SecondMiddleware(handler)
++    print(f"2. SecondMiddleware created, it is coroutine function: {asyncio.iscoroutinefunction(second_mw)}")
++    print(f"   second_mw.get_response is coroutine function: {asyncio.iscoroutinefunction(second_mw.get_response)}")
++    
++    # Step 4: Wrap SecondMiddleware with convert_exception_to_response
++    # This is where the issue starts - convert_exception_to_response sees second_mw
++    # is NOT a coroutine function (even though calling it returns a coroutine)
++    handler = convert_exception_to_response(second_mw)
++    print(f"3. SecondMiddleware wrapped, handler is coroutine function: {asyncio.iscoroutinefunction(handler)}")
++    
++    # Step 5: Create FirstMiddleware
++    first_mw = FirstMiddleware(handler)
++    print(f"4. FirstMiddleware created")
++    
++    # Now simulate what happens when this chain is called
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    print("\n=== Calling the middleware chain ===")
++    
++    # The first middleware is called
++    # Since its get_response is NOT a coroutine function (it's the sync wrapper from step 4)
++    # it goes through the sync path in __call__
++    print("\nFirstMiddleware.__call__ executes...")
++    print(f"  - first_mw.get_response is coroutine function: {asyncio.iscoroutinefunction(first_mw.get_response)}")
++    
++    # This will call the sync path which calls self.get_response(request)
++    # But self.get_response is the sync wrapper from convert_exception_to_response
++    # That sync wrapper will call second_mw(request), which returns a coroutine!
++    
++    # Let's trace this manually:
++    print("\nManually tracing the issue:")
++    
++    # first_mw.__call__ sync path calls:
++    response = first_mw.get_response(request)  # This is the sync wrapper
++    print(f"\n5. first_mw.get_response(request) returned: {type(response)}")
++    print(f"   Is coroutine: {asyncio.iscoroutine(response)}")
++    
++    if asyncio.iscoroutine(response):
++        print("\n*** The sync wrapper returned a coroutine! ***")
++        print("*** This coroutine will be passed to process_response ***")
++    
++    # Now first_mw.process_response gets called with this coroutine
++    if hasattr(first_mw, 'process_response'):
++        first_mw.process_response(request, response)
++
++
++if __name__ == "__main__":
++    reproduce_issue()
+diff --git a/test_coroutine_issue.py b/test_coroutine_issue.py
+new file mode 100644
+index 0000000000..dbddbc6488
+--- /dev/null
++++ b/test_coroutine_issue.py
+@@ -0,0 +1,87 @@
++import asyncio
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++from django.core.handlers.exception import convert_exception_to_response
++
++
++class TestMiddleware(MiddlewareMixin):
++    def __init__(self, get_response):
++        super().__init__(get_response)
++        print(f"TestMiddleware init: get_response is coroutine function? {asyncio.iscoroutinefunction(get_response)}")
++    
++    def process_response(self, request, response):
++        print(f"TestMiddleware.process_response: response type = {type(response)}")
++        print(f"Is coroutine? {asyncio.iscoroutine(response)}")
++        return response
++
++
++async def test_direct_call():
++    # Create an async handler
++    async def async_handler(request):
++        return HttpResponse("Hello")
++    
++    # Wrap it as Django does
++    handler = convert_exception_to_response(async_handler)
++    
++    # Create middleware  
++    middleware = TestMiddleware(handler)
++    
++    # Test calling the middleware directly (not awaiting)
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    print("\n=== Testing direct middleware call ===")
++    result = middleware(request)
++    print(f"Result type: {type(result)}")
++    print(f"Is coroutine? {asyncio.iscoroutine(result)}")
++    
++    if asyncio.iscoroutine(result):
++        print("\nAwaiting the coroutine...")
++        final_result = await result
++        print(f"Final result type: {type(final_result)}")
++
++
++def test_sync_call():
++    # Create a sync handler
++    def sync_handler(request):
++        return HttpResponse("Hello")
++    
++    # Wrap it
++    handler = convert_exception_to_response(sync_handler)
++    
++    # Create middleware  
++    middleware = TestMiddleware(handler)
++    
++    # Test calling the middleware
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    print("\n=== Testing sync middleware call ===")
++    result = middleware(request)
++    print(f"Result type: {type(result)}")
++    print(f"Is coroutine? {asyncio.iscoroutine(result)}")
++
++
++if __name__ == "__main__":
++    # Test sync version
++    test_sync_call()
++    
++    # Test async version
++    loop = asyncio.new_event_loop()
++    asyncio.set_event_loop(loop)
++    loop.run_until_complete(test_direct_call())
+diff --git a/test_final_issue.py b/test_final_issue.py
+new file mode 100644
+index 0000000000..4e641c2a20
+--- /dev/null
++++ b/test_final_issue.py
+@@ -0,0 +1,115 @@
++import asyncio
++import django
++from django.conf import settings
++
++# Configure Django settings first
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++from django.core.handlers.exception import convert_exception_to_response
++
++
++# Create an async handler that mimics Django's _get_response_async
++async def async_handler(request):
++    print("async_handler called")
++    return HttpResponse("Test")
++
++
++# Manual simulation of Django's load_middleware for 2 middlewares
++def test_issue():
++    print("=== Simulating Django's load_middleware ===\n")
++    
++    class FirstMiddleware(MiddlewareMixin):
++        def process_response(self, request, response):
++            print(f"FirstMiddleware.process_response: response type = {type(response)}")
++            if asyncio.iscoroutine(response):
++                print("!!! BUG: FirstMiddleware received a coroutine in process_response !!!")
++            return response
++
++    class SecondMiddleware(MiddlewareMixin):
++        def process_response(self, request, response):
++            print(f"SecondMiddleware.process_response: response type = {type(response)}")
++            return response
++    
++    # Start with async handler wrapped in convert_exception_to_response
++    handler = convert_exception_to_response(async_handler)
++    
++    # Create SecondMiddleware instance
++    second_mw = SecondMiddleware(handler)
++    
++    # THIS IS THE KEY: convert_exception_to_response wraps the middleware instance
++    # When the middleware has an async get_response, its __call__ returns a coroutine
++    handler = convert_exception_to_response(second_mw)
++    
++    # Create FirstMiddleware instance  
++    first_mw = FirstMiddleware(handler)
++    
++    # No final adapt_method_mode for the first middleware in Django's implementation
++    
++    # Now let's trace what happens
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    # When ASGIHandler calls the middleware chain...
++    print("Starting the middleware chain...\n")
++    
++    # Check what first_mw's get_response is
++    print(f"first_mw.get_response is async? {asyncio.iscoroutinefunction(first_mw.get_response)}")
++    
++    # This will trigger first_mw.__call__ which will return __acall__ coroutine
++    loop = asyncio.new_event_loop()
++    asyncio.set_event_loop(loop)
++    
++    async def run_chain():
++        # This is what ASGIHandler does - it awaits the result
++        result = await first_mw(request)
++        print(f"\nFinal result type: {type(result)}")
++    
++    loop.run_until_complete(run_chain())
++
++
++# But wait, let me also check what happens when we don't await in between
++def test_unwrapped_call():
++    print("\n\n=== Testing what happens with sync middleware adapter ===\n")
++    
++    class TestMiddleware(MiddlewareMixin):
++        def process_response(self, request, response):
++            print(f"TestMiddleware.process_response called with: {type(response)}")
++            if asyncio.iscoroutine(response):
++                print("!!! ERROR: Received coroutine in process_response !!!")
++            return response
++    
++    # Create async handler
++    async def handler(request):
++        return HttpResponse("Test")
++    
++    # Wrap it
++    wrapped_handler = convert_exception_to_response(handler)
++    
++    # Create middleware
++    mw = TestMiddleware(wrapped_handler)
++    
++    # The issue: What if something calls mw synchronously but doesn't await?
++    # This could happen with adapters
++    
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    # This returns a coroutine because __call__ returns __acall__
++    result = mw(request)
++    print(f"Direct call to middleware returns: {type(result)}")
++    
++
++if __name__ == "__main__":
++    test_issue()
++    test_unwrapped_call()
+diff --git a/test_middleware_async.py b/test_middleware_async.py
+new file mode 100644
+index 0000000000..857e330d88
+--- /dev/null
++++ b/test_middleware_async.py
+@@ -0,0 +1,67 @@
++import asyncio
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++
++
++class DummyMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"DummyMiddleware.process_response: request={request.__class__}, response={response.__class__}")
++        print(f"Is coroutine? {asyncio.iscoroutine(response)}")
++        return response
++
++
++class SecondDummyMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"SecondDummyMiddleware.process_response: request={request.__class__}, response={response.__class__}")
++        print(f"Is coroutine? {asyncio.iscoroutine(response)}")
++        return response
++
++
++# Simulate Django's middleware loading
++def test_middleware_chain():
++    # Import convert_exception_to_response like Django does
++    from django.core.handlers.exception import convert_exception_to_response
++    
++    # Create a simple view that returns HttpResponse
++    async def view(request):
++        return HttpResponse("Hello")
++    
++    # Create middleware instances with convert_exception_to_response wrapper
++    # This mimics what Django does in load_middleware
++    handler = convert_exception_to_response(view)
++    second_middleware = SecondDummyMiddleware(handler)
++    handler = convert_exception_to_response(second_middleware)
++    first_middleware = DummyMiddleware(handler)
++    
++    # Create a mock request
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    # Call the middleware chain
++    loop = asyncio.new_event_loop()
++    asyncio.set_event_loop(loop)
++    
++    # Test async mode
++    if asyncio.iscoroutinefunction(first_middleware.get_response):
++        response = loop.run_until_complete(first_middleware(request))
++    else:
++        response = first_middleware(request)
++    
++    print(f"Final response: {response.__class__}")
++
++
++if __name__ == "__main__":
++    test_middleware_chain()
+diff --git a/test_middleware_chain.py b/test_middleware_chain.py
+new file mode 100644
+index 0000000000..46a3810263
+--- /dev/null
++++ b/test_middleware_chain.py
+@@ -0,0 +1,70 @@
++import asyncio
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++from django.core.handlers.exception import convert_exception_to_response
++
++
++class FirstMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"FirstMiddleware.process_response: response type = {type(response)}")
++        print(f"Is coroutine? {asyncio.iscoroutine(response)}")
++        if asyncio.iscoroutine(response):
++            print("ERROR: FirstMiddleware received a coroutine instead of HttpResponse!")
++        return response
++
++
++class SecondMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response type = {type(response)}")
++        print(f"Is coroutine? {asyncio.iscoroutine(response)}")
++        return response
++
++
++async def test_middleware_loading():
++    # This simulates Django's load_middleware process
++    
++    # 1. Start with the core handler (simulating _get_response_async)
++    async def core_handler(request):
++        print("Core handler called")
++        return HttpResponse("Hello World")
++    
++    # 2. Wrap with convert_exception_to_response
++    handler = convert_exception_to_response(core_handler)
++    handler_is_async = True
++    
++    # 3. Add SecondMiddleware (reverse order)
++    mw_instance = SecondMiddleware(handler)
++    handler = convert_exception_to_response(mw_instance)
++    
++    # 4. Add FirstMiddleware
++    mw_instance = FirstMiddleware(handler)
++    # No wrapping for the outermost middleware
++    
++    # Now test the chain
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    # Call the middleware chain
++    print("=== Starting middleware chain ===")
++    response = await mw_instance(request)
++    print(f"Final response type: {type(response)}")
++    print("=== End middleware chain ===")
++
++
++if __name__ == "__main__":
++    loop = asyncio.new_event_loop()
++    asyncio.set_event_loop(loop)
++    loop.run_until_complete(test_middleware_loading())
+diff --git a/test_middleware_chain_issue.py b/test_middleware_chain_issue.py
+new file mode 100644
+index 0000000000..2e17994787
+--- /dev/null
++++ b/test_middleware_chain_issue.py
+@@ -0,0 +1,91 @@
++import asyncio
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++from django.core.handlers.exception import convert_exception_to_response
++
++
++class FirstMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"FirstMiddleware.process_response: response type = {type(response)}")
++        if asyncio.iscoroutine(response):
++            print("ERROR: FirstMiddleware received a coroutine instead of HttpResponse!")
++        return response
++
++
++class SecondMiddleware(MiddlewareMixin):  
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response type = {type(response)}")
++        return response
++
++
++async def test_nested_middleware_issue():
++    print("=== Testing the nested middleware coroutine issue ===\n")
++    
++    # Create async view
++    async def view(request):
++        print("View called")
++        return HttpResponse("Hello")
++    
++    # Wrap view
++    handler = convert_exception_to_response(view)
++    
++    # Create second middleware with async handler
++    second_mw = SecondMiddleware(handler)
++    
++    # NOW HERE'S THE KEY: What if FirstMiddleware tries to call second_mw directly?
++    # This simulates what might happen in complex middleware setups
++    
++    class FirstMiddlewareWithDirectCall(MiddlewareMixin):
++        def __init__(self, get_response):
++            super().__init__(get_response)
++            self.second_mw = second_mw
++            
++        def process_response(self, request, response):
++            print(f"FirstMiddlewareWithDirectCall.process_response: response type = {type(response)}")
++            if asyncio.iscoroutine(response):
++                print("ERROR: FirstMiddleware received a coroutine instead of HttpResponse!")
++            return response
++            
++        async def __acall__(self, request):
++            # Instead of calling self.get_response, imagine it calls second_mw directly
++            # This could happen in custom middleware logic
++            response = self.second_mw(request)  # This returns a coroutine!
++            print(f"After calling second_mw: response type = {type(response)}")
++            
++            if hasattr(self, 'process_response'):
++                # Now process_response gets a coroutine!
++                response = await sync_to_async(
++                    self.process_response,
++                    thread_sensitive=True,
++                )(request, response)
++            return response
++    
++    from asgiref.sync import sync_to_async
++    
++    # Create the problematic middleware
++    first_mw = FirstMiddlewareWithDirectCall(handler)
++    
++    # Test
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    result = await first_mw(request)
++    print(f"\nFinal result type: {type(result)}")
++
++
++if __name__ == "__main__":
++    loop = asyncio.new_event_loop()
++    asyncio.set_event_loop(loop)
++    loop.run_until_complete(test_nested_middleware_issue())
+diff --git a/test_real_issue.py b/test_real_issue.py
+new file mode 100644
+index 0000000000..60da140e39
+--- /dev/null
++++ b/test_real_issue.py
+@@ -0,0 +1,63 @@
++import asyncio
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DEFAULT_CHARSET='utf-8',
++    MIDDLEWARE=[
++        'test_real_issue.FirstMiddleware',
++        'test_real_issue.SecondMiddleware',
++    ]
++)
++django.setup()
++
++from django.http import HttpResponse
++from django.utils.deprecation import MiddlewareMixin
++from django.core.handlers.base import BaseHandler
++
++
++class FirstMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"FirstMiddleware.process_response: response={type(response)}")
++        if asyncio.iscoroutine(response):
++            print("BUG CONFIRMED: FirstMiddleware received a coroutine!")
++        return response
++
++
++class SecondMiddleware(MiddlewareMixin):
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response={type(response)}")
++        return response
++
++
++# Let's trace through Django's actual flow
++class DebugHandler(BaseHandler):
++    async def _get_response_async(self, request):
++        print("_get_response_async called")
++        return HttpResponse("Test response")
++
++
++async def test_actual_django_flow():
++    # Create handler and load middleware
++    handler = DebugHandler()
++    handler.load_middleware(is_async=True)
++    
++    # Create a mock ASGI request
++    class MockRequest:
++        pass
++    
++    request = MockRequest()
++    
++    # Call the middleware chain
++    print("=== Starting middleware chain ===")
++    response = await handler._middleware_chain(request)
++    print(f"Final response: {type(response)}")
++
++
++if __name__ == "__main__":
++    loop = asyncio.new_event_loop()
++    asyncio.set_event_loop(loop)
++    loop.run_until_complete(test_actual_django_flow())

@@ -1,0 +1,354 @@
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index 79d7e4f46..857e411f3 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -271,7 +271,11 @@ class PyXrefMixin:
+                   contnode: Node = None, env: BuildEnvironment = None) -> Node:
+         result = super().make_xref(rolename, domain, target,  # type: ignore
+                                    innernode, contnode, env)
+-        result['refspecific'] = True
++        # Only set refspecific for unqualified names or names starting with '.'
++        # This ensures proper scoping: unqualified names are looked up first in the
++        # current module/class scope before checking other modules
++        if target.startswith('.') or '.' not in target:
++            result['refspecific'] = True
+         if target.startswith(('.', '~')):
+             prefix, result['reftarget'] = target[0], target[1:]
+             if prefix == '.':
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 000000000..e4d1bc70f
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,73 @@
++"""Debug script to understand the issue better."""
++import os
++import sys
++import tempfile
++import shutil
++from sphinx.application import Sphinx
++from sphinx.util.docutils import SphinxStandaloneReader
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create conf.py
++conf_content = """
++project = 'Test Project'
++extensions = []
++"""
++with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create a minimal test case
++index_content = """
++Test Documentation
++==================
++
++.. py:class:: mod.A
++
++.. py:class:: mod.submod.A
++
++.. py:currentmodule:: mod.submod
++
++.. py:function:: test()
++   
++   :param A a: This should resolve to mod.submod.A
++   :rtype: A
++"""
++with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Initialize Sphinx app
++app = Sphinx(srcdir=test_dir, confdir=test_dir, outdir=os.path.join(test_dir, '_build'),
++             doctreedir=os.path.join(test_dir, '.doctrees'), buildername='html')
++
++# Read and parse the document
++env = app.env
++docname = 'index'
++env.prepare_settings(docname)
++
++# Read source
++with open(os.path.join(test_dir, 'index.rst'), 'r') as f:
++    source = f.read()
++
++# Parse document
++reader = SphinxStandaloneReader()
++reader.setup(app)
++parser = app.registry.create_source_parser(app, 'restructuredtext')
++doc = reader.read(source, parser, {'source': os.path.join(test_dir, 'index.rst'), 'gettext_compact': True})
++
++# Process the document
++app.emit('doctree-read', doc, docname)
++
++# Check what objects are registered in the Python domain
++py_domain = env.domains['py']
++print("\nRegistered objects:")
++for name, obj in py_domain.objects.items():
++    print(f"  {name}: {obj}")
++
++print("\nCurrent module context during parsing:")
++# This would be set by py:currentmodule directive
++print(f"  py:module = {env.ref_context.get('py:module', 'None')}")
++
++# Clean up
++shutil.rmtree(test_dir)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..c8115cf1a
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,76 @@
++"""Test script to reproduce the issue with :type: and :rtype: cross-references."""
++import os
++import shutil
++import tempfile
++from sphinx.cmd.build import build_main
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create conf.py
++conf_content = """
++project = 'Test Project'
++extensions = []
++"""
++with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create index.rst with the problematic content
++index_content = """
++Test Documentation
++==================
++
++.. py:class:: mod.A
++.. py:class:: mod.submod.A
++
++.. py:function:: f()
++
++	- :py:class:`mod.A`
++	- :py:class:`mod.submod.A`
++
++	:param mod.A a:
++	:param mod.submod.A b:
++	:rtype: mod.A
++	:rtype: mod.submod.A
++
++.. py:currentmodule:: mod
++
++.. py:function:: f()
++
++	- :py:class:`A`
++	- :py:class:`mod.A`
++	- :py:class:`mod.submod.A`
++
++	:param A a:
++	:param mod.A b:
++	:param mod.submod.A c:
++	:rtype: A
++	:rtype: mod.A
++	:rtype: mod.submod.A
++
++.. py:currentmodule:: mod.submod
++
++.. py:function:: f()
++
++	- :py:class:`A`
++	- :py:class:`mod.A`
++	- :py:class:`mod.submod.A`
++
++	:param A a: BUG: links to mod.A instead of mod.submod.A
++	:param mod.A b:
++	:param mod.submod.A c:
++	:rtype: A
++	:rtype: mod.A
++	:rtype: mod.submod.A
++"""
++with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Build the documentation
++print("\nBuilding documentation...")
++result = build_main(['-b', 'html', test_dir, os.path.join(test_dir, '_build')])
++
++# Clean up
++shutil.rmtree(test_dir)
++print(f"\nBuild result: {result}")
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 000000000..d596a9598
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,50 @@
++"""Simple test to check if the fix works."""
++import os
++import shutil
++import tempfile
++from sphinx.cmd.build import build_main
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create conf.py
++conf_content = """
++project = 'Test Project'
++extensions = []
++"""
++with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create index.rst with a minimal case  
++index_content = """
++Test Documentation
++==================
++
++.. py:class:: mod.A
++   
++   Class A in module mod
++
++.. py:class:: mod.submod.A
++   
++   Class A in module mod.submod
++
++.. py:currentmodule:: mod.submod
++
++.. py:function:: test()
++   
++   Test function in mod.submod
++   
++   :param A a: Parameter of type A (should be mod.submod.A)
++   :rtype: A
++"""
++with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Build the documentation
++print("\nBuilding documentation...")
++result = build_main(['-b', 'html', test_dir, os.path.join(test_dir, '_build')])
++
++# Clean up
++shutil.rmtree(test_dir)
++print(f"\nBuild result: {result}")
+diff --git a/test_trace.py b/test_trace.py
+new file mode 100644
+index 000000000..907705953
+--- /dev/null
++++ b/test_trace.py
+@@ -0,0 +1,66 @@
++"""Test to trace what's happening."""
++# Patch the find_obj method to add debug output
++import sphinx.domains.python
++
++original_find_obj = sphinx.domains.python.PythonDomain.find_obj
++
++def patched_find_obj(self, env, modname, classname, name, type, searchmode=0):
++    print(f"\n[DEBUG] find_obj called:")
++    print(f"  modname={modname}, classname={classname}, name={name}")
++    print(f"  type={type}, searchmode={searchmode}")
++    print(f"  Available objects: {list(self.objects.keys())}")
++    
++    result = original_find_obj(self, env, modname, classname, name, type, searchmode)
++    print(f"  Result: {result}")
++    return result
++
++sphinx.domains.python.PythonDomain.find_obj = patched_find_obj
++
++# Now run the test
++import os
++import shutil
++import tempfile
++from sphinx.cmd.build import build_main
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++
++# Create conf.py
++conf_content = """
++project = 'Test Project'
++extensions = []
++"""
++with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create index.rst with a minimal case  
++index_content = """
++Test Documentation
++==================
++
++.. py:class:: mod.A
++   
++   Class A in module mod
++
++.. py:class:: mod.submod.A
++   
++   Class A in module mod.submod
++
++.. py:currentmodule:: mod.submod
++
++.. py:function:: test()
++   
++   Test function in mod.submod
++   
++   :param A a: Parameter of type A (should be mod.submod.A)
++   :rtype: A
++"""
++with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Build the documentation  
++print("\nBuilding documentation...")
++result = build_main(['-b', 'html', test_dir, os.path.join(test_dir, '_build')])
++
++# Clean up
++shutil.rmtree(test_dir)
+diff --git a/tox.ini b/tox.ini
+index dbb705a3a..9f4fc3a32 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

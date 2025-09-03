@@ -1,0 +1,22 @@
+diff --git a/lib/matplotlib/axis.py b/lib/matplotlib/axis.py
+index c0e706e2b3..b50ce671c0 100644
+--- a/lib/matplotlib/axis.py
++++ b/lib/matplotlib/axis.py
+@@ -2231,6 +2231,8 @@ class XAxis(Axis):
+     _tick_class = XTick
+ 
+     def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.offset_text.update({"color": mpl.rcParams["xtick.labelcolor"] if mpl.rcParams["xtick.labelcolor"] != "inherit" else mpl.rcParams["xtick.color"]})
+         super().__init__(*args, **kwargs)
+         self._init()
+ 
+@@ -2490,6 +2492,8 @@ class YAxis(Axis):
+     _tick_class = YTick
+ 
+     def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.offset_text.update({"color": mpl.rcParams["ytick.labelcolor"] if mpl.rcParams["ytick.labelcolor"] != "inherit" else mpl.rcParams["ytick.color"]})
+         super().__init__(*args, **kwargs)
+         self._init()
+ 

@@ -1,0 +1,117 @@
+diff --git a/sympy/matrices/expressions/__init__.py b/sympy/matrices/expressions/__init__.py
+index 08edef80f9..7482391657 100644
+--- a/sympy/matrices/expressions/__init__.py
++++ b/sympy/matrices/expressions/__init__.py
+@@ -4,7 +4,7 @@
+ from .blockmatrix import BlockMatrix, BlockDiagMatrix, block_collapse, blockcut
+ from .funcmatrix import FunctionMatrix
+ from .inverse import Inverse
+-from .matadd import MatAdd
++from .matadd import MatAdd, MatSub
+ from .matexpr import (Identity, MatrixExpr, MatrixSymbol, ZeroMatrix,
+      matrix_symbols)
+ from .matmul import MatMul
+diff --git a/sympy/matrices/expressions/matadd.py b/sympy/matrices/expressions/matadd.py
+index bef8e1e9ea..5666f973ba 100644
+--- a/sympy/matrices/expressions/matadd.py
++++ b/sympy/matrices/expressions/matadd.py
+@@ -62,6 +62,36 @@ def doit(self, **kwargs):
+         return canonicalize(MatAdd(*args))
+ 
+ 
++class MatSub(MatAdd):
++    """A Subtraction of Matrix Expressions
++
++    MatSub represents `A - B` as `A + (-1 * B)`
++    """
++    def __new__(cls, *args, **kwargs):
++        args = list(map(sympify, args))
++        if len(args) != 2:
++            raise ValueError("MatSub expects exactly two arguments")
++        return MatAdd(args[0], -args[1])
++
++    @property
++    def _args_print(self):
++        # For printing purposes, we want to show the subtraction
++        return self.args[0], self.args[1]
++
++    def _latex(self, printer):
++        return "%s - %s" % (printer._print(self.args[0]), printer._print(self.args[1]))
++
++    def _pretty(self, printer):
++        from sympy.printing.pretty.stringpict import prettyForm, stringPict
++        pform = printer._print(self.args[0])
++        pform = prettyForm(*pform.right(" - "))
++        pform = prettyForm(*pform.right(printer._print(self.args[1])))
++        return pform
++
++    def _sympystr(self, printer):
++        return "%s - %s" % (printer._print(self.args[0]), printer._print(self.args[1]))
++
++
+ def validate(*args):
+     if not all(arg.is_Matrix for arg in args):
+         raise TypeError("Mix of Matrix and Scalar symbols")
+diff --git a/sympy/matrices/expressions/matexpr.py b/sympy/matrices/expressions/matexpr.py
+index 07dd23549b..b8fb3a8977 100644
+--- a/sympy/matrices/expressions/matexpr.py
++++ b/sympy/matrices/expressions/matexpr.py
+@@ -97,7 +97,8 @@ def __radd__(self, other):
+     @_sympifyit('other', NotImplemented)
+     @call_highest_priority('__rsub__')
+     def __sub__(self, other):
+-        return MatAdd(self, -other).doit()
++        from .matadd import MatSub
++        return MatSub(self, other).doit()
+ 
+     @_sympifyit('other', NotImplemented)
+     @call_highest_priority('__sub__')
+diff --git a/sympy/matrices/expressions/tests/test_matsub.py b/sympy/matrices/expressions/tests/test_matsub.py
+new file mode 100644
+index 0000000000..e44d921b48
+--- /dev/null
++++ b/sympy/matrices/expressions/tests/test_matsub.py
+@@ -0,0 +1,43 @@
++from sympy.matrices import MatrixSymbol
++from sympy.matrices.expressions.matadd import MatAdd, MatSub
++import unittest
++
++class TestMatSub(unittest.TestCase):
++    def test_matsub_construction(self):
++        A = MatrixSymbol('A', 3, 3)
++        B = MatrixSymbol('B', 3, 3)
++        C = MatrixSymbol('C', 3, 3)
++
++        self.assertEqual(MatSub(A, B), MatAdd(A, -B))
++        self.assertEqual(MatSub(A, B).args, (A, B))
++        with self.assertRaises(ValueError):
++            MatSub(A, B, C)
++
++    def test_matsub_printing(self):
++        A = MatrixSymbol('A', 3, 3)
++        B = MatrixSymbol('B', 3, 3)
++        self.assertEqual(str(MatSub(A, B)), "A - B")
++
++    def test_matsub_latex(self):
++        A = MatrixSymbol('A', 3, 3)
++        B = MatrixSymbol('B', 3, 3)
++        self.assertEqual(MatSub(A, B)._latex(None), "A - B")
++
++    def test_matsub_shape(self):
++        A = MatrixSymbol('A', 3, 3)
++        B = MatrixSymbol('B', 3, 3)
++        self.assertEqual(MatSub(A, B).shape, (3, 3))
++
++        C = MatrixSymbol('C', 3, 4)
++        with self.assertRaises(ValueError):
++            MatSub(A, C)
++
++    def test_matsub_doit(self):
++        A = MatrixSymbol('A', 3, 3)
++        B = MatrixSymbol('B', 3, 3)
++        C = MatrixSymbol('C', 3, 3)
++        self.assertEqual(MatSub(A, B).doit(), MatAdd(A, -B))
++        self.assertEqual(MatSub(A, MatSub(B, C)).doit(), MatAdd(A, -B, C))
++
++if __name__ == '__main__':
++    unittest.main()

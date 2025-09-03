@@ -1,0 +1,75 @@
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index 8c4eae7906..fff2eca223 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -60,12 +60,12 @@ class Aggregate(Func):
+                     before_resolved = self.get_source_expressions()[index]
+                     name = before_resolved.name if hasattr(before_resolved, 'name') else repr(before_resolved)
+                     raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (c.name, name, name))
+-        if (default := c.default) is None:
+-            return c
+-        if hasattr(default, 'resolve_expression'):
+-            default = default.resolve_expression(query, allow_joins, reuse, summarize)
+-        c.default = None  # Reset the default argument before wrapping.
+-        return Coalesce(c, default, output_field=c._output_field_or_none)
++        if (default := c.default) is not None:
++            if hasattr(default, 'resolve_expression'):
++                default = default.resolve_expression(query, allow_joins, reuse, summarize)
++            c.default = None  # Reset the default argument before wrapping.
++            return Coalesce(c, default, output_field=c._output_field_or_none)
++        return c
+ 
+     @property
+     def default_alias(self):
+diff --git a/tests/aggregates/test_aggregate_default.py b/tests/aggregates/test_aggregate_default.py
+new file mode 100644
+index 0000000000..bcdb81a1a7
+--- /dev/null
++++ b/tests/aggregates/test_aggregate_default.py
+@@ -0,0 +1,32 @@
++from django.db import models
++from django.db.models import Sum, F
++from django.test import TestCase
++from django.test.utils import isolate_apps
++
++@isolate_apps('tests.db_functions')
++class AggregateDefaultTests(TestCase):
++    @classmethod
++    def setUpClass(cls):
++        super().setUpClass()
++
++        class Book(models.Model):
++            id = models.IntegerField(primary_key=True)
++
++        cls.Book = Book
++
++    @classmethod
++    def setUpTestData(cls):
++        cls.Book.objects.bulk_create([
++            cls.Book(id=1),
++            cls.Book(id=2),
++            cls.Book(id=3),
++        ])
++
++    def test_aggregate_with_default_after_annotate(self):
++        result = self.Book.objects.annotate(idx=F("id")).aggregate(Sum("id", default=0))
++        self.assertEqual(result, {'id__sum': 6})
++
++    def test_aggregate_with_default_no_results(self):
++        self.Book.objects.all().delete()
++        result = self.Book.objects.annotate(idx=F("id")).aggregate(Sum("id", default=0))
++        self.assertEqual(result, {'id__sum': 0})
+diff --git a/tests/runtests.py b/tests/runtests.py
+index 6bad838a95..f49c75f667 100755
+--- a/tests/runtests.py
++++ b/tests/runtests.py
+@@ -351,6 +351,9 @@ def django_tests(verbosity, interactive, failfast, keepdb, reverse,
+         print(msg)
+ 
+     test_labels, state = setup_run_tests(verbosity, start_at, start_after, test_labels)
++    # Add our custom test case
++    test_labels.append('tests.db_functions.test_aggregate_default')
++
+     # Run the test suite, including the extra validation tests.
+     if not hasattr(settings, 'TEST_RUNNER'):
+         settings.TEST_RUNNER = 'django.test.runner.DiscoverRunner'

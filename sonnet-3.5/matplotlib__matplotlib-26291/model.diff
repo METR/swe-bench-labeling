@@ -1,0 +1,38 @@
+diff --git a/lib/mpl_toolkits/axes_grid1/inset_locator.py b/lib/mpl_toolkits/axes_grid1/inset_locator.py
+index 9d35051074..fcde99cfc5 100644
+--- a/lib/mpl_toolkits/axes_grid1/inset_locator.py
++++ b/lib/mpl_toolkits/axes_grid1/inset_locator.py
+@@ -291,10 +291,15 @@ def _add_inset_axes(parent_axes, axes_class, axes_kwargs, axes_locator):
+ 
+ 
+ @_docstring.dedent_interpd
+-def inset_axes(parent_axes, width, height, loc='upper right',
++def inset_axes(parent_axes, width, height, loc="upper right",
+                bbox_to_anchor=None, bbox_transform=None,
+                axes_class=None, axes_kwargs=None,
+                borderpad=0.5):
++    from matplotlib.backends.backend_agg import FigureCanvasAgg
++    if not isinstance(parent_axes.figure.canvas, FigureCanvasAgg):
++        parent_axes.figure.canvas = FigureCanvasAgg(parent_axes.figure)
++    parent_axes.figure.canvas.draw()
++    renderer = parent_axes.figure.canvas.get_renderer()
+     """
+     Create an inset axes with a given width and height.
+ 
+diff --git a/test_inset_axes.png b/test_inset_axes.png
+new file mode 100644
+index 0000000000..2c6dfb2c86
+Binary files /dev/null and b/test_inset_axes.png differ
+diff --git a/test_inset_axes.py b/test_inset_axes.py
+new file mode 100644
+index 0000000000..f5ba014521
+--- /dev/null
++++ b/test_inset_axes.py
+@@ -0,0 +1,7 @@
++import matplotlib.pyplot as plt
++from mpl_toolkits.axes_grid1.inset_locator import inset_axes
++
++fig, (ax, ax2) = plt.subplots(1, 2, figsize=[5.5, 2.8])
++axins = inset_axes(ax, width=1.3, height=0.9)
++plt.savefig('test_inset_axes.png')
++print("Test completed successfully.")

@@ -1,0 +1,46 @@
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index c775d05c..3c8e6c2f 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -3768,26 +3768,24 @@ class Dataset(
+         coord_names.update({dim for dim in dims_dict.values() if dim in self.variables})
+ 
+         variables: dict[Hashable, Variable] = {}
+-        indexes: dict[Hashable, Index] = {}
+         for k, v in self.variables.items():
+-            dims = tuple(dims_dict.get(dim, dim) for dim in v.dims)
+-            if k in result_dims:
+-                var = v.to_index_variable()
+-                var.dims = dims
+-                if k in self._indexes:
+-                    indexes[k] = self._indexes[k]
+-                    variables[k] = var
+-                else:
+-                    index, index_vars = create_default_index_implicit(var)
+-                    indexes.update({name: index for name in index_vars})
+-                    variables.update(index_vars)
+-                    coord_names.update(index_vars)
++            new_dims = tuple(dims_dict.get(dim, dim) for dim in v.dims)
++            variables[k] = v.copy(deep=True).set_dims(new_dims)
++
++        indexes: dict[Hashable, Index] = {}
++        for k, v in self._indexes.items():
++            new_name = dims_dict.get(k, k)
++            if isinstance(v, PandasIndex):
++                indexes[new_name] = PandasIndex(v.index, new_name)
+             else:
+-                var = v.to_base_variable()
+-                var.dims = dims
+-                variables[k] = var
++                indexes[new_name] = v
+ 
+-        return self._replace_with_new_dims(variables, coord_names, indexes=indexes)
++        coord_names = set(self._coord_names)
++        coord_names.update(dims_dict.values())
++
++        return self._replace_vars_and_dims(
++            variables, coord_names=coord_names, dims=result_dims, indexes=indexes
++        )
+ 
+     # change type of self and return to T_Dataset once
+     # https://github.com/python/mypy/issues/12846 is resolved

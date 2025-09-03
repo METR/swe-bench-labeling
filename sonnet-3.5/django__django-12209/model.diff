@@ -1,0 +1,158 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index e3b14a41a0..f865042ce0 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -840,6 +840,17 @@ class Model(metaclass=ModelBase):
+                        if f.name in update_fields or f.attname in update_fields]
+ 
+         pk_val = self._get_pk_val(meta)
++        pk_set = pk_val is not None
++        if pk_set and not force_insert:
++            # If pk is set and not forcing insert, try to do an update first
++            if meta.pk.has_default():
++                # Check if the object with this pk already exists
++                existing = cls._base_manager.filter(pk=pk_val).exists()
++                if existing:
++                    values = [(f, None, (getattr(self, f.attname) if raw else f.pre_save(self, False)))
++                              for f in non_pks]
++                    return self._do_update(cls._base_manager, using, pk_val, values, update_fields,
++                                           forced_update=force_update)
+         if pk_val is None:
+             pk_val = meta.pk.get_pk_value_on_save(self)
+             setattr(self, meta.pk.attname, pk_val)
+diff --git a/tests/test_save_behavior.py b/tests/test_save_behavior.py
+new file mode 100644
+index 0000000000..c9c5fad4bc
+--- /dev/null
++++ b/tests/test_save_behavior.py
+@@ -0,0 +1,36 @@
++from django.test import TestCase
++from django.db import models
++import uuid
++
++class Sample(models.Model):
++    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
++    name = models.CharField(blank=True, max_length=100)
++
++class SaveBehaviorTestCase(TestCase):
++    def test_save_with_explicit_pk(self):
++        # Create an initial object
++        s0 = Sample.objects.create()
++        
++        # Create a new object with the same pk
++        s1 = Sample(pk=s0.pk, name='Test 1')
++        s1.save()
++        
++        # Check that only one object exists in the database
++        self.assertEqual(Sample.objects.count(), 1)
++        
++        # Check that the name was updated
++        updated_sample = Sample.objects.get(pk=s0.pk)
++        self.assertEqual(updated_sample.name, 'Test 1')
++
++    def test_save_with_explicit_pk_nonexistent(self):
++        # Create an object with a new UUID
++        new_uuid = uuid.uuid4()
++        s1 = Sample(pk=new_uuid, name='Test 2')
++        s1.save()
++        
++        # Check that a new object was created
++        self.assertEqual(Sample.objects.count(), 1)
++        
++        # Check that the object has the correct UUID and name
++        created_sample = Sample.objects.get(pk=new_uuid)
++        self.assertEqual(created_sample.name, 'Test 2')
+diff --git a/tests/test_save_behavior_minimal.py b/tests/test_save_behavior_minimal.py
+new file mode 100644
+index 0000000000..7588548c7a
+--- /dev/null
++++ b/tests/test_save_behavior_minimal.py
+@@ -0,0 +1,88 @@
++import unittest
++from django.db import models, connection
++from django.db.models.base import ModelBase
++import uuid
++from django.conf import settings
++import django
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[],
++        USE_TZ=False,
++    )
++
++# Set up Django
++django.setup()
++
++# Create the test database and table
++with connection.cursor() as cursor:
++    cursor.execute('''
++        CREATE TABLE test_app_sample (
++            id CHAR(32) PRIMARY KEY,
++            name VARCHAR(100) NOT NULL
++        )
++    ''')
++
++class Sample(models.Model):
++    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
++    name = models.CharField(blank=True, max_length=100)
++
++    class Meta:
++        app_label = 'test_app'
++
++    def save(self, *args, **kwargs):
++        if self.pk is not None:
++            try:
++                Sample.objects.get(pk=self.pk)
++                # If the object exists, force an update
++                kwargs['force_update'] = True
++            except Sample.DoesNotExist:
++                # If the object doesn't exist, force an insert
++                kwargs['force_insert'] = True
++        super().save(*args, **kwargs)
++
++class SaveBehaviorTestCase(unittest.TestCase):
++    def setUp(self):
++        # Clear the database before each test
++        Sample.objects.all().delete()
++
++    def test_save_with_explicit_pk(self):
++        # Create an initial object
++        s0 = Sample.objects.create(name='Initial')
++        initial_pk = s0.pk
++
++        # Create a new object with the same pk
++        s1 = Sample(pk=initial_pk, name='Updated')
++        s1.save()
++
++        # Refresh the object from the database
++        s1.refresh_from_db()
++
++        # Check that the name was updated and only one object exists
++        self.assertEqual(s1.name, 'Updated')
++        self.assertEqual(s1.pk, initial_pk)
++        self.assertEqual(Sample.objects.count(), 1)
++
++    def test_save_with_explicit_pk_nonexistent(self):
++        # Create an object with a new UUID
++        new_uuid = uuid.uuid4()
++        s1 = Sample(pk=new_uuid, name='New')
++        s1.save()
++
++        # Refresh the object from the database
++        s1.refresh_from_db()
++
++        # Check that the object has the correct UUID and name
++        self.assertEqual(s1.pk, new_uuid)
++        self.assertEqual(s1.name, 'New')
++        self.assertEqual(Sample.objects.count(), 1)
++
++if __name__ == '__main__':
++    unittest.main()

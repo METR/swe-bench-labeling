@@ -1,0 +1,24 @@
+diff --git a/docs/ref/validators.txt b/docs/ref/validators.txt
+index 50761e5a42..000a9096a3 100644
+--- a/docs/ref/validators.txt
++++ b/docs/ref/validators.txt
+@@ -13,6 +13,9 @@ A validator is a callable that takes a value and raises a
+ criteria. Validators can be useful for re-using validation logic between
+ different types of fields.
+ 
++Django's built-in validators now include the provided value in the ValidationError,
++allowing you to use it in custom error messages.
++
+ For example, here's a validator that only allows even numbers::
+ 
+     from django.core.exceptions import ValidationError
+@@ -25,6 +28,9 @@ For example, here's a validator that only allows even numbers::
+                 params={'value': value},
+             )
+ 
++Note that the `value` is automatically included in the `params` dictionary of the ValidationError,
++allowing you to use it in your error message with the `%(value)s` placeholder.
++
+ You can add this to a model field via the field's :attr:`~django.db.models.Field.validators`
+ argument::
+ 

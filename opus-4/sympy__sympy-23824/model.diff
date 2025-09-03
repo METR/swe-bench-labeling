@@ -1,0 +1,136 @@
+diff --git a/sympy/physics/hep/gamma_matrices.py b/sympy/physics/hep/gamma_matrices.py
+index 23284e4a92..bf43facfb1 100644
+--- a/sympy/physics/hep/gamma_matrices.py
++++ b/sympy/physics/hep/gamma_matrices.py
+@@ -694,7 +694,7 @@ def kahane_simplify(expression):
+ 
+     # If `first_dum_pos` is not zero, it means that there are trailing free gamma
+     # matrices in front of `expression`, so multiply by them:
+-    for i in range(0, first_dum_pos):
++    for i in range(first_dum_pos - 1, -1, -1):
+         [ri.insert(0, free_pos[i]) for ri in resulting_indices]
+ 
+     resulting_expr = S.Zero
+diff --git a/test_kahane_bug.py b/test_kahane_bug.py
+new file mode 100644
+index 0000000000..6b51e04103
+--- /dev/null
++++ b/test_kahane_bug.py
+@@ -0,0 +1,21 @@
++import sympy
++from sympy.physics.hep.gamma_matrices import GammaMatrix as G, gamma_trace, LorentzIndex
++from sympy.physics.hep.gamma_matrices import kahane_simplify
++from sympy.tensor.tensor import tensor_indices
++
++def test_kahane_leading_gamma_matrix_bug():
++    mu, nu, rho, sigma = tensor_indices("mu, nu, rho, sigma", LorentzIndex)
++    
++    t = G(mu)*G(-mu)*G(rho)*G(sigma)
++    r = kahane_simplify(t)
++    print("Test 1:", r)
++    assert r.equals(4*G(rho)*G(sigma))
++    
++    t = G(rho)*G(sigma)*G(mu)*G(-mu)
++    r = kahane_simplify(t)
++    print("Test 2:", r)
++    assert r.equals(4*G(rho)*G(sigma))
++
++if __name__ == "__main__":
++    test_kahane_leading_gamma_matrix_bug()
++    print("All tests passed!")
+diff --git a/test_kahane_comprehensive.py b/test_kahane_comprehensive.py
+new file mode 100644
+index 0000000000..cae38b2927
+--- /dev/null
++++ b/test_kahane_comprehensive.py
+@@ -0,0 +1,49 @@
++import sympy
++from sympy.physics.hep.gamma_matrices import GammaMatrix as G, LorentzIndex
++from sympy.physics.hep.gamma_matrices import kahane_simplify
++from sympy.tensor.tensor import tensor_indices
++
++def test_kahane_leading_gamma_matrix_comprehensive():
++    mu, nu, rho, sigma, tau = tensor_indices("mu, nu, rho, sigma, tau", LorentzIndex)
++    
++    # Test case 1: Two leading free matrices
++    t = G(rho)*G(sigma)*G(mu)*G(-mu)
++    r = kahane_simplify(t)
++    print("Test 1:", r)
++    assert r.equals(4*G(rho)*G(sigma))
++    
++    # Test case 2: Three leading free matrices
++    t = G(rho)*G(sigma)*G(tau)*G(mu)*G(-mu)
++    r = kahane_simplify(t)
++    print("Test 2:", r)
++    assert r.equals(4*G(rho)*G(sigma)*G(tau))
++    
++    # Test case 3: One leading free matrix
++    t = G(rho)*G(mu)*G(-mu)
++    r = kahane_simplify(t)
++    print("Test 3:", r)
++    assert r.equals(4*G(rho))
++    
++    # Test case 4: No leading free matrices (should work as before)
++    t = G(mu)*G(-mu)
++    r = kahane_simplify(t)
++    print("Test 4:", r)
++    # This should return 4*I_4 (identity matrix)
++    from sympy.matrices import eye
++    assert r.equals(4*eye(4))
++    
++    # Test case 5: Leading and trailing free matrices
++    t = G(rho)*G(sigma)*G(mu)*G(-mu)*G(tau)
++    r = kahane_simplify(t)
++    print("Test 5:", r)
++    assert r.equals(4*G(rho)*G(sigma)*G(tau))
++    
++    # Test case 6: Multiple contractions with leading free matrices
++    t = G(rho)*G(sigma)*G(mu)*G(-mu)*G(nu)*G(-nu)
++    r = kahane_simplify(t)
++    print("Test 6:", r)
++    assert r.equals(16*G(rho)*G(sigma))
++
++if __name__ == "__main__":
++    test_kahane_leading_gamma_matrix_comprehensive()
++    print("All comprehensive tests passed!")
+diff --git a/test_kahane_docstring_examples.py b/test_kahane_docstring_examples.py
+new file mode 100644
+index 0000000000..96f28e5457
+--- /dev/null
++++ b/test_kahane_docstring_examples.py
+@@ -0,0 +1,35 @@
++from sympy.physics.hep.gamma_matrices import GammaMatrix as G, LorentzIndex
++from sympy.physics.hep.gamma_matrices import kahane_simplify
++from sympy.tensor.tensor import tensor_indices
++from sympy.matrices import eye
++
++# Examples from the docstring
++i0, i1, i2 = tensor_indices('i0:3', LorentzIndex)
++
++print("Example 1:")
++ta = G(i0)*G(-i0)
++result = kahane_simplify(ta)
++print(result)
++print("Expected: 4*I_4")
++print()
++
++print("Example 2:")
++tb = G(i0)*G(i1)*G(-i0)
++result = kahane_simplify(tb)
++print(result)
++print("Expected: -2*GammaMatrix(i1)")
++print()
++
++print("Example 3:")
++t = G(i0)*G(-i0)
++result = kahane_simplify(t)
++print(result)
++print("Expected: 4*I_4")
++print()
++
++print("Example 4 (no contractions):")
++tc = G(i0)*G(i1)
++result = kahane_simplify(tc)
++print(result)
++print("Expected: GammaMatrix(i0)*GammaMatrix(i1)")
++print()

@@ -1,0 +1,130 @@
+From d5af43c8d1de7bc21e6e01f31e711c02a5059a5a Mon Sep 17 00:00:00 2001
+From: Hannes Ljungberg <hannes@5monkeys.se>
+Date: Thu, 7 Nov 2019 21:25:48 +0100
+Subject: [PATCH 1/2] Refs #30961 -- Added tests for columns list SQL generated
+ for indexes.
+
+---
+ tests/indexes/tests.py | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/tests/indexes/tests.py b/tests/indexes/tests.py
+index 588feaddff42..799146d6a8d0 100644
+--- a/tests/indexes/tests.py
++++ b/tests/indexes/tests.py
+@@ -75,6 +75,14 @@ def test_index_together_single_list(self):
+         index_sql = connection.schema_editor()._model_indexes_sql(IndexTogetherSingleList)
+         self.assertEqual(len(index_sql), 1)
+ 
++    def test_columns_list_sql(self):
++        index = Index(fields=['headline'], name='whitespace_idx')
++        editor = connection.schema_editor()
++        self.assertIn(
++            '(%s)' % editor.quote_name('headline'),
++            str(index.create_sql(Article, editor)),
++        )
++
+ 
+ @skipIf(connection.vendor == 'postgresql', 'opclasses are PostgreSQL only')
+ class SchemaIndexesNotPostgreSQLTests(TransactionTestCase):
+@@ -223,6 +231,18 @@ def test_ops_class_descending_partial(self):
+             cursor.execute(self.get_opclass_query % indexname)
+             self.assertCountEqual(cursor.fetchall(), [('text_pattern_ops', indexname)])
+ 
++    def test_ops_class_descending_columns_list_sql(self):
++        index = Index(
++            fields=['-headline'],
++            name='whitespace_idx',
++            opclasses=['text_pattern_ops'],
++        )
++        with connection.schema_editor() as editor:
++            self.assertIn(
++                '(%s text_pattern_ops DESC)' % editor.quote_name('headline'),
++                str(index.create_sql(Article, editor)),
++            )
++
+ 
+ @skipUnless(connection.vendor == 'mysql', 'MySQL tests')
+ class SchemaIndexesMySQLTests(TransactionTestCase):
+
+From 6d590bcf1ff1d66990d03f8ee288e18110bdd995 Mon Sep 17 00:00:00 2001
+From: Hannes Ljungberg <hannes@5monkeys.se>
+Date: Thu, 7 Nov 2019 21:26:08 +0100
+Subject: [PATCH 2/2] Fixed #30961 -- Fixed spaces in columns list SQL
+ generated for indexes.
+
+---
+ django/db/backends/ddl_references.py | 12 +++++++++---
+ tests/indexes/tests.py               | 20 ++++++++++++++++++++
+ 2 files changed, 29 insertions(+), 3 deletions(-)
+
+diff --git a/django/db/backends/ddl_references.py b/django/db/backends/ddl_references.py
+index 44e49806f815..ba55de1df8b2 100644
+--- a/django/db/backends/ddl_references.py
++++ b/django/db/backends/ddl_references.py
+@@ -83,10 +83,14 @@ def __init__(self, table, columns, quote_name, col_suffixes=()):
+ 
+     def __str__(self):
+         def col_str(column, idx):
++            col = self.quote_name(column)
+             try:
+-                return self.quote_name(column) + self.col_suffixes[idx]
++                suffix = self.col_suffixes[idx]
++                if suffix:
++                    col = '{} {}'.format(col, suffix)
+             except IndexError:
+-                return self.quote_name(column)
++                pass
++            return col
+ 
+         return ', '.join(col_str(column, idx) for idx, column in enumerate(self.columns))
+ 
+@@ -114,7 +118,9 @@ def col_str(column, idx):
+             # length as self.columns.
+             col = '{} {}'.format(self.quote_name(column), self.opclasses[idx])
+             try:
+-                col = '{} {}'.format(col, self.col_suffixes[idx])
++                suffix = self.col_suffixes[idx]
++                if suffix:
++                    col = '{} {}'.format(col, suffix)
+             except IndexError:
+                 pass
+             return col
+diff --git a/tests/indexes/tests.py b/tests/indexes/tests.py
+index 799146d6a8d0..04ab036139fc 100644
+--- a/tests/indexes/tests.py
++++ b/tests/indexes/tests.py
+@@ -83,6 +83,14 @@ def test_columns_list_sql(self):
+             str(index.create_sql(Article, editor)),
+         )
+ 
++    def test_descending_columns_list_sql(self):
++        index = Index(fields=['-headline'], name='whitespace_idx')
++        editor = connection.schema_editor()
++        self.assertIn(
++            '(%s DESC)' % editor.quote_name('headline'),
++            str(index.create_sql(Article, editor)),
++        )
++
+ 
+ @skipIf(connection.vendor == 'postgresql', 'opclasses are PostgreSQL only')
+ class SchemaIndexesNotPostgreSQLTests(TransactionTestCase):
+@@ -231,6 +239,18 @@ def test_ops_class_descending_partial(self):
+             cursor.execute(self.get_opclass_query % indexname)
+             self.assertCountEqual(cursor.fetchall(), [('text_pattern_ops', indexname)])
+ 
++    def test_ops_class_columns_lists_sql(self):
++        index = Index(
++            fields=['headline'],
++            name='whitespace_idx',
++            opclasses=['text_pattern_ops'],
++        )
++        with connection.schema_editor() as editor:
++            self.assertIn(
++                '(%s text_pattern_ops)' % editor.quote_name('headline'),
++                str(index.create_sql(Article, editor)),
++            )
++
+     def test_ops_class_descending_columns_list_sql(self):
+         index = Index(
+             fields=['-headline'],

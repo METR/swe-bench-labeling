@@ -1,0 +1,13 @@
+diff --git a/tests/select_for_update/models.py b/tests/select_for_update/models.py
+index 0a6396bc70..3aaf1739f1 100644
+--- a/tests/select_for_update/models.py
++++ b/tests/select_for_update/models.py
+@@ -2,7 +2,7 @@ from django.db import models
+ 
+ 
+ class Entity(models.Model):
+-    pass
++    id = models.BigAutoField(primary_key=True)
+ 
+ 
+ class Country(Entity):

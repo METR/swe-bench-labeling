@@ -1,0 +1,373 @@
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 03cd8af8d7..4cc3133ca0 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -200,6 +200,7 @@ class Field:
+         memo[id(self)] = result
+         result.widget = copy.deepcopy(self.widget, memo)
+         result.validators = self.validators[:]
++        result.error_messages = copy.deepcopy(self.error_messages, memo)
+         return result
+ 
+ 
+diff --git a/test_deepcopy_comprehensive.py b/test_deepcopy_comprehensive.py
+new file mode 100644
+index 0000000000..bd145443a3
+--- /dev/null
++++ b/test_deepcopy_comprehensive.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        SECRET_KEY='test-key',
++    )
++    django.setup()
++
++import copy
++from django.forms import CharField, IntegerField, EmailField, Form, ModelForm
++from django.core.exceptions import ValidationError
++
++# Test case 1: Basic deepcopy with custom error messages
++print("Test 1: Basic deepcopy with custom error messages")
++field1 = CharField(error_messages={'required': 'Original message', 'invalid': 'Invalid input'})
++field2 = copy.deepcopy(field1)
++
++# Modify the error message in field2
++field2.error_messages['required'] = 'Modified message'
++field2.error_messages['new_error'] = 'New error message'
++
++print(f"field1 error_messages: {field1.error_messages}")
++print(f"field2 error_messages: {field2.error_messages}")
++print(f"field1 has 'new_error'? {'new_error' in field1.error_messages}")
++print()
++
++# Test case 2: Ensure default error messages are preserved
++print("Test 2: Default error messages preservation")
++int_field1 = IntegerField()
++int_field2 = copy.deepcopy(int_field1)
++
++# Modify error message in field2
++int_field2.error_messages['invalid'] = 'Custom invalid number message'
++
++print(f"int_field1 'invalid' message: {int_field1.error_messages.get('invalid', 'NOT FOUND')}")
++print(f"int_field2 'invalid' message: {int_field2.error_messages.get('invalid', 'NOT FOUND')}")
++print()
++
++# Test case 3: Nested dictionary modifications
++print("Test 3: Complex error message structure")
++field3 = CharField(error_messages={'required': {'code': 'REQ001', 'message': 'Field is required'}})
++field4 = copy.deepcopy(field3)
++
++# Modify nested structure
++if isinstance(field4.error_messages['required'], dict):
++    field4.error_messages['required']['code'] = 'REQ002'
++
++print(f"field3 error_messages: {field3.error_messages}")
++print(f"field4 error_messages: {field4.error_messages}")
++print()
++
++# Test case 4: Form fields isolation
++print("Test 4: Form fields isolation")
++class TestForm(Form):
++    name = CharField(error_messages={'required': 'Name is required'})
++    email = EmailField(error_messages={'invalid': 'Invalid email'})
++
++form1 = TestForm()
++form2 = TestForm()
++
++# Modify the error messages in form2
++form2.fields['name'].error_messages['required'] = 'Modified: Name is required'
++form2.fields['email'].error_messages['invalid'] = 'Modified: Invalid email'
++
++print(f"form1 name required: {form1.fields['name'].error_messages['required']}")
++print(f"form2 name required: {form2.fields['name'].error_messages['required']}")
++print(f"form1 email invalid: {form1.fields['email'].error_messages['invalid']}")
++print(f"form2 email invalid: {form2.fields['email'].error_messages['invalid']}")
++print()
++
++# Test case 5: Validators still work correctly
++print("Test 5: Validators functionality")
++field5 = IntegerField(min_value=0, max_value=100)
++field6 = copy.deepcopy(field5)
++
++try:
++    field5.clean(-1)
++except ValidationError as e:
++    print(f"field5 validation error: {e}")
++
++try:
++    field6.clean(101)
++except ValidationError as e:
++    print(f"field6 validation error: {e}")
++
++print()
++
++# Test case 6: Widget deepcopy still works
++print("Test 6: Widget deepcopy verification")
++field7 = CharField(widget=CharField.widget(attrs={'class': 'custom-class'}))
++field8 = copy.deepcopy(field7)
++
++field8.widget.attrs['class'] = 'modified-class'
++
++print(f"field7 widget class: {field7.widget.attrs.get('class', 'NO CLASS')}")
++print(f"field8 widget class: {field8.widget.attrs.get('class', 'NO CLASS')}")
+diff --git a/test_deepcopy_issue.py b/test_deepcopy_issue.py
+new file mode 100644
+index 0000000000..bc26cdb6a7
+--- /dev/null
++++ b/test_deepcopy_issue.py
+@@ -0,0 +1,44 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        SECRET_KEY='test-key',
++    )
++    django.setup()
++
++import copy
++from django.forms import CharField, Form
++
++# Test case 1: Direct field deepcopy
++field1 = CharField(error_messages={'required': 'Original message'})
++field2 = copy.deepcopy(field1)
++
++# Modify the error message in field2
++field2.error_messages['required'] = 'Modified message'
++
++print("Test 1 - Direct field deepcopy:")
++print(f"field1 error_messages: {field1.error_messages}")
++print(f"field2 error_messages: {field2.error_messages}")
++print(f"Same dictionary? {field1.error_messages is field2.error_messages}")
++print()
++
++# Test case 2: Form fields
++class TestForm(Form):
++    name = CharField(error_messages={'required': 'Name is required'})
++
++form1 = TestForm()
++form2 = TestForm()
++
++# Modify the error message in form2
++form2.fields['name'].error_messages['required'] = 'Modified: Name is required'
++
++print("Test 2 - Form fields:")
++print(f"form1.fields['name'].error_messages: {form1.fields['name'].error_messages}")
++print(f"form2.fields['name'].error_messages: {form2.fields['name'].error_messages}")
++print(f"Same dictionary? {form1.fields['name'].error_messages is form2.fields['name'].error_messages}")
+diff --git a/test_field_deepcopy.py b/test_field_deepcopy.py
+new file mode 100644
+index 0000000000..25166d7ab6
+--- /dev/null
++++ b/test_field_deepcopy.py
+@@ -0,0 +1,127 @@
++"""
++Test for form field deepcopy fix - ensuring error_messages are properly deep copied
++"""
++import os
++import sys
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++import django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_I18N=True,
++        SECRET_KEY='test',
++    )
++    django.setup()
++
++import copy
++from django.test import TestCase
++from django.forms import CharField, IntegerField, Form
++
++
++class FieldDeepCopyTest(TestCase):
++    """Test that form field deepcopy properly handles error_messages"""
++    
++    def test_deepcopy_error_messages_isolation(self):
++        """Test that error_messages are properly isolated after deepcopy"""
++        field1 = CharField(error_messages={'required': 'Original message'})
++        field2 = copy.deepcopy(field1)
++        
++        # Modify field2's error message
++        field2.error_messages['required'] = 'Modified message'
++        
++        # Assert that field1's error message is unchanged
++        self.assertEqual(field1.error_messages['required'], 'Original message')
++        self.assertEqual(field2.error_messages['required'], 'Modified message')
++        self.assertIsNot(field1.error_messages, field2.error_messages)
++    
++    def test_deepcopy_nested_error_messages(self):
++        """Test that nested structures in error_messages are properly deep copied"""
++        field1 = CharField(error_messages={'required': {'code': 'REQ001', 'text': 'Required'}})
++        field2 = copy.deepcopy(field1)
++        
++        # Modify nested structure
++        field2.error_messages['required']['code'] = 'REQ002'
++        
++        # Assert original is unchanged
++        self.assertEqual(field1.error_messages['required']['code'], 'REQ001')
++        self.assertEqual(field2.error_messages['required']['code'], 'REQ002')
++    
++    def test_form_instances_have_isolated_error_messages(self):
++        """Test that different form instances have isolated field error messages"""
++        class TestForm(Form):
++            name = CharField(error_messages={'required': 'Name is required'})
++        
++        form1 = TestForm()
++        form2 = TestForm()
++        
++        # Modify form2's field error message
++        form2.fields['name'].error_messages['required'] = 'Modified: Name is required'
++        
++        # Assert form1 is unchanged
++        self.assertEqual(form1.fields['name'].error_messages['required'], 'Name is required')
++        self.assertEqual(form2.fields['name'].error_messages['required'], 'Modified: Name is required')
++    
++    def test_default_error_messages_preserved(self):
++        """Test that default error messages are preserved and isolated"""
++        field1 = IntegerField()
++        field2 = copy.deepcopy(field1)
++        
++        # Get the default invalid message
++        default_msg = field1.error_messages.get('invalid')
++        self.assertIsNotNone(default_msg)
++        
++        # Modify field2's error message
++        field2.error_messages['invalid'] = 'Custom invalid message'
++        
++        # Assert field1 still has default
++        self.assertEqual(field1.error_messages['invalid'], default_msg)
++        self.assertEqual(field2.error_messages['invalid'], 'Custom invalid message')
++    
++    def test_widget_deepcopy_still_works(self):
++        """Test that widget deepcopy functionality is not affected"""
++        from django.forms.widgets import TextInput
++        
++        field1 = CharField(widget=TextInput(attrs={'class': 'original'}))
++        field2 = copy.deepcopy(field1)
++        
++        # Modify field2's widget
++        field2.widget.attrs['class'] = 'modified'
++        
++        # Assert widgets are isolated
++        self.assertEqual(field1.widget.attrs['class'], 'original')
++        self.assertEqual(field2.widget.attrs['class'], 'modified')
++        self.assertIsNot(field1.widget, field2.widget)
++    
++    def test_validators_still_copied_correctly(self):
++        """Test that validators list is still shallow copied as expected"""
++        from django.core.validators import MinValueValidator, MaxValueValidator
++        
++        field1 = IntegerField(min_value=0, max_value=100)
++        field2 = copy.deepcopy(field1)
++        
++        # Both fields should have validators
++        self.assertTrue(any(isinstance(v, MinValueValidator) for v in field1.validators))
++        self.assertTrue(any(isinstance(v, MaxValueValidator) for v in field1.validators))
++        self.assertTrue(any(isinstance(v, MinValueValidator) for v in field2.validators))
++        self.assertTrue(any(isinstance(v, MaxValueValidator) for v in field2.validators))
++        
++        # Validators list should be different instances
++        self.assertIsNot(field1.validators, field2.validators)
++
++
++if __name__ == '__main__':
++    import unittest
++    unittest.main()
+diff --git a/test_modelform_deepcopy.py b/test_modelform_deepcopy.py
+new file mode 100644
+index 0000000000..999f91d0a3
+--- /dev/null
++++ b/test_modelform_deepcopy.py
+@@ -0,0 +1,64 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_I18N=True,
++        SECRET_KEY='test-key',
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++from django.db import models
++from django.forms import ModelForm
++
++# Create a simple model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    email = models.EmailField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create a ModelForm
++class TestModelForm(ModelForm):
++    class Meta:
++        model = TestModel
++        fields = ['name', 'email']
++        error_messages = {
++            'name': {
++                'required': 'Name is required',
++            },
++            'email': {
++                'invalid': 'Invalid email address',
++            }
++        }
++
++# Test ModelForm instances
++form1 = TestModelForm()
++form2 = TestModelForm()
++
++print("Initial error messages:")
++print(f"form1 name required: {form1.fields['name'].error_messages.get('required', 'NOT SET')}")
++print(f"form2 name required: {form2.fields['name'].error_messages.get('required', 'NOT SET')}")
++
++# Modify form2's error message
++form2.fields['name'].error_messages['required'] = 'Modified: Name is required'
++
++print("\nAfter modification:")
++print(f"form1 name required: {form1.fields['name'].error_messages.get('required', 'NOT SET')}")
++print(f"form2 name required: {form2.fields['name'].error_messages.get('required', 'NOT SET')}")
++print(f"Same dictionary? {form1.fields['name'].error_messages is form2.fields['name'].error_messages}")

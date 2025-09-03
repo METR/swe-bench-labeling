@@ -1,0 +1,87 @@
+From efce21497cc21140c5fe2b133064cd815c97b3f5 Mon Sep 17 00:00:00 2001
+From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
+Date: Thu, 18 Feb 2021 21:32:38 +0100
+Subject: [PATCH 1/2] Refs #32455 -- Added tests for left combining an empty
+ Q() with boolean expressions.
+
+---
+ tests/expressions/tests.py | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index 08ea0a51d350..770a57d66ec1 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -816,6 +816,18 @@ def test_boolean_expression_combined(self):
+             [self.example_inc.ceo, self.max],
+         )
+ 
++    def test_boolean_expression_combined_with_empty_Q(self):
++        is_poc = Company.objects.filter(point_of_contact=OuterRef('pk'))
++        self.gmbh.point_of_contact = self.max
++        self.gmbh.save()
++        tests = [
++            Exists(is_poc) & Q(),
++            Exists(is_poc) | Q(),
++        ]
++        for conditions in tests:
++            with self.subTest(conditions):
++                self.assertCountEqual(Employee.objects.filter(conditions), [self.max])
++
+ 
+ class IterableLookupInnerExpressionsTests(TestCase):
+     @classmethod
+
+From f2bef2b7bc6c817af0f5fa77e1052a1f5ce12f71 Mon Sep 17 00:00:00 2001
+From: Hasan Ramezani <hasan.r67@gmail.com>
+Date: Thu, 18 Feb 2021 14:01:48 +0100
+Subject: [PATCH 2/2] Fixed #32455 -- Allowed right combining Q() with boolean
+ expressions.
+
+---
+ django/db/models/query_utils.py |  2 +-
+ tests/expressions/tests.py      | 10 ++++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index c957ffa5648c..ae0f8861075c 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -40,7 +40,7 @@ def __init__(self, *args, _connector=None, _negated=False, **kwargs):
+         super().__init__(children=[*args, *sorted(kwargs.items())], connector=_connector, negated=_negated)
+ 
+     def _combine(self, other, conn):
+-        if not isinstance(other, Q):
++        if not(isinstance(other, Q) or getattr(other, 'conditional', False) is True):
+             raise TypeError(other)
+ 
+         # If the other Q() is empty, ignore it and just use `self`.
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index 770a57d66ec1..9ecc033b6b2b 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -815,6 +815,14 @@ def test_boolean_expression_combined(self):
+             Employee.objects.filter(Exists(is_poc) | Q(salary__lt=15)),
+             [self.example_inc.ceo, self.max],
+         )
++        self.assertCountEqual(
++            Employee.objects.filter(Q(salary__gte=30) & Exists(is_ceo)),
++            [self.max],
++        )
++        self.assertCountEqual(
++            Employee.objects.filter(Q(salary__lt=15) | Exists(is_poc)),
++            [self.example_inc.ceo, self.max],
++        )
+ 
+     def test_boolean_expression_combined_with_empty_Q(self):
+         is_poc = Company.objects.filter(point_of_contact=OuterRef('pk'))
+@@ -822,7 +830,9 @@ def test_boolean_expression_combined_with_empty_Q(self):
+         self.gmbh.save()
+         tests = [
+             Exists(is_poc) & Q(),
++            Q() & Exists(is_poc),
+             Exists(is_poc) | Q(),
++            Q() | Exists(is_poc),
+         ]
+         for conditions in tests:
+             with self.subTest(conditions):

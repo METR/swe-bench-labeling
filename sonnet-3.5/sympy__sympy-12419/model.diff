@@ -1,0 +1,86 @@
+diff --git a/sympy/concrete/summations.py b/sympy/concrete/summations.py
+index 372487664c..b57b6e4f6c 100644
+--- a/sympy/concrete/summations.py
++++ b/sympy/concrete/summations.py
+@@ -174,6 +174,18 @@ def doit(self, **hints):
+         else:
+             f = self.function
+ 
++        if hasattr(self, 'has_empty_sequence') and self.has_empty_sequence:
++            return S.Zero
++
++        if hasattr(f, '_eval_sum_all_elements'):
++            return f._eval_sum_all_elements()
++
++        if f.is_Matrix and len(self.limits) == 2:
++            i, i_lower, i_upper = self.limits[0]
++            j, j_lower, j_upper = self.limits[1]
++            if (i_lower, i_upper) == (0, f.rows - 1) and (j_lower, j_upper) == (0, f.cols - 1):
++                return f._eval_sum_all_elements()
++
+         if self.function.is_Matrix:
+             return self.expand().doit()
+ 
+diff --git a/sympy/matrices/expressions/matexpr.py b/sympy/matrices/expressions/matexpr.py
+index b4d759836e..5ae3eacb19 100644
+--- a/sympy/matrices/expressions/matexpr.py
++++ b/sympy/matrices/expressions/matexpr.py
+@@ -100,6 +100,12 @@ def __sub__(self, other):
+     def __rsub__(self, other):
+         return MatAdd(other, -self).doit()
+ 
++    def _eval_sum_all_elements(self):
++        from sympy import Sum, Symbol
++        i = Symbol('i', integer=True)
++        j = Symbol('j', integer=True)
++        return Sum(self[i, j], (i, 0, self.rows - 1), (j, 0, self.cols - 1))
++
+     @_sympifyit('other', NotImplemented)
+     @call_highest_priority('__rmul__')
+     def __mul__(self, other):
+@@ -227,6 +233,14 @@ def is_valid(idx):
+                 (0 <= i) != False and (i < self.rows) != False and
+                 (0 <= j) != False and (j < self.cols) != False)
+ 
++    def _eval_sum_all_elements(self):
++        from sympy import Sum, Symbol, Piecewise, Eq
++        i = Symbol('i', integer=True)
++        j = Symbol('j', integer=True)
++        if self.is_Identity:
++            return self.rows
++        return Sum(Piecewise((1, Eq(i, j)), (0, True)), (i, 0, self.rows - 1), (j, 0, self.cols - 1))
++
+     def __getitem__(self, key):
+         if not isinstance(key, tuple) and isinstance(key, slice):
+             from sympy.matrices.expressions.slice import MatrixSlice
+diff --git a/test_matrix_sum.py b/test_matrix_sum.py
+new file mode 100644
+index 0000000000..e547b95f26
+--- /dev/null
++++ b/test_matrix_sum.py
+@@ -0,0 +1,25 @@
++from sympy import *
++from sympy import Q as Query
++
++n = Symbol('n', integer=True, positive=True)
++i, j = symbols('i j', integer=True)
++M = MatrixSymbol('M', n, n)
++
++e = None
++with assuming(Query.orthogonal(M)):
++    e = refine((M.T * M).doit())
++
++# Correct: M.T * M is an identity matrix.
++print(e, e[0, 0], e[0, 1], e[1, 0], e[1, 1])
++
++# Correct: The output is True True
++print(ask(Query.diagonal(e)), ask(Query.integer_elements(e)))
++
++# Correct: The sum of the diagonal elements is n
++print(Sum(e[i, i], (i, 0, n-1)).doit())
++
++# Total sum of the elements
++print(Sum(Sum(e[i, j], (i, 0, n-1)), (j, 0, n-1)).doit())
++
++# Direct sum using _eval_sum_all_elements
++print(e._eval_sum_all_elements().doit())

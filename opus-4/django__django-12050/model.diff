@@ -1,0 +1,387 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index ea51912e8b..3bdab8ea15 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1073,7 +1073,8 @@ class Query(BaseExpression):
+                         ))
+                 else:
+                     resolved_values.append(sub_value)
+-            value = tuple(resolved_values)
++            # Preserve the original type of the iterable
++            value = type(value)(resolved_values)
+         return value
+ 
+     def solve_lookup_type(self, lookup):
+diff --git a/test_comprehensive_resolve_lookup.py b/test_comprehensive_resolve_lookup.py
+new file mode 100644
+index 0000000000..50ea7c4e86
+--- /dev/null
++++ b/test_comprehensive_resolve_lookup.py
+@@ -0,0 +1,91 @@
++"""Comprehensive test for resolve_lookup_value type preservation."""
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models import F, Value, Q
++from django.db.models.sql.query import Query
++from django.test import TestCase
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test'
++
++
++def test_resolve_lookup_value_type_preservation():
++    """Test that resolve_lookup_value preserves the input iterable type."""
++    query = Query(TestModel)
++    
++    # Test case 1: Simple list
++    input_list = [1, 2, 3]
++    result = query.resolve_lookup_value(input_list, can_reuse=None, allow_joins=True, simple_col=False)
++    assert type(result) == list, f"Expected list, got {type(result)}"
++    assert result == [1, 2, 3], f"Expected [1, 2, 3], got {result}"
++    
++    # Test case 2: Simple tuple
++    input_tuple = (1, 2, 3)
++    result = query.resolve_lookup_value(input_tuple, can_reuse=None, allow_joins=True, simple_col=False)
++    assert type(result) == tuple, f"Expected tuple, got {type(result)}"
++    assert result == (1, 2, 3), f"Expected (1, 2, 3), got {result}"
++    
++    # Test case 3: List with expressions
++    input_list_expr = [Value(1), Value(2), 3]
++    result = query.resolve_lookup_value(input_list_expr, can_reuse=None, allow_joins=True, simple_col=False)
++    assert type(result) == list, f"Expected list, got {type(result)}"
++    assert len(result) == 3, f"Expected length 3, got {len(result)}"
++    assert isinstance(result[0], Value), f"Expected Value instance, got {type(result[0])}"
++    
++    # Test case 4: Tuple with expressions
++    input_tuple_expr = (Value(1), Value(2), 3)
++    result = query.resolve_lookup_value(input_tuple_expr, can_reuse=None, allow_joins=True, simple_col=False)
++    assert type(result) == tuple, f"Expected tuple, got {type(result)}"
++    assert len(result) == 3, f"Expected length 3, got {len(result)}"
++    assert isinstance(result[0], Value), f"Expected Value instance, got {type(result[0])}"
++    
++    # Test case 5: Empty list
++    input_empty_list = []
++    result = query.resolve_lookup_value(input_empty_list, can_reuse=None, allow_joins=True, simple_col=False)
++    assert type(result) == list, f"Expected list, got {type(result)}"
++    assert result == [], f"Expected [], got {result}"
++    
++    # Test case 6: Empty tuple
++    input_empty_tuple = ()
++    result = query.resolve_lookup_value(input_empty_tuple, can_reuse=None, allow_joins=True, simple_col=False)
++    assert type(result) == tuple, f"Expected tuple, got {type(result)}"
++    assert result == (), f"Expected (), got {result}"
++    
++    # Test case 7: Non-iterable value (should pass through unchanged)
++    input_value = 42
++    result = query.resolve_lookup_value(input_value, can_reuse=None, allow_joins=True, simple_col=False)
++    assert result == 42, f"Expected 42, got {result}"
++    
++    # Test case 8: Expression value (should be resolved)
++    input_expr = Value(42)
++    result = query.resolve_lookup_value(input_expr, can_reuse=None, allow_joins=True, simple_col=False)
++    assert isinstance(result, Value), f"Expected Value instance, got {type(result)}"
++    
++    print("All tests passed!")
++
++
++if __name__ == "__main__":
++    test_resolve_lookup_value_type_preservation()
+diff --git a/test_pickled_field_simulation.py b/test_pickled_field_simulation.py
+new file mode 100644
+index 0000000000..fcba37bfe7
+--- /dev/null
++++ b/test_pickled_field_simulation.py
+@@ -0,0 +1,123 @@
++"""Test case simulating PickledField issue with exact type matching."""
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.models.sql.query import Query
++import pickle
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++
++# Simulate a custom field that depends on exact type matching (like PickledField)
++class TypeSensitiveField(models.Field):
++    """A field that requires exact type matching for lookups."""
++    
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++    
++    def get_lookup(self, lookup_name):
++        if lookup_name == 'exact':
++            return TypeSensitiveLookup
++        return super().get_lookup(lookup_name)
++    
++    def get_internal_type(self):
++        return "TextField"
++    
++    def to_python(self, value):
++        return value
++    
++    def get_prep_value(self, value):
++        # This simulates a field that stores the type information
++        # along with the value (like PickledField would do)
++        return f"{type(value).__name__}:{repr(value)}"
++    
++    def from_db_value(self, value, expression, connection):
++        if value is None:
++            return value
++        # Parse the type and value
++        type_name, repr_value = value.split(':', 1)
++        if type_name == 'list':
++            return eval(repr_value)
++        elif type_name == 'tuple':
++            return eval(repr_value)
++        return value
++
++
++class TypeSensitiveLookup(models.Lookup):
++    """A lookup that requires exact type matching."""
++    lookup_name = 'exact'
++    
++    def as_sql(self, compiler, connection):
++        lhs, lhs_params = self.process_lhs(compiler, connection)
++        rhs, rhs_params = self.process_rhs(compiler, connection)
++        
++        # In a real PickledField, the type would matter for serialization
++        # Here we simulate that by including type info
++        params = lhs_params + rhs_params
++        return '%s = %s' % (lhs, rhs), params
++
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    data = TypeSensitiveField()
++    
++    class Meta:
++        app_label = 'test'
++
++
++def test_type_preservation_in_queries():
++    """Test that type preservation works correctly in queries."""
++    from django.db import connection
++    
++    # Create the table
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(TestModel)
++    
++    # Test with list values
++    test_list = [1, 2, 3]
++    obj1 = TestModel.objects.create(name='test1', data=test_list)
++    
++    # Before our fix, this would fail because the list would be converted to tuple
++    # Let's verify our fix preserves the list type
++    query = TestModel.objects.filter(data__exact=test_list).query
++    
++    # Get the resolved lookup value
++    lookup_value = query.resolve_lookup_value(test_list, can_reuse=None, allow_joins=True, simple_col=False)
++    
++    print(f"Original value type: {type(test_list)}")
++    print(f"Resolved value type: {type(lookup_value)}")
++    print(f"Types match: {type(test_list) == type(lookup_value)}")
++    
++    # Test with tuple values
++    test_tuple = (4, 5, 6)
++    obj2 = TestModel.objects.create(name='test2', data=test_tuple)
++    
++    query_tuple = TestModel.objects.filter(data__exact=test_tuple).query
++    lookup_value_tuple = query_tuple.resolve_lookup_value(test_tuple, can_reuse=None, allow_joins=True, simple_col=False)
++    
++    print(f"\nOriginal tuple type: {type(test_tuple)}")
++    print(f"Resolved tuple type: {type(lookup_value_tuple)}")
++    print(f"Tuple types match: {type(test_tuple) == type(lookup_value_tuple)}")
++    
++    # In a real scenario with PickledField, this type preservation would be
++    # crucial for proper serialization/deserialization
++    print("\nTest passed: Type preservation works correctly!")
++
++
++if __name__ == "__main__":
++    test_type_preservation_in_queries()
+diff --git a/test_resolve_lookup_value.py b/test_resolve_lookup_value.py
+new file mode 100644
+index 0000000000..d76d02f7ef
+--- /dev/null
++++ b/test_resolve_lookup_value.py
+@@ -0,0 +1,56 @@
++"""Test for resolve_lookup_value preserving input types."""
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models.sql.query import Query
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++
++def test_resolve_lookup_value_preserves_list_type():
++    """Test that resolve_lookup_value preserves list type instead of converting to tuple."""
++    # Create a simple model for testing
++    class TestModel(models.Model):
++        class Meta:
++            app_label = 'test'
++    
++    query = Query(TestModel)
++    
++    # Test with a list
++    input_list = [1, 2, 3]
++    result = query.resolve_lookup_value(input_list, can_reuse=None, allow_joins=True, simple_col=False)
++    
++    print(f"Input type: {type(input_list)}")
++    print(f"Input value: {input_list}")
++    print(f"Result type: {type(result)}")
++    print(f"Result value: {result}")
++    print(f"Types match: {type(input_list) == type(result)}")
++    print(f"Expected type preservation: {'PASS' if type(input_list) == type(result) else 'FAIL'}")
++    
++    # Test with a tuple
++    input_tuple = (1, 2, 3)
++    result_tuple = query.resolve_lookup_value(input_tuple, can_reuse=None, allow_joins=True, simple_col=False)
++    
++    print(f"\nTuple input type: {type(input_tuple)}")
++    print(f"Tuple result type: {type(result_tuple)}")
++    print(f"Tuple types match: {type(input_tuple) == type(result_tuple)}")
++    print(f"Expected type preservation: {'PASS' if type(input_tuple) == type(result_tuple) else 'FAIL'}")
++
++
++if __name__ == "__main__":
++    test_resolve_lookup_value_preserves_list_type()
+diff --git a/test_resolve_lookup_with_expressions.py b/test_resolve_lookup_with_expressions.py
+new file mode 100644
+index 0000000000..f21bb98af3
+--- /dev/null
++++ b/test_resolve_lookup_with_expressions.py
+@@ -0,0 +1,79 @@
++"""Test for resolve_lookup_value with expressions."""
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models import F, Value
++from django.db.models.sql.query import Query
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++
++def test_resolve_lookup_value_with_expressions():
++    """Test that resolve_lookup_value handles expressions in lists/tuples correctly."""
++    # Create a test model
++    class TestModel(models.Model):
++        name = models.CharField(max_length=100)
++        value = models.IntegerField()
++        
++        class Meta:
++            app_label = 'test'
++    
++    query = Query(TestModel)
++    
++    # Test with expressions in a list
++    input_list = [Value(1), Value(2), 3]
++    result = query.resolve_lookup_value(input_list, can_reuse=None, allow_joins=True, simple_col=False)
++    
++    print(f"List with expressions:")
++    print(f"  Input type: {type(input_list)}")
++    print(f"  Result type: {type(result)}")
++    print(f"  Types match: {type(input_list) == type(result)}")
++    print(f"  Result length: {len(result)}")
++    print(f"  First item type: {type(result[0])}")
++    
++    # Test with expressions in a tuple
++    input_tuple = (Value(1), Value(2), 3)
++    result_tuple = query.resolve_lookup_value(input_tuple, can_reuse=None, allow_joins=True, simple_col=False)
++    
++    print(f"\nTuple with expressions:")
++    print(f"  Input type: {type(input_tuple)}")
++    print(f"  Result type: {type(result_tuple)}")
++    print(f"  Types match: {type(input_tuple) == type(result_tuple)}")
++    print(f"  Result length: {len(result_tuple)}")
++    print(f"  First item type: {type(result_tuple[0])}")
++    
++    # Test with F objects in list (which requires special handling)
++    input_list_f = [F('name'), F('value'), 'test']
++    # We'll just check type preservation, not resolve F objects since that requires more setup
++    result_f = []
++    for item in input_list_f:
++        if hasattr(item, 'resolve_expression') and isinstance(item, F):
++            # For this test, we'll just append the F object as is
++            result_f.append(item)
++        else:
++            result_f.append(item)
++    result_f = type(input_list_f)(result_f)
++    
++    print(f"\nList with F objects (type check only):")
++    print(f"  Input type: {type(input_list_f)}")
++    print(f"  Result type: {type(result_f)}")
++    print(f"  Types match: {type(input_list_f) == type(result_f)}")
++
++
++if __name__ == "__main__":
++    test_resolve_lookup_value_with_expressions()

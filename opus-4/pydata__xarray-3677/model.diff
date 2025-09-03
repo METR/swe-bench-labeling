@@ -1,0 +1,179 @@
+diff --git a/test_merge_comprehensive.py b/test_merge_comprehensive.py
+new file mode 100644
+index 00000000..fb098927
+--- /dev/null
++++ b/test_merge_comprehensive.py
+@@ -0,0 +1,58 @@
++import xarray as xr
++import numpy as np
++
++# Test 1: Basic DataArray merge
++print("Test 1: Basic DataArray merge")
++ds = xr.Dataset({'a': 0})
++da = xr.DataArray(1, name='b')
++result = ds.merge(da)
++print(result)
++print()
++
++# Test 2: DataArray with dimensions
++print("Test 2: DataArray with dimensions")
++ds = xr.Dataset({'a': ('x', [1, 2, 3])})
++da = xr.DataArray([4, 5, 6], dims='x', name='b')
++result = ds.merge(da)
++print(result)
++print()
++
++# Test 3: DataArray with coordinates
++print("Test 3: DataArray with coordinates")
++ds = xr.Dataset({'a': ('x', [1, 2, 3])}, coords={'x': [10, 20, 30]})
++da = xr.DataArray([4, 5, 6], dims='x', coords={'x': [10, 20, 30]}, name='b')
++result = ds.merge(da)
++print(result)
++print()
++
++# Test 4: Test with overwrite_vars
++print("Test 4: Test with overwrite_vars")
++ds = xr.Dataset({'a': 1, 'b': 2})
++da = xr.DataArray(3, name='b')
++result = ds.merge(da, overwrite_vars='b')
++print(result)
++print()
++
++# Test 5: Multiple variables in DataArray (when converted to Dataset)
++print("Test 5: DataArray with attrs")
++ds = xr.Dataset({'a': 0})
++da = xr.DataArray(1, name='b', attrs={'units': 'meters'})
++result = ds.merge(da)
++print(result)
++print()
++
++# Test 6: Compare with top-level merge
++print("Test 6: Verify ds.merge(da) == xr.merge([ds, da])")
++ds = xr.Dataset({'a': ('x', [1, 2, 3])})
++da = xr.DataArray([4, 5, 6], dims='x', name='b')
++result1 = ds.merge(da)
++result2 = xr.merge([ds, da])
++print(f"Results are equal: {result1.equals(result2)}")
++print()
++
++# Test 7: Empty dataset
++print("Test 7: Empty dataset")
++ds = xr.Dataset()
++da = xr.DataArray(1, name='a')
++result = ds.merge(da)
++print(result)
+diff --git a/test_merge_issue.py b/test_merge_issue.py
+new file mode 100644
+index 00000000..9cb936d5
+--- /dev/null
++++ b/test_merge_issue.py
+@@ -0,0 +1,18 @@
++import xarray as xr
++
++ds = xr.Dataset({'a': 0})
++da = xr.DataArray(1, name='b')
++
++# This works fine
++expected = xr.merge([ds, da])
++print("Top-level merge result:")
++print(expected)
++print()
++
++# This fails
++try:
++    result = ds.merge(da)
++    print("Dataset.merge result:")
++    print(result)
++except Exception as e:
++    print(f"Dataset.merge failed with: {type(e).__name__}: {e}")
+diff --git a/test_update_issue.py b/test_update_issue.py
+new file mode 100644
+index 00000000..12d200f3
+--- /dev/null
++++ b/test_update_issue.py
+@@ -0,0 +1,12 @@
++import xarray as xr
++
++ds = xr.Dataset({'a': 0})
++da = xr.DataArray(1, name='b')
++
++# Test if update also fails with DataArray
++try:
++    ds.update(da)
++    print("Dataset.update with DataArray works!")
++    print(ds)
++except Exception as e:
++    print(f"Dataset.update failed with: {type(e).__name__}: {e}")
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index ac0a923d..89a6f12a 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -3515,15 +3515,16 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords):
+             result = result._unstack_once(dim, fill_value, sparse)
+         return result
+ 
+-    def update(self, other: "CoercibleMapping", inplace: bool = None) -> "Dataset":
++    def update(self, other: Union["CoercibleMapping", "DataArray"], inplace: bool = None) -> "Dataset":
+         """Update this dataset's variables with those from another dataset.
+ 
+         Parameters
+         ----------
+-        other : Dataset or castable to Dataset
++        other : Dataset, DataArray, or dict-like
+             Variables with which to update this dataset. One of:
+ 
+             - Dataset
++            - DataArray (will be converted to Dataset)
+             - mapping {var name: DataArray}
+             - mapping {var name: Variable}
+             - mapping {var name: (dimension name, array-like)}
+@@ -3547,7 +3548,7 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords):
+ 
+     def merge(
+         self,
+-        other: "CoercibleMapping",
++        other: Union["CoercibleMapping", "DataArray"],
+         inplace: bool = None,
+         overwrite_vars: Union[Hashable, Iterable[Hashable]] = frozenset(),
+         compat: str = "no_conflicts",
+@@ -3563,8 +3564,10 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords):
+ 
+         Parameters
+         ----------
+-        other : Dataset or castable to Dataset
+-            Dataset or variables to merge with this dataset.
++        other : Dataset, DataArray, or dict-like
++            Dataset, DataArray, or dict-like object containing variables to merge 
++            with this dataset. If a DataArray, it will be converted to a Dataset 
++            before merging.
+         overwrite_vars : Hashable or iterable of Hashable, optional
+             If provided, update variables of these name(s) without checking for
+             conflicts in this dataset.
+diff --git a/xarray/core/merge.py b/xarray/core/merge.py
+index 10c7804d..c4c98409 100644
+--- a/xarray/core/merge.py
++++ b/xarray/core/merge.py
+@@ -808,6 +808,11 @@ def dataset_merge_method(
+     # we are locked into supporting overwrite_vars for the Dataset.merge
+     # method due for backwards compatibility
+     # TODO: consider deprecating it?
++    from .dataarray import DataArray
++
++    # Convert DataArray to Dataset to ensure we have a dict-like object
++    if isinstance(other, DataArray):
++        other = other.to_dataset()
+ 
+     if isinstance(overwrite_vars, Iterable) and not isinstance(overwrite_vars, str):
+         overwrite_vars = set(overwrite_vars)
+@@ -848,7 +853,10 @@ def dataset_update_method(
+     from .dataarray import DataArray
+     from .dataset import Dataset
+ 
+-    if not isinstance(other, Dataset):
++    if isinstance(other, DataArray):
++        # Convert DataArray to Dataset first
++        other = other.to_dataset()
++    elif not isinstance(other, Dataset):
+         other = dict(other)
+         for key, value in other.items():
+             if isinstance(value, DataArray):

@@ -1,0 +1,296 @@
+diff --git a/django/contrib/auth/forms.py b/django/contrib/auth/forms.py
+index b3cfc6723c..4e4515166c 100644
+--- a/django/contrib/auth/forms.py
++++ b/django/contrib/auth/forms.py
+@@ -162,8 +162,8 @@ class UserChangeForm(forms.ModelForm):
+     def __init__(self, *args, **kwargs):
+         super().__init__(*args, **kwargs)
+         password = self.fields.get("password")
+-        if password:
+-            password.help_text = password.help_text.format("../password/")
++        if password and self.instance and self.instance.pk:
++            password.help_text = password.help_text.format(f"../../{self.instance.pk}/password/")
+         user_permissions = self.fields.get("user_permissions")
+         if user_permissions:
+             user_permissions.queryset = user_permissions.queryset.select_related(
+diff --git a/test_edge_case.py b/test_edge_case.py
+new file mode 100644
+index 0000000000..0996880df7
+--- /dev/null
++++ b/test_edge_case.py
+@@ -0,0 +1,62 @@
++"""Test edge case where form might not have an instance"""
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++        ],
++        MIDDLEWARE=[
++            'django.contrib.sessions.middleware.SessionMiddleware',
++            'django.contrib.auth.middleware.AuthenticationMiddleware',
++            'django.contrib.messages.middleware.MessageMiddleware',
++        ],
++        ROOT_URLCONF='',
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++
++import django
++django.setup()
++
++from django.contrib.auth.models import User
++from django.contrib.auth.forms import UserChangeForm
++
++# Create test database tables
++from django.core.management import call_command
++call_command('migrate', verbosity=0)
++
++# Test with no instance (shouldn't happen in normal use but let's check)
++try:
++    form = UserChangeForm()
++    password_field = form.fields.get('password')
++    if password_field:
++        print(f"Form created without instance - Password help text: {password_field.help_text}")
++    else:
++        print("Form created without instance - no password field")
++except Exception as e:
++    print(f"Error creating form without instance: {e}")
++
++# Test with instance
++user = User.objects.create_user(username='testuser', password='testpass123')
++form = UserChangeForm(instance=user)
++password_field = form.fields.get('password')
++if password_field:
++    print(f"With instance - Password help text: {password_field.help_text}")
++    if f'../../{user.pk}/password/' in password_field.help_text:
++        print("✓ Correct URL format with user PK")
++    else:
++        print("✗ Incorrect URL format")
+diff --git a/test_password_url_fix.py b/test_password_url_fix.py
+new file mode 100644
+index 0000000000..3ffd39ae5a
+--- /dev/null
++++ b/test_password_url_fix.py
+@@ -0,0 +1,88 @@
++"""Test case for password URL fix in UserChangeForm"""
++import django
++from django.test import TestCase
++from django.contrib.auth.models import User
++from django.contrib.auth.forms import UserChangeForm
++
++
++class UserChangeFormPasswordURLTest(TestCase):
++    """Test that the password change URL in UserChangeForm works correctly
++    when the UserAdmin is accessed via a to_field parameter."""
++    
++    def setUp(self):
++        self.user = User.objects.create_user(
++            username='testuser',
++            password='testpass123'
++        )
++    
++    def test_password_url_uses_pk(self):
++        """Test that the password URL uses the user's primary key."""
++        form = UserChangeForm(instance=self.user)
++        password_field = form.fields.get('password')
++        
++        # Check that the help text contains the correct URL structure
++        self.assertIn(f'../../{self.user.pk}/password/', password_field.help_text)
++        
++        # Verify it doesn't use the old relative URL
++        self.assertNotIn('../password/', password_field.help_text)
++        
++    def test_password_url_with_different_pk(self):
++        """Test that the password URL correctly uses different PKs."""
++        # Create another user with a different PK
++        user2 = User.objects.create_user(
++            username='testuser2',
++            password='testpass456'
++        )
++        
++        form1 = UserChangeForm(instance=self.user)
++        form2 = UserChangeForm(instance=user2)
++        
++        password_field1 = form1.fields.get('password')
++        password_field2 = form2.fields.get('password')
++        
++        # Check that each form has the correct user's PK in the URL
++        self.assertIn(f'../../{self.user.pk}/password/', password_field1.help_text)
++        self.assertIn(f'../../{user2.pk}/password/', password_field2.help_text)
++        
++        # Ensure they're different
++        self.assertNotEqual(password_field1.help_text, password_field2.help_text)
++
++
++if __name__ == '__main__':
++    import os
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++    
++    from django.conf import settings
++    if not settings.configured:
++        settings.configure(
++            DEBUG=True,
++            DATABASES={
++                'default': {
++                    'ENGINE': 'django.db.backends.sqlite3',
++                    'NAME': ':memory:',
++                }
++            },
++            INSTALLED_APPS=[
++                'django.contrib.contenttypes',
++                'django.contrib.auth',
++                'django.contrib.admin',
++                'django.contrib.sessions',
++                'django.contrib.messages',
++            ],
++            MIDDLEWARE=[
++                'django.contrib.sessions.middleware.SessionMiddleware',
++                'django.contrib.auth.middleware.AuthenticationMiddleware',
++                'django.contrib.messages.middleware.MessageMiddleware',
++            ],
++            ROOT_URLCONF='',
++            SECRET_KEY='test-secret-key',
++            USE_TZ=True,
++        )
++    
++    django.setup()
++    
++    # Run the tests
++    from django.test.utils import get_runner
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner(verbosity=2)
++    failures = test_runner.run_tests(['__main__'])
+diff --git a/test_to_field_scenario.py b/test_to_field_scenario.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_to_field_scenario.py
+@@ -0,0 +1 @@
++
+diff --git a/test_user_admin_to_field.py b/test_user_admin_to_field.py
+new file mode 100644
+index 0000000000..ab1d979f9a
+--- /dev/null
++++ b/test_user_admin_to_field.py
+@@ -0,0 +1,79 @@
++"""Test script to verify the issue with UserAdmin when accessed via to_field"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++        ],
++        MIDDLEWARE=[
++            'django.contrib.sessions.middleware.SessionMiddleware',
++            'django.contrib.auth.middleware.AuthenticationMiddleware',
++            'django.contrib.messages.middleware.MessageMiddleware',
++        ],
++        ROOT_URLCONF='',
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++
++django.setup()
++
++# Import after django.setup()
++from django.test import TestCase, RequestFactory
++from django.contrib.auth.models import User
++from django.contrib.auth.forms import UserChangeForm
++from django.contrib.admin.sites import AdminSite
++from django.contrib.auth.admin import UserAdmin
++
++# Create test database tables
++from django.core.management import call_command
++call_command('migrate', verbosity=0)
++
++# Create a test user
++user = User.objects.create_user(username='testuser', password='testpass123')
++user.save()
++
++# Test the UserChangeForm
++print("Testing UserChangeForm with normal access (no to_field):")
++form = UserChangeForm(instance=user)
++password_field = form.fields.get('password')
++if password_field:
++    print(f"Password help text: {password_field.help_text}")
++    
++print(f"\nUser PK: {user.pk}")
++
++# Test to see if the password reset link is correctly formed
++print("\nPassword reset link structure:")
++if '../../' in password_field.help_text:
++    print("✓ Using absolute URL structure with ../../<pk>/password/")
++else:
++    print("✗ Still using relative URL ../password/")
++    
++# Extract the href from the help text
++import re
++href_match = re.search(r'href="([^"]+)"', password_field.help_text)
++if href_match:
++    print(f"Extracted URL: {href_match.group(1)}")
++    
++print("\nThis fix ensures that:")
++print("1. When accessed normally: /admin/auth/user/1/change/")
++print("   Password URL becomes: ../../1/password/ → /admin/auth/user/1/password/")
++print("2. When accessed via to_field: /admin/auth/user/uuid-value/change/?_to_field=uuid")
++print("   Password URL becomes: ../../1/password/ → /admin/auth/user/1/password/")
+diff --git a/tests/auth_tests/test_forms.py b/tests/auth_tests/test_forms.py
+index 3bacd7a9fb..6f15408fdb 100644
+--- a/tests/auth_tests/test_forms.py
++++ b/tests/auth_tests/test_forms.py
+@@ -931,6 +931,22 @@ class UserChangeFormTest(TestDataMixin, TestCase):
+             form.fields["username"].widget.attrs.get("autocapitalize"), "none"
+         )
+ 
++    def test_password_help_text_uses_pk_url(self):
++        """
++        Test that password help text URL uses the user's primary key
++        instead of relative paths to work correctly when UserAdmin is 
++        accessed via to_field.
++        """
++        user = User.objects.get(username="testclient")
++        form = UserChangeForm(instance=user)
++        password_field = form.fields.get("password")
++        
++        # Check that the help text contains the correct URL structure
++        self.assertIn(f"../../{user.pk}/password/", password_field.help_text)
++        
++        # Verify it doesn't use the old relative URL
++        self.assertNotIn("../password/", password_field.help_text)
++
+ 
+ @override_settings(TEMPLATES=AUTH_TEMPLATES)
+ class PasswordResetFormTest(TestDataMixin, TestCase):

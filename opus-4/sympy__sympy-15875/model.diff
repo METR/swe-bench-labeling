@@ -1,0 +1,274 @@
+diff --git a/sympy/core/add.py b/sympy/core/add.py
+index 83a5f2aedc..2be71e30ef 100644
+--- a/sympy/core/add.py
++++ b/sympy/core/add.py
+@@ -534,36 +534,44 @@ def _eval_is_zero(self):
+             # issue 10528: there is no way to know if a nc symbol
+             # is zero or not
+             return
+-        nz = []
+-        z = 0
+-        im_or_z = False
+-        im = False
++        # Separate real and imaginary parts
++        real_part = []
++        imag_part = []
+         for a in self.args:
+             if a.is_real:
+                 if a.is_zero:
+-                    z += 1
++                    pass  # Skip zeros
+                 elif a.is_zero is False:
+-                    nz.append(a)
++                    real_part.append(a)
+                 else:
+-                    return
++                    return  # Can't determine
+             elif a.is_imaginary:
+-                im = True
++                imag_part.append(a*S.ImaginaryUnit)  # Convert to real
+             elif (S.ImaginaryUnit*a).is_real:
+-                im_or_z = True
++                imag_part.append(a*S.ImaginaryUnit)  # Convert to real
+             else:
+-                return
+-        if z == len(self.args):
++                return  # Can't determine
++        
++        # Check if all args were zero
++        if not real_part and not imag_part:
+             return True
+-        if len(nz) == len(self.args):
+-            return None
+-        b = self.func(*nz)
+-        if b.is_zero:
+-            if not im_or_z and not im:
+-                return True
+-            if im and not im_or_z:
+-                return False
+-        if b.is_zero is False:
++            
++        # Check if real part sums to zero
++        real_sum = self.func(*real_part) if real_part else S.Zero
++        if real_sum.is_zero is False:
++            return False
++        elif real_sum.is_zero is None:
++            return  # Can't determine
++            
++        # Check if imaginary part sums to zero
++        imag_sum = self.func(*imag_part) if imag_part else S.Zero
++        if imag_sum.is_zero is False:
+             return False
++        elif imag_sum.is_zero is None:
++            return  # Can't determine
++            
++        # Both parts sum to zero
++        return True
+ 
+     def _eval_is_odd(self):
+         l = [f for f in self.args if not (f.is_even is True)]
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..9d3ea11988
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,73 @@
++from sympy import *
++
++print("Testing comprehensive is_zero edge cases...")
++
++# Test 1: Original issue case
++e1 = -2*I + (1 + I)**2
++assert e1.is_zero == True
++print("✓ Original issue case: -2*I + (1 + I)**2")
++
++# Test 2: Pure imaginary that sums to zero
++e2 = 3*I - 2*I - I
++assert e2.is_zero == True
++print("✓ Pure imaginary sum to zero: 3*I - 2*I - I")
++
++# Test 3: Pure imaginary that doesn't sum to zero
++e3 = 3*I - 2*I
++assert e3.is_zero == False
++print("✓ Pure imaginary non-zero: 3*I - 2*I")
++
++# Test 4: Mixed real and imaginary that sums to zero
++e4 = 2 + 3*I - 2 - 3*I
++assert e4.is_zero == True
++print("✓ Mixed real/imaginary sum to zero: 2 + 3*I - 2 - 3*I")
++
++# Test 5: Mixed real and imaginary, only real part is zero
++e5 = 3*I - 2*I + 2 - 2
++assert e5.is_zero == False
++print("✓ Only real part zero: 3*I - 2*I + 2 - 2")
++
++# Test 6: Mixed real and imaginary, only imaginary part is zero
++e6 = 3*I - 3*I + 2 - 1
++assert e6.is_zero == False
++print("✓ Only imaginary part zero: 3*I - 3*I + 2 - 1")
++
++# Test 7: With symbols (real)
++x = Symbol('x', real=True)
++e7 = x - x + 2*I - 2*I
++assert e7.is_zero == True
++print("✓ With real symbols: x - x + 2*I - 2*I")
++
++# Test 8: With symbols (imaginary)
++y = Symbol('y', imaginary=True)
++e8 = y - y + 2 - 2
++assert e8.is_zero == True
++print("✓ With imaginary symbols: y - y + 2 - 2")
++
++# Test 9: With symbols - undetermined
++z = Symbol('z')  # No assumptions
++e9 = z + I*z
++assert e9.is_zero is None
++print("✓ Undetermined with generic symbol: z + I*z")
++
++# Test 10: Complex expression with Pow that needs expanding  
++e10 = (1 + I)**2 + (1 - I)**2 - 2
++# This returns False because (1-I)**2 and (1+I)**2 are not expanded
++# and their imaginary property is not correctly detected
++assert e10.is_zero == False  
++print("✓ Complex power expression (unexpanded): (1 + I)**2 + (1 - I)**2 - 2")
++
++# Test 11: Non-commutative symbols
++A, B = symbols('A B', commutative=False)
++e11 = A + B - B - A  # Non-commutative order matters
++# Even with non-commutative symbols, if they cancel exactly, it's zero
++e11_2 = A + B - A - B  # This simplifies to zero
++assert e11_2.is_zero == True  
++print("✓ Non-commutative symbols handled correctly")
++
++# Test 12: Infinity cases
++e12 = oo - oo
++assert e12.is_zero is None  # Indeterminate
++print("✓ Infinity cases handled correctly")
++
++print("\nAll comprehensive tests passed! ✓")
+diff --git a/test_is_zero_fix.py b/test_is_zero_fix.py
+new file mode 100644
+index 0000000000..690d4f412d
+--- /dev/null
++++ b/test_is_zero_fix.py
+@@ -0,0 +1,33 @@
++from sympy import *
++
++# Test cases for the is_zero issue
++e1 = -2*I + (1 + I)**2
++print(f"e1 = {e1}")
++print(f"e1.is_zero = {e1.is_zero}")
++print(f"simplify(e1) = {simplify(e1)}")
++print(f"simplify(e1).is_zero = {simplify(e1).is_zero}")
++print()
++
++# More test cases
++e2 = 2*I + (-2*I)
++print(f"e2 = {e2}")
++print(f"e2.is_zero = {e2.is_zero}")
++print()
++
++e3 = I + (-I)
++print(f"e3 = {e3}")
++print(f"e3.is_zero = {e3.is_zero}")
++print()
++
++# Mixed real and imaginary
++e4 = 1 + I + (-1) + (-I)
++print(f"e4 = {e4}")
++print(f"e4.is_zero = {e4.is_zero}")
++print()
++
++# Test with symbols
++x = Symbol('x', real=True)
++y = Symbol('y', real=True)
++e5 = x*I + (-x)*I
++print(f"e5 = {e5}")
++print(f"e5.is_zero = {e5.is_zero}")
+diff --git a/test_issue_case.py b/test_issue_case.py
+new file mode 100644
+index 0000000000..0255e88a5f
+--- /dev/null
++++ b/test_issue_case.py
+@@ -0,0 +1,44 @@
++from sympy import *
++
++# Test the specific case from the issue
++e = -2*I + (1 + I)**2
++print(f"e = {e}")
++print(f"e.is_zero = {e.is_zero}")
++print(f"simplify(e) = {simplify(e)}")
++print(f"simplify(e).is_zero = {simplify(e).is_zero}")
++
++# Check that is_zero now returns the correct value
++assert e.is_zero == True, "e.is_zero should be True"
++assert simplify(e).is_zero == True, "simplify(e).is_zero should be True"
++
++print("\nAll assertions passed! The issue is fixed.")
++
++# Additional edge cases to ensure correctness
++print("\nTesting additional edge cases...")
++
++# Complex expression that is zero
++e2 = 3*I + 2 - 2 - 3*I
++print(f"e2 = {e2}")
++print(f"e2.is_zero = {e2.is_zero}")
++assert e2.is_zero == True
++
++# Complex expression that is NOT zero
++e3 = 3*I + 2 - 1 - 3*I
++print(f"e3 = {e3}")
++print(f"e3.is_zero = {e3.is_zero}")
++assert e3.is_zero == False
++
++# Expression with unknown zero status
++x = Symbol('x')
++e4 = x + I - x - I
++print(f"e4 = {e4}")
++print(f"e4.is_zero = {e4.is_zero}")
++assert e4.is_zero == True
++
++# Expression that cannot be determined
++e5 = x + I*x
++print(f"e5 = {e5}")
++print(f"e5.is_zero = {e5.is_zero}")
++assert e5.is_zero is None
++
++print("\nAll edge case tests passed!")
+diff --git a/test_matrix_rank.py b/test_matrix_rank.py
+new file mode 100644
+index 0000000000..2eb91bddbe
+--- /dev/null
++++ b/test_matrix_rank.py
+@@ -0,0 +1,31 @@
++from sympy import *
++
++# Test that matrix rank calculations work correctly now
++M = Matrix([
++    [1, 0, 1+I],
++    [0, 1, -I],
++    [1, -I, 1]
++])
++
++print("Matrix M:")
++print(M)
++print(f"\nMatrix rank: {M.rank()}")
++
++# Create a matrix with complex entries that should have reduced rank
++M2 = Matrix([
++    [1, I, 1+I],
++    [I, -1, -1+I],
++    [1+I, -1+I, 2*I]
++])
++
++print("\nMatrix M2:")
++print(M2)
++print(f"Matrix rank: {M2.rank()}")
++
++# Test with the specific expression from the issue
++e = -2*I + (1 + I)**2
++M3 = Matrix([[e]])
++print(f"\nMatrix [[{e}]] rank: {M3.rank()}")
++assert M3.rank() == 0, "Matrix with zero entry should have rank 0"
++
++print("\nAll matrix rank tests passed!")

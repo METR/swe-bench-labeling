@@ -1,0 +1,59 @@
+diff --git a/sklearn/compose/_column_transformer.py b/sklearn/compose/_column_transformer.py
+index 4eddd12b1..b698b42e6 100644
+--- a/sklearn/compose/_column_transformer.py
++++ b/sklearn/compose/_column_transformer.py
+@@ -275,8 +275,8 @@ class ColumnTransformer(TransformerMixin, _BaseComposition):
+     def set_output(self, *, transform=None):
+         """Set the output container when `"transform"` and `"fit_transform"` are called.
+ 
+-        Calling `set_output` will set the output of all estimators in `transformers`
+-        and `transformers_`.
++        Calling `set_output` will set the output of all estimators in `transformers`,
++        `transformers_`, and `remainder` if it's an estimator.
+ 
+         Parameters
+         ----------
+@@ -293,12 +293,10 @@ class ColumnTransformer(TransformerMixin, _BaseComposition):
+             Estimator instance.
+         """
+         super().set_output(transform=transform)
+-        transformers = (
+-            trans
+-            for _, trans, _ in chain(
+-                self.transformers, getattr(self, "transformers_", [])
+-            )
+-            if trans not in {"passthrough", "drop"}
++        transformers = chain(
++            (trans for _, trans, _ in chain(self.transformers, getattr(self, "transformers_", []))
++             if trans not in {"passthrough", "drop"}),
++            [self.remainder] if hasattr(self.remainder, "set_output") else []
+         )
+         for trans in transformers:
+             _safe_set_output(trans, transform=transform)
+diff --git a/sklearn/compose/tests/test_column_transformer.py b/sklearn/compose/tests/test_column_transformer.py
+index b9c8f5831..d7f2c189b 100644
+--- a/sklearn/compose/tests/test_column_transformer.py
++++ b/sklearn/compose/tests/test_column_transformer.py
+@@ -2185,3 +2185,21 @@ def test_raise_error_if_index_not_aligned():
+     )
+     with pytest.raises(ValueError, match=msg):
+         ct.fit_transform(X)
++
++def test_column_transformer_set_output():
++    pd = pytest.importorskip("pandas")
++    X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
++    
++    ct = ColumnTransformer(
++        [("trans1", StandardScaler(), ["a", "b"])],
++        remainder=StandardScaler()
++    )
++    ct.set_output(transform="pandas")
++    
++    result = ct.fit_transform(X)
++    assert isinstance(result, pd.DataFrame)
++    assert list(result.columns) == ["a", "b", "c"]
++    
++    # Test that the remainder transformer is also set to output pandas
++    remainder_output = ct.named_transformers_["remainder"].transform(X[["c"]])
++    assert isinstance(remainder_output, pd.DataFrame)
+\ No newline at end of file

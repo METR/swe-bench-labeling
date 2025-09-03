@@ -1,0 +1,50 @@
+diff --git a/sympy/core/symbol.py b/sympy/core/symbol.py
+index f4a555c13f..b284c3e2c5 100644
+--- a/sympy/core/symbol.py
++++ b/sympy/core/symbol.py
+@@ -617,6 +617,12 @@ def symbols(names, *, cls=Symbol, **args) -> Any:
+         >>> symbols('x', seq=True)
+         (x,)
+ 
++    To create Function objects, use the cls parameter::
++
++        >>> q, u = symbols(('q:2', 'u:2'), cls=Function)
++        >>> [type(s) for s in (q[0], q[1], u[0], u[1])]
++        [Function, Function, Function, Function]
++
+     To reduce typing, range syntax is supported to create indexed symbols.
+     Ranges are indicated by a colon and the type of range is determined by
+     the character to the right of the colon. If the character is a digit
+@@ -790,8 +796,11 @@ def literal(s):
+ 
+         return tuple(result)
+     else:
++        if isinstance(names, tuple) and len(names) == 1 and isinstance(names[0], str):
++            # Handle the case of a single-element tuple containing a string
++            return symbols(names[0], cls=cls, **args)
+         for name in names:
+-            result.append(symbols(name, **args))
++            result.append(symbols(name, cls=cls, **args))
+ 
+         return type(names)(result)
+ 
+diff --git a/sympy/core/tests/test_symbol.py b/sympy/core/tests/test_symbol.py
+index 19494c2083..d175f57165 100644
+--- a/sympy/core/tests/test_symbol.py
++++ b/sympy/core/tests/test_symbol.py
+@@ -335,6 +335,15 @@ def test_symbols_become_functions_issue_3539():
+     raises(TypeError, lambda: alpha(2.5))
+     raises(TypeError, lambda: phi(t))
+ 
++def test_symbols_single_element_tuple():
++    from sympy import symbols, Function
++    q, u = symbols(('q:2', 'u:2'), cls=Function)
++    assert all(isinstance(s, Function) for s in (q[0], q[1], u[0], u[1]))
++    assert str(q[0]) == 'q0'
++    assert str(q[1]) == 'q1'
++    assert str(u[0]) == 'u0'
++    assert str(u[1]) == 'u1'
++
+ 
+ def test_unicode():
+     xu = Symbol('x')

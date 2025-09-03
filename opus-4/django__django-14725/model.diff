@@ -1,0 +1,242 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 7effb202e3..55678167aa 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -681,6 +681,14 @@ class BaseModelFormSet(BaseFormSet):
+     save.alters_data = True
+ 
+     def clean(self):
++        # If edit_only is True, validate that no new objects are being created
++        if getattr(self, 'edit_only', False):
++            for form in self.extra_forms:
++                if form.has_changed():
++                    raise ValidationError(
++                        _('Creating new objects is not allowed in edit-only mode.'),
++                        code='edit_only'
++                    )
+         self.validate_unique()
+ 
+     def validate_unique(self):
+@@ -813,6 +821,9 @@ class BaseModelFormSet(BaseFormSet):
+ 
+     def save_new_objects(self, commit=True):
+         self.new_objects = []
++        # If edit_only is True, don't save any new objects
++        if getattr(self, 'edit_only', False):
++            return self.new_objects
+         for form in self.extra_forms:
+             if not form.has_changed():
+                 continue
+@@ -875,7 +886,8 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                          widgets=None, validate_max=False, localized_fields=None,
+                          labels=None, help_texts=None, error_messages=None,
+                          min_num=None, validate_min=False, field_classes=None,
+-                         absolute_max=None, can_delete_extra=True, renderer=None):
++                         absolute_max=None, can_delete_extra=True, renderer=None,
++                         edit_only=False):
+     """Return a FormSet class for the given Django model class."""
+     meta = getattr(form, 'Meta', None)
+     if (getattr(meta, 'fields', fields) is None and
+@@ -896,6 +908,7 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                               absolute_max=absolute_max, can_delete_extra=can_delete_extra,
+                               renderer=renderer)
+     FormSet.model = model
++    FormSet.edit_only = edit_only
+     return FormSet
+ 
+ 
+@@ -1076,7 +1089,8 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
+                           widgets=None, validate_max=False, localized_fields=None,
+                           labels=None, help_texts=None, error_messages=None,
+                           min_num=None, validate_min=False, field_classes=None,
+-                          absolute_max=None, can_delete_extra=True, renderer=None):
++                          absolute_max=None, can_delete_extra=True, renderer=None,
++                          edit_only=False):
+     """
+     Return an ``InlineFormSet`` for the given kwargs.
+ 
+@@ -1109,6 +1123,7 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
+         'absolute_max': absolute_max,
+         'can_delete_extra': can_delete_extra,
+         'renderer': renderer,
++        'edit_only': edit_only,
+     }
+     FormSet = modelformset_factory(model, **kwargs)
+     FormSet.fk = fk
+diff --git a/test_edit_only.py b/test_edit_only.py
+new file mode 100644
+index 0000000000..68f1d8ffc2
+--- /dev/null
++++ b/test_edit_only.py
+@@ -0,0 +1,164 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++
++# Setup Django
++django.setup()
++
++# Now import Django components
++from django.db import models
++from django.forms import modelformset_factory
++from django.core.exceptions import ValidationError
++from django.http import QueryDict
++
++# Create a test model
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.CharField(max_length=100)
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Book)
++
++# Create some test data
++book1 = Book.objects.create(title="Book 1", author="Author 1")
++book2 = Book.objects.create(title="Book 2", author="Author 2")
++
++print("Testing edit_only functionality...")
++print("=" * 50)
++
++# Test 1: Normal formset (should allow new objects)
++print("\n1. Normal formset (edit_only=False):")
++BookFormSet = modelformset_factory(Book, fields=['title', 'author'], extra=1)
++data = {
++    'form-TOTAL_FORMS': '3',
++    'form-INITIAL_FORMS': '2',
++    'form-MIN_NUM_FORMS': '0',
++    'form-MAX_NUM_FORMS': '1000',
++    'form-0-id': str(book1.id),
++    'form-0-title': 'Book 1 Updated',
++    'form-0-author': 'Author 1',
++    'form-1-id': str(book2.id),
++    'form-1-title': 'Book 2',
++    'form-1-author': 'Author 2',
++    'form-2-id': '',
++    'form-2-title': 'New Book',
++    'form-2-author': 'New Author',
++}
++formset = BookFormSet(data)
++if formset.is_valid():
++    saved_instances = formset.save()
++    print(f"  Saved {len(saved_instances)} instances")
++    print(f"  Total books: {Book.objects.count()}")
++else:
++    print(f"  Validation errors: {formset.errors}")
++
++# Test 2: Edit-only formset (should not allow new objects)
++print("\n2. Edit-only formset (edit_only=True):")
++EditOnlyBookFormSet = modelformset_factory(Book, fields=['title', 'author'], extra=1, edit_only=True)
++data = {
++    'form-TOTAL_FORMS': '3',
++    'form-INITIAL_FORMS': '3',  # We now have 3 books
++    'form-MIN_NUM_FORMS': '0',
++    'form-MAX_NUM_FORMS': '1000',
++    'form-0-id': str(book1.id),
++    'form-0-title': 'Book 1 Updated Again',
++    'form-0-author': 'Author 1',
++    'form-1-id': str(book2.id),
++    'form-1-title': 'Book 2 Updated',
++    'form-1-author': 'Author 2',
++    'form-2-id': '',
++    'form-2-title': 'Another New Book',
++    'form-2-author': 'Another New Author',
++}
++formset = EditOnlyBookFormSet(data)
++try:
++    if formset.is_valid():
++        saved_instances = formset.save()
++        print(f"  ERROR: Should not have allowed saving new objects!")
++        print(f"  Saved {len(saved_instances)} instances")
++    else:
++        print(f"  Good! Validation failed as expected")
++        print(f"  Non-form errors: {formset.non_form_errors()}")
++except ValidationError as e:
++    print(f"  Good! ValidationError raised: {e}")
++
++# Test 3: Edit-only formset with only edits (should work)
++print("\n3. Edit-only formset with only edits (should work):")
++all_books = list(Book.objects.all())
++data = {
++    'form-TOTAL_FORMS': str(len(all_books)),
++    'form-INITIAL_FORMS': str(len(all_books)),
++    'form-MIN_NUM_FORMS': '0',
++    'form-MAX_NUM_FORMS': '1000',
++}
++for i, book in enumerate(all_books):
++    data[f'form-{i}-id'] = str(book.id)
++    data[f'form-{i}-title'] = f'{book.title} (edited)'
++    data[f'form-{i}-author'] = book.author
++
++formset = EditOnlyBookFormSet(data)
++if formset.is_valid():
++    saved_instances = formset.save()
++    print(f"  Good! Saved {len(saved_instances)} edited instances")
++    print(f"  Total books still: {Book.objects.count()}")
++else:
++    print(f"  ERROR: Should have allowed editing existing objects!")
++    print(f"  Errors: {formset.errors}")
++    print(f"  Non-form errors: {formset.non_form_errors()}")
++
++# Test 4: Edit-only formset with extra forms but no data (should work)
++print("\n4. Edit-only formset with empty extra forms (should work):")
++data = {
++    'form-TOTAL_FORMS': str(len(all_books) + 1),  # One extra form
++    'form-INITIAL_FORMS': str(len(all_books)),
++    'form-MIN_NUM_FORMS': '0',
++    'form-MAX_NUM_FORMS': '1000',
++}
++for i, book in enumerate(all_books):
++    data[f'form-{i}-id'] = str(book.id)
++    data[f'form-{i}-title'] = book.title
++    data[f'form-{i}-author'] = book.author
++# Extra form with no data
++data[f'form-{len(all_books)}-id'] = ''
++data[f'form-{len(all_books)}-title'] = ''
++data[f'form-{len(all_books)}-author'] = ''
++
++formset = EditOnlyBookFormSet(data)
++if formset.is_valid():
++    saved_instances = formset.save()
++    print(f"  Good! Empty extra forms are allowed")
++    print(f"  Saved {len(saved_instances)} instances")
++else:
++    print(f"  ERROR: Should have allowed empty extra forms!")
++    print(f"  Errors: {formset.errors}")
++    print(f"  Non-form errors: {formset.non_form_errors()}")
++
++print("\n" + "=" * 50)
++print("All tests completed!")
+diff --git a/test_edit_only2.py b/test_edit_only2.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_edit_only2.py
+@@ -0,0 +1 @@
++

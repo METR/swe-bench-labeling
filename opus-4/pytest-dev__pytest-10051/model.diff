@@ -1,0 +1,203 @@
+diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py
+index a4f4214b1..84b01640b 100644
+--- a/src/_pytest/logging.py
++++ b/src/_pytest/logging.py
+@@ -441,6 +441,14 @@ class LogCaptureFixture:
+     def clear(self) -> None:
+         """Reset the list of log records and the captured log text."""
+         self.handler.reset()
++        # Update the stash reference to point to the new records list
++        # This ensures get_records() stays in sync with records
++        if hasattr(self._item, 'stash') and caplog_records_key in self._item.stash:
++            for phase in self._item.stash[caplog_records_key]:
++                if self._item.stash[caplog_records_key][phase] is not self.handler.records:
++                    # Only update if it's pointing to the old list
++                    # We check using 'is not' to see if it's the same object
++                    self._item.stash[caplog_records_key][phase] = self.handler.records
+ 
+     def set_level(self, level: Union[int, str], logger: Optional[str] = None) -> None:
+         """Set the level of a logger for the duration of a test.
+diff --git a/test_caplog_issue.py b/test_caplog_issue.py
+new file mode 100644
+index 000000000..115371d88
+--- /dev/null
++++ b/test_caplog_issue.py
+@@ -0,0 +1,71 @@
++import logging
++
++def test_caplog_clear_get_records_consistency(caplog) -> None:
++    """Test that caplog.get_records() stays consistent with caplog.records after clear()."""
++    def verify_consistency() -> None:
++        assert caplog.get_records("call") == caplog.records
++
++    verify_consistency()
++    logging.warning("test")
++    verify_consistency()
++    caplog.clear()
++    verify_consistency()  # This should not fail
++
++
++def test_caplog_clear_multiple_calls(caplog) -> None:
++    """Test that multiple clear() calls work correctly."""
++    # First add some logs
++    logging.warning("message 1")
++    logging.error("message 2")
++    assert len(caplog.records) == 2
++    assert len(caplog.get_records("call")) == 2
++    
++    # Clear once
++    caplog.clear()
++    assert len(caplog.records) == 0
++    assert len(caplog.get_records("call")) == 0
++    
++    # Add more logs
++    logging.error("message 3")
++    assert len(caplog.records) == 1
++    assert len(caplog.get_records("call")) == 1
++    
++    # Clear again
++    caplog.clear()
++    assert len(caplog.records) == 0
++    assert len(caplog.get_records("call")) == 0
++    
++    # Verify consistency after multiple clears
++    assert caplog.get_records("call") == caplog.records
++
++
++def test_caplog_clear_text_is_cleared(caplog) -> None:
++    """Test that caplog.text is also cleared."""
++    logging.warning("test message")
++    assert "test message" in caplog.text
++    assert len(caplog.records) > 0
++    
++    caplog.clear()
++    assert caplog.text == ""
++    assert len(caplog.records) == 0
++
++
++def test_caplog_clear_messages_is_cleared(caplog) -> None:
++    """Test that caplog.messages is also cleared."""
++    logging.warning("test message")
++    assert "test message" in caplog.messages
++    assert len(caplog.messages) > 0
++    
++    caplog.clear()
++    assert caplog.messages == []
++    assert len(caplog.records) == 0
++
++
++def test_caplog_clear_record_tuples_is_cleared(caplog) -> None:
++    """Test that caplog.record_tuples is also cleared."""
++    logging.warning("test message")
++    assert len(caplog.record_tuples) > 0
++    
++    caplog.clear()
++    assert caplog.record_tuples == []
++    assert len(caplog.records) == 0
+diff --git a/test_comprehensive_caplog.py b/test_comprehensive_caplog.py
+new file mode 100644
+index 000000000..5f9abd8c1
+--- /dev/null
++++ b/test_comprehensive_caplog.py
+@@ -0,0 +1,68 @@
++import logging
++import pytest
++
++
++def test_clear_during_different_phases(caplog):
++    """Test that clear() works correctly in different test phases."""
++    # During call phase
++    caplog.set_level(logging.INFO)
++    logging.info("message 1")
++    assert len(caplog.records) == 1
++    assert len(caplog.get_records("call")) == 1
++    
++    caplog.clear()
++    assert len(caplog.records) == 0
++    assert len(caplog.get_records("call")) == 0
++    
++    # Add more after clear
++    logging.warning("message 2")
++    assert len(caplog.records) == 1
++    assert len(caplog.get_records("call")) == 1
++    assert caplog.records[0].message == "message 2"
++    assert caplog.get_records("call")[0].message == "message 2"
++
++
++def test_clear_preserves_other_phases(caplog):
++    """Test that clear() only affects the current phase."""
++    # This test verifies that if we have logs in multiple phases,
++    # clear() in one phase doesn't affect others
++    
++    # We can't easily test setup phase from within the test,
++    # but we can verify that get_records for non-existent phases returns empty
++    assert caplog.get_records("setup") == []
++    assert caplog.get_records("teardown") == []
++    
++    # Log in call phase
++    logging.error("call phase log")
++    assert len(caplog.get_records("call")) == 1
++    
++    # Clear should only affect current (call) phase
++    caplog.clear()
++    assert len(caplog.get_records("call")) == 0
++    # Other phases should still be empty (not affected)
++    assert caplog.get_records("setup") == []
++    assert caplog.get_records("teardown") == []
++
++
++def test_handler_records_sync(caplog):
++    """Test that handler.records stays in sync with get_records."""
++    # Initial state
++    assert caplog.records == caplog.handler.records
++    assert caplog.get_records("call") == caplog.handler.records
++    
++    # After logging
++    logging.critical("test")
++    assert caplog.records == caplog.handler.records
++    assert caplog.get_records("call") == caplog.handler.records
++    
++    # After clear
++    caplog.clear()
++    assert caplog.records == caplog.handler.records
++    assert caplog.get_records("call") == caplog.handler.records
++    assert len(caplog.records) == 0
++    
++    # After more logging
++    logging.critical("test2")
++    assert caplog.records == caplog.handler.records
++    assert caplog.get_records("call") == caplog.handler.records
++    assert len(caplog.records) == 1
+diff --git a/test_phase_issue.py b/test_phase_issue.py
+new file mode 100644
+index 000000000..f0c69ad88
+--- /dev/null
++++ b/test_phase_issue.py
+@@ -0,0 +1,27 @@
++import logging
++import pytest
++
++@pytest.fixture
++def setup_logs(caplog):
++    """Fixture that logs during setup phase."""
++    caplog.set_level("INFO")
++    logging.getLogger().info("setup log")
++    yield
++    
++def test_phases_are_separate(caplog, setup_logs):
++    """Test that setup and call phase logs are kept separate."""
++    # Check setup phase logs
++    setup_records = caplog.get_records("setup")
++    assert len(setup_records) == 1
++    assert setup_records[0].message == "setup log"
++    
++    # Log in call phase
++    logging.getLogger().info("call log")
++    
++    # Check call phase logs
++    call_records = caplog.get_records("call")
++    assert len(call_records) == 1
++    assert call_records[0].message == "call log"
++    
++    # Ensure phases are separate
++    assert caplog.get_records("setup") != caplog.get_records("call")

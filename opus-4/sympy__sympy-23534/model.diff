@@ -1,0 +1,216 @@
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..d322d1b0c7
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,20 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sympy.core.tests.test_symbol import test_symbols, test_symbols_with_cls_and_tuple_input
++
++print("Running test_symbols...")
++try:
++    test_symbols()
++    print("✓ test_symbols passed")
++except Exception as e:
++    print(f"✗ test_symbols failed: {e}")
++    
++print("\nRunning test_symbols_with_cls_and_tuple_input...")
++try:
++    test_symbols_with_cls_and_tuple_input()
++    print("✓ test_symbols_with_cls_and_tuple_input passed")
++except Exception as e:
++    print(f"✗ test_symbols_with_cls_and_tuple_input failed: {e}")
++
++print("\nAll tests completed!")
+diff --git a/sympy/core/symbol.py b/sympy/core/symbol.py
+index f4a555c13f..2aca8bab27 100644
+--- a/sympy/core/symbol.py
++++ b/sympy/core/symbol.py
+@@ -791,7 +791,7 @@ def literal(s):
+         return tuple(result)
+     else:
+         for name in names:
+-            result.append(symbols(name, **args))
++            result.append(symbols(name, cls=cls, **args))
+ 
+         return type(names)(result)
+ 
+diff --git a/sympy/core/tests/test_symbol.py b/sympy/core/tests/test_symbol.py
+index 19494c2083..eb722d97c9 100644
+--- a/sympy/core/tests/test_symbol.py
++++ b/sympy/core/tests/test_symbol.py
+@@ -327,6 +327,31 @@ def sym(s):
+     raises(ValueError, lambda: symbols('::a'))
+ 
+ 
++def test_symbols_with_cls_and_tuple_input():
++    """Test that cls parameter is propagated when using tuple input."""
++    from sympy import Function, Wild
++    from sympy.core.function import UndefinedFunction
++    
++    # Test with Function class
++    q, u = symbols(('q:2', 'u:2'), cls=Function)
++    assert all(isinstance(item, UndefinedFunction) for item in q)
++    assert all(isinstance(item, UndefinedFunction) for item in u)
++    
++    # Test with Wild class
++    w1, w2 = symbols(('w1', 'w2'), cls=Wild)
++    assert isinstance(w1, Wild)
++    assert isinstance(w2, Wild)
++    
++    # Test with list input
++    result = symbols(['f:2', 'g:2'], cls=Function)
++    assert all(isinstance(item, UndefinedFunction) for sublist in result for item in sublist)
++    
++    # Test that assumptions are preserved with tuple input
++    a, b = symbols(('a', 'b'), real=True, positive=True, cls=Symbol)
++    assert a.is_real and a.is_positive
++    assert b.is_real and b.is_positive
++
++
+ def test_symbols_become_functions_issue_3539():
+     from sympy.abc import alpha, phi, beta, t
+     raises(TypeError, lambda: beta(2))
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..b34a381989
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,60 @@
++import sympy as smp
++from sympy import Wild, Function
++
++print("=== Testing various cases for symbols function ===")
++
++# Test 1: Original issue with Function class
++print("\n1. Testing with Function class and tuple input:")
++q, u = smp.symbols(('q:2', 'u:2'), cls=smp.Function)
++print(f"q: {q}, type of q[0]: {type(q[0])}")
++print(f"u: {u}, type of u[0]: {type(u[0])}")
++assert all(isinstance(item, smp.core.function.UndefinedFunction) for item in q)
++assert all(isinstance(item, smp.core.function.UndefinedFunction) for item in u)
++print("✓ All are UndefinedFunction")
++
++# Test 2: Test with Wild class
++print("\n2. Testing with Wild class and tuple input:")
++w1, w2 = smp.symbols(('w1', 'w2'), cls=Wild)
++print(f"w1: {w1}, type: {type(w1)}")
++print(f"w2: {w2}, type: {type(w2)}")
++assert isinstance(w1, Wild)
++assert isinstance(w2, Wild)
++print("✓ All are Wild")
++
++# Test 3: Test with default Symbol class
++print("\n3. Testing with default Symbol class and tuple input:")
++x, y = smp.symbols(('x', 'y'))
++print(f"x: {x}, type: {type(x)}")
++print(f"y: {y}, type: {type(y)}")
++assert isinstance(x, smp.Symbol)
++assert isinstance(y, smp.Symbol)
++print("✓ All are Symbol")
++
++# Test 4: Test with list input
++print("\n4. Testing with Function class and list input:")
++result = smp.symbols(['f:2', 'g:2'], cls=Function)
++print(f"Result: {result}")
++for i, item in enumerate(result):
++    print(f"  Item {i}: {item}, all are Functions: {all(isinstance(sub, smp.core.function.UndefinedFunction) for sub in item)}")
++assert all(isinstance(sub, smp.core.function.UndefinedFunction) for item in result for sub in item)
++print("✓ All are UndefinedFunction")
++
++# Test 5: Test with assumptions
++print("\n5. Testing with assumptions and tuple input:")
++a, b = smp.symbols(('a', 'b'), real=True, positive=True)
++print(f"a: {a}, is_real: {a.is_real}, is_positive: {a.is_positive}")
++print(f"b: {b}, is_real: {b.is_real}, is_positive: {b.is_positive}")
++assert a.is_real and a.is_positive
++assert b.is_real and b.is_positive
++print("✓ Assumptions preserved")
++
++# Test 6: Test edge case with nested tuples
++print("\n6. Testing with nested structures:")
++try:
++    result = smp.symbols((('x', 'y'), ('z', 'w')), cls=Function)
++    print(f"Result: {result}")
++    print(f"Type: {type(result)}")
++except Exception as e:
++    print(f"Expected behavior - Error: {type(e).__name__}: {e}")
++
++print("\n=== All tests passed! ===")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..948c9c75e7
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,17 @@
++import sympy as smp
++
++# Testing the issue
++print("Testing with extra parentheses:")
++q, u = smp.symbols(('q:2', 'u:2'), cls=smp.Function)
++print(f"Type of q[0]: {type(q[0])}")
++print(f"Type of q[1]: {type(q[1])}")
++print(f"Type of u[0]: {type(u[0])}")
++print(f"Type of u[1]: {type(u[1])}")
++
++print("\nTesting without extra parentheses:")
++result = smp.symbols('q:2 u:2', cls=smp.Function)
++print(f"Result type: {type(result)}")
++print(f"Result: {result}")
++if isinstance(result, tuple):
++    for i, item in enumerate(result):
++        print(f"Item {i}: {item}, type: {type(item)}")
+diff --git a/test_issue2.py b/test_issue2.py
+new file mode 100644
+index 0000000000..a346636716
+--- /dev/null
++++ b/test_issue2.py
+@@ -0,0 +1,27 @@
++import sympy as smp
++
++# Testing the issue
++print("Testing with extra parentheses (tuple input):")
++q, u = smp.symbols(('q:2', 'u:2'), cls=smp.Function)
++print(f"Type of q[0]: {type(q[0])}")
++print(f"Type of q[1]: {type(q[1])}")
++print(f"Type of u[0]: {type(u[0])}")
++print(f"Type of u[1]: {type(u[1])}")
++
++print("\nTesting without extra parentheses (string input):")
++result = smp.symbols('q:2 u:2', cls=smp.Function)
++print(f"Result type: {type(result)}")
++print(f"Result: {result}")
++if isinstance(result, tuple):
++    for i, item in enumerate(result):
++        print(f"Item {i}: {item}, type: {type(item)}")
++
++print("\nTesting with list input:")
++result2 = smp.symbols(['q:2', 'u:2'], cls=smp.Function)
++print(f"Result2 type: {type(result2)}")
++print(f"Result2: {result2}")
++for i, item in enumerate(result2):
++    print(f"Item {i}: {item}, type: {type(item)}")
++    if isinstance(item, tuple):
++        for j, subitem in enumerate(item):
++            print(f"  Subitem {j}: {subitem}, type: {type(subitem)}")
+diff --git a/verify_issue.py b/verify_issue.py
+new file mode 100644
+index 0000000000..ec451886bd
+--- /dev/null
++++ b/verify_issue.py
+@@ -0,0 +1,13 @@
++import sympy as smp
++
++print("Reproducing the issue from the problem statement:")
++q, u = smp.symbols(('q:2', 'u:2'), cls=smp.Function)
++print(f"Type of q[0]: {type(q[0])}")
++
++print("\nExpected result: <class 'sympy.core.function.UndefinedFunction'>")
++print(f"Actual result: {type(q[0])}")
++
++if str(type(q[0])) == "<class 'sympy.core.function.UndefinedFunction'>":
++    print("\n✓ Issue fixed!")
++else:
++    print("\n✗ Issue not fixed")

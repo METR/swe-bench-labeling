@@ -1,0 +1,52 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index b6af5f5491..14ba427420 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -223,9 +223,17 @@ def get_child_arguments():
+     # __spec__ is set when the server was started with the `-m` option,
+     # see https://docs.python.org/3/reference/import.html#main-spec
+     # __spec__ may not exist, e.g. when running in a Conda env.
+-    if getattr(__main__, '__spec__', None) is not None and __main__.__spec__.parent:
+-        args += ['-m', __main__.__spec__.parent]
+-        args += sys.argv[1:]
++    if getattr(__main__, '__spec__', None) is not None:
++        spec = __main__.__spec__
++        if spec.name.endswith('.__main__'):
++            # Package with __main__.py executed
++            module_name = spec.parent
++        else:
++            # Module executed directly
++            module_name = spec.name
++        if module_name:
++            args += ['-m', module_name]
++            args += sys.argv[1:]
+     elif not py_script.exists():
+         # sys.argv[0] may not exist for several reasons on Windows.
+         # It may exist with a .exe extension or have a -script.py suffix.
+diff --git a/tests/utils_tests/test_autoreload.py b/tests/utils_tests/test_autoreload.py
+index 7b91686bf5..464ec72744 100644
+--- a/tests/utils_tests/test_autoreload.py
++++ b/tests/utils_tests/test_autoreload.py
+@@ -230,6 +230,22 @@ class TestChildArguments(SimpleTestCase):
+                 [sys.executable, __file__, 'runserver']
+             )
+ 
++    @mock.patch('sys.argv', ['mymodule.py', 'runserver'])
++    @mock.patch('sys.warnoptions', [])
++    def test_run_as_non_package_module(self):
++        """Test a module like 'python -m foo.bar.baz' where baz is a module, not a package."""
++        module = types.ModuleType('__main__')
++        module.__spec__ = types.SimpleNamespace(
++            name='foo.bar.baz',
++            parent='foo.bar',
++            loader=None
++        )
++        with mock.patch.dict(sys.modules, {'__main__': module}):
++            self.assertEqual(
++                autoreload.get_child_arguments(),
++                [sys.executable, '-m', 'foo.bar.baz', 'runserver']
++            )
++
+ 
+ class TestUtilities(SimpleTestCase):
+     def test_is_django_module(self):

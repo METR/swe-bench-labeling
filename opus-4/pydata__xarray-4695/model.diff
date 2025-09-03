@@ -1,0 +1,155 @@
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 00000000..8333d514
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,46 @@
++import numpy as np
++from xarray import DataArray
++
++# Test basic loc functionality still works
++print("Test 1: Basic loc functionality")
++arr = DataArray(np.arange(6).reshape(2, 3), dims=['x', 'y'], 
++                coords={'x': ['a', 'b'], 'y': [10, 20, 30]})
++print("Original array:")
++print(arr)
++print("\narr.loc[{'x': 'a', 'y': 20}]:")
++print(arr.loc[{'x': 'a', 'y': 20}])
++
++# Test with dimensions named after sel parameters
++print("\n\nTest 2: Dimensions named after sel parameters")
++problematic_dims = ['method', 'tolerance', 'drop']
++for dim_name in problematic_dims:
++    print(f"\nTesting dimension '{dim_name}':")
++    arr = DataArray(np.arange(4).reshape(2, 2), dims=['x', dim_name],
++                    coords={'x': ['a', 'b'], dim_name: ['c', 'd']})
++    try:
++        result = arr.loc[{'x': 'a', dim_name: 'c'}]
++        print(f"  Success! arr.loc[{{'x': 'a', '{dim_name}': 'c'}}] = {result.values}")
++    except Exception as e:
++        print(f"  Error: {type(e).__name__}: {e}")
++
++# Test slicing
++print("\n\nTest 3: Slicing with problematic dimension names")
++arr = DataArray(np.arange(10), dims=['method'], coords={'method': np.arange(10)})
++print("arr.loc[{'method': slice(2, 5)}]:")
++print(arr.loc[{'method': slice(2, 5)}])
++
++# Test with actual method parameter 
++print("\n\nTest 4: Using actual method parameter with sel")
++arr = DataArray([1, 2, 4, 5], dims=['x'], coords={'x': [1.0, 2.0, 4.0, 5.0]})
++print("Original array:")
++print(arr)
++print("\narr.sel(x=3.0, method='nearest'):")
++print(arr.sel(x=3.0, method='nearest'))
++
++# Test mixed dict and non-dict indexing
++print("\n\nTest 5: Non-dict indexing")
++arr = DataArray(np.arange(6).reshape(2, 3), dims=['x', 'y'])
++print("arr.loc[0, 1]:")
++print(arr.loc[0, 1])
++
++print("\n\nAll tests completed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..0e08f2a4
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,23 @@
++import numpy as np
++from xarray import DataArray, Dataset
++
++empty = np.zeros((2,2))
++D1 = DataArray(empty, dims=['dim1', 'dim2'],   coords={'dim1':['x', 'y'], 'dim2':['a', 'b']})
++D2 = DataArray(empty, dims=['dim1', 'method'], coords={'dim1':['x', 'y'], 'method':['a', 'b']})
++
++print("D1.loc[dict(dim1='x', dim2='a')]:")
++print(D1.loc[dict(dim1='x', dim2='a')])    # works
++
++print("\nD2.loc[dict(dim1='x', method='a')]:")
++try:
++    print(D2.loc[dict(dim1='x', method='a')])  # does not work!!
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++# Test with Dataset
++print("\n\nTesting with Dataset:")
++ds = Dataset({'var': D2})
++print("\nds.loc[dict(dim1='x', method='a')]:")
++try:
++    print(ds.loc[dict(dim1='x', method='a')])
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file
+diff --git a/test_loc_method_dim.py b/test_loc_method_dim.py
+new file mode 100644
+index 00000000..0d9419e4
+--- /dev/null
++++ b/test_loc_method_dim.py
+@@ -0,0 +1,54 @@
++"""
++Test for the fix of the issue where naming a dimension "method" throws error when calling ".loc"
++This test ensures that dimensions can be named after sel() parameters without causing conflicts.
++"""
++import numpy as np
++import pytest
++from xarray import DataArray
++
++def test_loc_with_method_dimension():
++    """Test that loc works correctly when a dimension is named 'method'"""
++    empty = np.zeros((2, 2))
++    D1 = DataArray(empty, dims=['dim1', 'dim2'], coords={'dim1': ['x', 'y'], 'dim2': ['a', 'b']})
++    D2 = DataArray(empty, dims=['dim1', 'method'], coords={'dim1': ['x', 'y'], 'method': ['a', 'b']})
++    
++    # This should work
++    result1 = D1.loc[dict(dim1='x', dim2='a')]
++    assert result1.values == 0
++    assert result1.coords['dim1'].values == 'x'
++    assert result1.coords['dim2'].values == 'a'
++    
++    # This should also work (the main fix)
++    result2 = D2.loc[dict(dim1='x', method='a')]
++    assert result2.values == 0
++    assert result2.coords['dim1'].values == 'x'
++    assert result2.coords['method'].values == 'a'
++
++def test_loc_with_tolerance_dimension():
++    """Test that loc works correctly when a dimension is named 'tolerance'"""
++    arr = DataArray(np.arange(4).reshape(2, 2), dims=['x', 'tolerance'],
++                    coords={'x': ['a', 'b'], 'tolerance': ['c', 'd']})
++    result = arr.loc[{'x': 'a', 'tolerance': 'c'}]
++    assert result.values == 0
++
++def test_loc_with_drop_dimension():
++    """Test that loc works correctly when a dimension is named 'drop'"""
++    arr = DataArray(np.arange(4).reshape(2, 2), dims=['x', 'drop'],
++                    coords={'x': ['a', 'b'], 'drop': ['c', 'd']})
++    result = arr.loc[{'x': 'a', 'drop': 'c'}]
++    assert result.values == 0
++
++def test_sel_with_actual_method_parameter():
++    """Test that sel still works correctly with its actual method parameter"""
++    arr = DataArray([1, 2, 4, 5], dims=['x'], coords={'x': [1.0, 2.0, 4.0, 5.0]})
++    # Using sel directly with method parameter should still work
++    result = arr.sel(x=3.0, method='nearest')
++    assert result.values == 4
++    assert result.coords['x'].values == 4.0
++
++if __name__ == "__main__":
++    test_loc_with_method_dimension()
++    test_loc_with_tolerance_dimension()
++    test_loc_with_drop_dimension()
++    test_sel_with_actual_method_parameter()
++    print("All tests passed!")
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index 32b24ef1..7b98c9aa 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -196,7 +196,7 @@ class _LocIndexer:
+             # expand the indexer so we can handle Ellipsis
+             labels = indexing.expanded_indexer(key, self.data_array.ndim)
+             key = dict(zip(self.data_array.dims, labels))
+-        return self.data_array.sel(**key)
++        return self.data_array.sel(indexers=key)
+ 
+     def __setitem__(self, key, value) -> None:
+         if not utils.is_dict_like(key):

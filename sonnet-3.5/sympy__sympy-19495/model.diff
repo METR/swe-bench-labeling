@@ -1,0 +1,88 @@
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..001e67ceef
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,8 @@
++import unittest
++import sys
++sys.path.append('/testbed')
++
++from sympy.sets.tests.test_conditionset import *
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/sympy/sets/conditionset.py b/sympy/sets/conditionset.py
+index 118eda6f77..30814ce89a 100644
+--- a/sympy/sets/conditionset.py
++++ b/sympy/sets/conditionset.py
+@@ -242,8 +242,20 @@ def _eval_subs(self, old, new):
+             return self.func(sym, cond, base)
+         cond = self.condition.subs(old, new)
+         base = self.base_set.subs(old, new)
++        
++        # Handle ImageSet substitution
++        from sympy.sets import ImageSet
++        if isinstance(base, ImageSet):
++            lambda_func = base.lamda
++            new_lambda = lambda_func.subs(old, new)
++            new_base = ImageSet(new_lambda, base.base_set)
++            new_cond = cond.subs(old, new)
++            if new_cond is S.true:
++                return new_base
++            return self.func(self.sym, new_cond, new_base)
++        
+         if cond is S.true:
+-            return ConditionSet(new, Contains(new, base), base)
++            return base
+         return self.func(self.sym, cond, base)
+ 
+     def dummy_eq(self, other, symbol=None):
+diff --git a/sympy/sets/tests/test_conditionset.py b/sympy/sets/tests/test_conditionset.py
+index 0d4527a52c..aa0f4e8916 100644
+--- a/sympy/sets/tests/test_conditionset.py
++++ b/sympy/sets/tests/test_conditionset.py
+@@ -129,6 +129,19 @@ def test_subs_CondSet():
+     assert ConditionSet(f(x), f(x) < 1, {w, z}
+         ).subs(f(x), y) == ConditionSet(y, y < 1, {w, z})
+ 
++    # New test cases for ImageSet substitution
++    from sympy import ImageSet, Lambda, pi, asin, Rational
++    image_set = ImageSet(Lambda(n, 2*pi*n + asin(y)), S.Integers)
++    cond_set = ConditionSet(x, Contains(y, Interval(-1, 1)), image_set)
++
++    result = cond_set.subs(y, Rational(1, 3))
++    expected = ImageSet(Lambda(n, 2*pi*n + asin(Rational(1, 3))), S.Integers)
++    assert result == expected
++
++    result2 = cond_set.subs(y, z)
++    expected2 = ConditionSet(x, Contains(z, Interval(-1, 1)), ImageSet(Lambda(n, 2*pi*n + asin(z)), S.Integers))
++    assert result2 == expected2
++
+ 
+ def test_subs_CondSet_tebr():
+     with warns_deprecated_sympy():
+@@ -179,3 +192,23 @@ def test_failing_contains():
+     # and the comparison is giving an error.
+     assert ConditionSet(x, 1/x >= 0, S.Reals).contains(0) == \
+         Contains(0, ConditionSet(x, 1/x >= 0, S.Reals), evaluate=False)
++
++def test_subs_CondSet_with_ImageSet():
++    from sympy import ImageSet, Lambda, S, pi, asin, symbols, Interval, Contains, Rational
++    from sympy.sets import ConditionSet
++    x, y, n, z = symbols('x y n z')
++    
++    # Test case for the reported issue
++    image_set = ImageSet(Lambda(n, 2*pi*n + asin(y)), S.Integers)
++    cond_set = ConditionSet(x, Contains(y, Interval(-1, 1)), image_set)
++    
++    # Substitute y with 1/3
++    result = cond_set.subs(y, Rational(1, 3))
++    
++    expected = ImageSet(Lambda(n, 2*pi*n + asin(Rational(1, 3))), S.Integers)
++    assert result == ConditionSet(x, Contains(Rational(1, 3), Interval(-1, 1)), expected)
++
++    # Test another substitution
++    result2 = cond_set.subs(y, z)
++    expected2 = ImageSet(Lambda(n, 2*pi*n + asin(z)), S.Integers)
++    assert result2 == ConditionSet(x, Contains(z, Interval(-1, 1)), expected2)

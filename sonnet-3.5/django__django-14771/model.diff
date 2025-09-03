@@ -1,0 +1,16 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index cc65c043ab..51cd5391f7 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -256,6 +256,11 @@ def trigger_reload(filename):
+ def restart_with_reloader():
+     new_environ = {**os.environ, DJANGO_AUTORELOAD_ENV: 'true'}
+     args = get_child_arguments()
++    
++    # Add -X options to args
++    x_options = [arg for arg in sys.argv if arg.startswith('-X')]
++    args = args[:1] + x_options + args[1:]
++    
+     while True:
+         p = subprocess.run(args, env=new_environ, close_fds=False)
+         if p.returncode != 3:

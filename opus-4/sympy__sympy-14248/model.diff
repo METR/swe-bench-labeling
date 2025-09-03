@@ -1,0 +1,114 @@
+diff --git a/sympy/printing/pretty/pretty.py b/sympy/printing/pretty/pretty.py
+index db24f4c612..d4933105c5 100644
+--- a/sympy/printing/pretty/pretty.py
++++ b/sympy/printing/pretty/pretty.py
+@@ -819,7 +819,41 @@ def _print_BlockMatrix(self, B):
+         return self._print(B.blocks)
+ 
+     def _print_MatAdd(self, expr):
+-        return self._print_seq(expr.args, None, None, ' + ')
++        # Similar logic to _print_Add to handle negative terms
++        pforms = []
++        for i, arg in enumerate(expr.args):
++            pform = self._print(arg)
++            
++            # Check if this is a negative term
++            if hasattr(arg, 'as_coeff_mmul'):
++                coeff, rest = arg.as_coeff_mmul()
++                if coeff == S.NegativeOne:
++                    # This is a negative term
++                    if i == 0:
++                        if rest.is_MatMul:
++                            # Multiple matrices being multiplied
++                            pform = self._print(rest)
++                        else:
++                            # Single matrix
++                            pform = self._print(rest)
++                        pform = prettyForm(*stringPict.next('-', pform))
++                    else:
++                        if rest.is_MatMul:
++                            pform = self._print(rest)
++                        else:
++                            pform = self._print(rest)
++                        pform = prettyForm(*stringPict.next(' - ', pform))
++                    pforms.append(pform)
++                    continue
++            
++            # Regular positive term
++            if i == 0:
++                pforms.append(pform)
++            else:
++                pform = prettyForm(*stringPict.next(' + ', pform))
++                pforms.append(pform)
++        
++        return prettyForm.__add__(*pforms)
+ 
+     def _print_MatMul(self, expr):
+         args = list(expr.args)
+diff --git a/sympy/printing/str.py b/sympy/printing/str.py
+index 0baefe0f7f..8f1c807e90 100644
+--- a/sympy/printing/str.py
++++ b/sympy/printing/str.py
+@@ -304,16 +304,46 @@ def _print_Mul(self, expr):
+             return sign + '*'.join(a_str) + "/(%s)" % '*'.join(b_str)
+ 
+     def _print_MatMul(self, expr):
+-        return '*'.join([self.parenthesize(arg, precedence(expr))
+-            for arg in expr.args])
++        # Check for negative leading coefficient like regular Mul
++        from sympy.matrices.expressions.matmul import MatMul
++        c, e = expr.as_coeff_mmul()
++        if c == S.One:
++            # No special coefficient, print normally
++            return '*'.join([self.parenthesize(arg, precedence(expr))
++                for arg in expr.args])
++        elif c == S.NegativeOne:
++            # Negative coefficient, print without it
++            if isinstance(e, MatMul):
++                return "-" + '*'.join([self.parenthesize(arg, precedence(expr))
++                    for arg in e.args])
++            else:
++                # Single matrix
++                return "-" + self._print(e)
++        else:
++            # Other coefficient, include it
++            return '*'.join([self.parenthesize(arg, precedence(expr))
++                for arg in expr.args])
+ 
+     def _print_HadamardProduct(self, expr):
+         return '.*'.join([self.parenthesize(arg, precedence(expr))
+             for arg in expr.args])
+ 
+     def _print_MatAdd(self, expr):
+-        return ' + '.join([self.parenthesize(arg, precedence(expr))
+-            for arg in expr.args])
++        # Logic similar to _print_Add to handle negative terms properly
++        PREC = precedence(expr)
++        l = []
++        for arg in expr.args:
++            t = self.parenthesize(arg, PREC)
++            if t.startswith('-'):
++                sign = "-"
++                t = t[1:]
++            else:
++                sign = "+"
++            l.extend([sign, t])
++        sign = l.pop(0)
++        if sign == '+':
++            sign = ""
++        return sign + ' '.join(l)
+ 
+     def _print_NaN(self, expr):
+         return 'nan'
+diff --git a/test_matrix_print.py b/test_matrix_print.py
+new file mode 100644
+index 0000000000..e384c479b8
+--- /dev/null
++++ b/test_matrix_print.py
+@@ -0,0 +1,6 @@
++from sympy import *
++A = MatrixSymbol('A', 2, 2)
++B = MatrixSymbol('B', 2, 2)
++print("str:", A - A*B - B)
++pprint(A - A*B - B)
++print("latex:", latex(A - A*B - B))

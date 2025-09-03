@@ -1,0 +1,79 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index fb6639793a..2860031328 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -14,7 +14,7 @@ from django.db import (
+     DJANGO_VERSION_PICKLE_KEY, IntegrityError, NotSupportedError, connections,
+     router, transaction,
+ )
+-from django.db.models import AutoField, DateField, DateTimeField, sql
++from django.db.models import AutoField, DateField, DateTimeField, sql, DeferredAttribute
+ from django.db.models.constants import LOOKUP_SEP
+ from django.db.models.deletion import Collector
+ from django.db.models.expressions import Case, Expression, F, Ref, Value, When
+@@ -84,10 +84,36 @@ class ModelIterable(BaseIterable):
+                 except KeyError:
+                     pass  # May happen in qs1 | qs2 scenarios.
+                 else:
+-                    setattr(obj, field.name, rel_obj)
++                    # Check if the field is deferred before setting it
++                    if field.name not in obj.get_deferred_fields():
++                        setattr(obj, field.name, rel_obj)
++                    else:
++                        # If the field is deferred, use a custom descriptor to handle lazy loading
++                        setattr(obj.__class__, field.name, DeferredRelatedDescriptor(field, rel_obj))
+ 
+             yield obj
+ 
++class DeferredRelatedDescriptor:
++    def __init__(self, field, related_obj):
++        self.field = field
++        self.related_obj = related_obj
++
++    def __get__(self, instance, owner=None):
++        if instance is None:
++            return self
++        # Load the deferred field when accessed
++        instance.refresh_from_db(fields=[self.field.name])
++        # Replace this descriptor with the actual value
++        setattr(instance, self.field.name, self.related_obj)
++        return self.related_obj
++
++    def __set__(self, instance, value):
++        # Update the related object and set the field value
++        self.related_obj = value
++        setattr(instance, self.field.name, value)
++        # Remove this descriptor, as the field is no longer deferred
++        delattr(instance.__class__, self.field.name)
++
+ 
+ class ValuesIterable(BaseIterable):
+     """
+@@ -1760,6 +1786,27 @@ def prefetch_related_objects(model_instances, *related_lookups):
+                                  "prefetching - this is an invalid parameter to "
+                                  "prefetch_related()." % lookup.prefetch_through)
+ 
++            # Handle deferred fields
++            if isinstance(descriptor, DeferredAttribute):
++                for obj in obj_list:
++                    if through_attr not in obj.get_deferred_fields():
++                        continue
++                    field = obj.__class__._meta.get_field(through_attr)
++                    if not hasattr(obj.__class__, through_attr):
++                        setattr(obj.__class__, through_attr, DeferredRelatedDescriptor(field, None))
++                    getattr(obj.__class__, through_attr).__set__(obj, None)
++
++            if descriptor is None:
++                # We don't have a descriptor, so we need to use getattr() to
++                # fetch the value from the object. This is slower, but allows
++                # us to fetch values from non-model instances.
++                def getter(obj):
++                    return getattr(obj, through_attr)
++                setter = None
++            else:
++                getter = descriptor.__get__
++                setter = descriptor.__set__
++
+             obj_to_fetch = None
+             if prefetcher is not None:
+                 obj_to_fetch = [obj for obj in obj_list if not is_fetched(obj)]

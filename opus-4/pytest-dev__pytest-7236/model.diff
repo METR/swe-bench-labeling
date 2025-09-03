@@ -1,0 +1,148 @@
+diff --git a/repro_exact.py b/repro_exact.py
+new file mode 100644
+index 000000000..018889ff1
+--- /dev/null
++++ b/repro_exact.py
+@@ -0,0 +1,10 @@
++import unittest
++
++class MyTestCase(unittest.TestCase):
++    def setUp(self):
++        xxx
++    @unittest.skip("hello")
++    def test_one(self):
++        pass
++    def tearDown(self):
++        xxx
+diff --git a/src/_pytest/unittest.py b/src/_pytest/unittest.py
+index 773f545af..d3b3f069f 100644
+--- a/src/_pytest/unittest.py
++++ b/src/_pytest/unittest.py
+@@ -122,7 +122,17 @@ class TestCaseFunction(Function):
+ 
+     def teardown(self):
+         if self._explicit_tearDown is not None:
+-            self._explicit_tearDown()
++            # Only call tearDown if the test was not skipped
++            if self._testcase is not None:
++                # Check if test is skipped at class level or method level
++                is_skipped = getattr(self._testcase, "__unittest_skip__", False)
++                if not is_skipped:
++                    test_method = getattr(self._testcase, self.name, None)
++                    if test_method:
++                        is_skipped = getattr(test_method, "__unittest_skip__", False)
++                
++                if not is_skipped:
++                    self._explicit_tearDown()
+             self._explicit_tearDown = None
+         self._testcase = None
+         self._obj = None
+diff --git a/testing/test_unittest_skip_pdb.py b/testing/test_unittest_skip_pdb.py
+new file mode 100644
+index 000000000..a8f7c2aa8
+--- /dev/null
++++ b/testing/test_unittest_skip_pdb.py
+@@ -0,0 +1,103 @@
++"""Test for issue: unittest.TestCase.tearDown executed on skipped tests when running --pdb"""
++import textwrap
++
++
++def test_unittest_skip_with_pdb(testdir):
++    """Ensure that unittest skipped tests do not call tearDown when --pdb is used."""
++    testpath = testdir.makepyfile(
++        """
++        import unittest
++
++        class MyTestCase(unittest.TestCase):
++            def setUp(self):
++                xxx  # This should not be reached for skipped tests
++                
++            @unittest.skip("hello")
++            def test_one(self):
++                pass
++                
++            def tearDown(self):
++                xxx  # This should not be reached for skipped tests
++        """
++    )
++    
++    # Without --pdb, test should be skipped normally
++    result = testdir.runpytest(testpath, "-v")
++    result.stdout.fnmatch_lines([
++        "*test_unittest_skip_with_pdb.py::MyTestCase::test_one SKIPPED*",
++        "*1 skipped*",
++    ])
++    assert result.ret == 0
++    
++    # With --pdb, test should still be skipped and tearDown should not be called
++    result = testdir.runpytest(testpath, "--pdb", "-v")
++    result.stdout.fnmatch_lines([
++        "*test_unittest_skip_with_pdb.py::MyTestCase::test_one SKIPPED*",
++        "*1 skipped*",
++    ])
++    # Should not have any errors from tearDown
++    assert "ERROR" not in result.stdout.str()
++    assert "NameError" not in result.stdout.str()
++    assert result.ret == 0
++
++
++def test_unittest_skip_class_with_pdb(testdir):
++    """Ensure that unittest skipped test classes do not call tearDown when --pdb is used."""
++    testpath = testdir.makepyfile(
++        """
++        import unittest
++
++        @unittest.skip("skipping class")
++        class MyTestCase(unittest.TestCase):
++            def setUp(self):
++                xxx  # This should not be reached
++                
++            def test_one(self):
++                pass
++                
++            def tearDown(self):
++                xxx  # This should not be reached
++        """
++    )
++    
++    # With --pdb, test should still be skipped and tearDown should not be called
++    result = testdir.runpytest(testpath, "--pdb", "-v")
++    result.stdout.fnmatch_lines([
++        "*test_unittest_skip_class_with_pdb.py::MyTestCase::test_one SKIPPED*",
++        "*1 skipped*",
++    ])
++    # Should not have any errors from tearDown
++    assert "ERROR" not in result.stdout.str()
++    assert "NameError" not in result.stdout.str()
++    assert result.ret == 0
++
++
++def test_unittest_pdb_teardown_still_called_for_non_skipped(testdir):
++    """Ensure that tearDown is still called for non-skipped tests when using --pdb."""
++    testpath = testdir.makepyfile(
++        """
++        import unittest
++        
++        teardowns = []
++
++        class MyTestCase(unittest.TestCase):
++            def test_normal(self):
++                assert True
++                
++            def tearDown(self):
++                teardowns.append(self._testMethodName)
++                
++        # This will be checked after the test run
++        def test_teardowns_called():
++            assert teardowns == ["test_normal"], f"Expected tearDown for test_normal, got {teardowns}"
++        """
++    )
++    
++    # With --pdb, tearDown should still be called for non-skipped tests
++    result = testdir.runpytest(testpath, "--pdb", "-v")
++    result.stdout.fnmatch_lines([
++        "*test_unittest_pdb_teardown_still_called_for_non_skipped.py::MyTestCase::test_normal PASSED*",
++        "*test_unittest_pdb_teardown_still_called_for_non_skipped.py::test_teardowns_called PASSED*",
++        "*2 passed*",
++    ])
++    assert result.ret == 0

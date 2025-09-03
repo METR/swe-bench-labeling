@@ -1,0 +1,253 @@
+diff --git a/django/forms/widgets.py b/django/forms/widgets.py
+index 842b73e95c..f4bc74b7cd 100644
+--- a/django/forms/widgets.py
++++ b/django/forms/widgets.py
+@@ -1157,7 +1157,7 @@ class SelectDateWidget(Widget):
+             input_format = formats.sanitize_strftime_format(input_format)
+             try:
+                 date_value = datetime.date(int(y), int(m), int(d))
+-            except ValueError:
++            except (ValueError, OverflowError):
+                 # Return pseudo-ISO dates with zeros for any unselected values,
+                 # e.g. '2017-0-23'.
+                 return "%s-%s-%s" % (y or 0, m or 0, d or 0)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..936064161b
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,79 @@
++import datetime
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    USE_I18N=True,
++    USE_TZ=True,
++)
++django.setup()
++
++from django import forms
++from django.forms import SelectDateWidget
++
++class TestForm(forms.Form):
++    my_date = forms.DateField(widget=SelectDateWidget())
++
++def test_various_overflow_scenarios():
++    """Test various overflow scenarios with SelectDateWidget"""
++    
++    test_cases = [
++        # Case 1: Very large year value
++        {
++            'my_date_day': '1',
++            'my_date_month': '1', 
++            'my_date_year': str(sys.maxsize + 1)
++        },
++        # Case 2: Very large month value
++        {
++            'my_date_day': '1',
++            'my_date_month': str(sys.maxsize + 1), 
++            'my_date_year': '2023'
++        },
++        # Case 3: Very large day value
++        {
++            'my_date_day': str(sys.maxsize + 1),
++            'my_date_month': '1', 
++            'my_date_year': '2023'
++        },
++        # Case 4: All very large values
++        {
++            'my_date_day': str(sys.maxsize + 1),
++            'my_date_month': str(sys.maxsize + 1), 
++            'my_date_year': str(sys.maxsize + 1)
++        },
++        # Case 5: Normal valid date (should work)
++        {
++            'my_date_day': '15',
++            'my_date_month': '6', 
++            'my_date_year': '2023'
++        },
++        # Case 6: Invalid date but within int range (Feb 31)
++        {
++            'my_date_day': '31',
++            'my_date_month': '2', 
++            'my_date_year': '2023'
++        }
++    ]
++    
++    for i, data in enumerate(test_cases, 1):
++        print(f"\nTest case {i}: {data}")
++        form = TestForm(data)
++        
++        try:
++            is_valid = form.is_valid()
++            print(f"  Form is valid: {is_valid}")
++            if not is_valid:
++                print(f"  Form errors: {form.errors}")
++            else:
++                print(f"  Cleaned data: {form.cleaned_data}")
++        except Exception as e:
++            print(f"  ERROR: {type(e).__name__}: {e}")
++            raise
++
++if __name__ == "__main__":
++    test_various_overflow_scenarios()
+diff --git a/test_issue_repro.py b/test_issue_repro.py
+new file mode 100644
+index 0000000000..7c904e81a2
+--- /dev/null
++++ b/test_issue_repro.py
+@@ -0,0 +1,53 @@
++import django
++from django.conf import settings
++from django.urls import path
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    USE_I18N=True,
++    USE_TZ=True,
++    ROOT_URLCONF=__name__,
++    MIDDLEWARE=[],
++)
++django.setup()
++
++from django import forms
++from django.forms import SelectDateWidget
++from django.http import HttpResponse
++
++class ReproForm(forms.Form):
++    my_date = forms.DateField(widget=SelectDateWidget())
++
++def repro_view(request):
++    form = ReproForm(request.GET)  # for ease of reproducibility
++    if form.is_valid():
++        return HttpResponse("ok")
++    else:
++        return HttpResponse("not ok")
++
++# URL patterns
++urlpatterns = [
++    path('repro/', repro_view, name='repro'),
++]
++
++# Simulate the request with the problematic data
++from django.test import RequestFactory
++
++factory = RequestFactory()
++# Create the problematic request from the issue description
++request = factory.get('/repro/', {
++    'my_date_day': '1',
++    'my_date_month': '1',
++    'my_date_year': '1234567821345678'
++})
++
++print("Testing with URL parameters from issue: ?my_date_day=1&my_date_month=1&my_date_year=1234567821345678")
++try:
++    response = repro_view(request)
++    print(f"Response: {response.content.decode()}")
++    print("Success! No OverflowError raised.")
++except OverflowError as e:
++    print(f"ERROR: OverflowError raised: {e}")
++    raise
+diff --git a/test_overflow_issue.py b/test_overflow_issue.py
+new file mode 100644
+index 0000000000..12400e19ce
+--- /dev/null
++++ b/test_overflow_issue.py
+@@ -0,0 +1,44 @@
++import datetime
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    USE_I18N=True,
++    USE_TZ=True,
++)
++django.setup()
++
++from django import forms
++from django.forms import SelectDateWidget
++from django.http import HttpResponse
++
++class ReproForm(forms.Form):
++    my_date = forms.DateField(widget=SelectDateWidget())
++
++def test_overflow_error():
++    """Test that SelectDateWidget handles OverflowError gracefully"""
++    
++    # Simulate request data with a very large year value
++    data = {
++        'my_date_day': '1',
++        'my_date_month': '1', 
++        'my_date_year': str(sys.maxsize + 1)  # This will cause OverflowError
++    }
++    
++    form = ReproForm(data)
++    
++    # This should not crash with OverflowError
++    try:
++        is_valid = form.is_valid()
++        print(f"Form is valid: {is_valid}")
++        print(f"Form errors: {form.errors}")
++    except OverflowError as e:
++        print(f"ERROR: OverflowError raised: {e}")
++        raise
++
++if __name__ == "__main__":
++    test_overflow_error()
+diff --git a/tests/forms_tests/widget_tests/test_selectdatewidget.py b/tests/forms_tests/widget_tests/test_selectdatewidget.py
+index cfcd037987..8e1f1ab905 100644
+--- a/tests/forms_tests/widget_tests/test_selectdatewidget.py
++++ b/tests/forms_tests/widget_tests/test_selectdatewidget.py
+@@ -1,3 +1,4 @@
++import sys
+ from datetime import date
+ 
+ from django.forms import DateField, Form, SelectDateWidget
+@@ -621,6 +622,36 @@ class SelectDateWidgetTest(WidgetTest):
+                     self.widget.value_from_datadict(data, {}, "field"), expected
+                 )
+ 
++    def test_value_from_datadict_with_overflow_error(self):
++        """Test that SelectDateWidget handles OverflowError gracefully."""
++        # Test with very large year value that causes OverflowError
++        data = {
++            "field_year": str(sys.maxsize + 1),
++            "field_month": "1",
++            "field_day": "1",
++        }
++        # Should return pseudo-ISO date instead of raising OverflowError
++        result = self.widget.value_from_datadict(data, {}, "field")
++        self.assertEqual(result, f"{sys.maxsize + 1}-1-1")
++        
++        # Test with very large month value
++        data = {
++            "field_year": "2023",
++            "field_month": str(sys.maxsize + 1),
++            "field_day": "1",
++        }
++        result = self.widget.value_from_datadict(data, {}, "field")
++        self.assertEqual(result, f"2023-{sys.maxsize + 1}-1")
++        
++        # Test with very large day value
++        data = {
++            "field_year": "2023",
++            "field_month": "1",
++            "field_day": str(sys.maxsize + 1),
++        }
++        result = self.widget.value_from_datadict(data, {}, "field")
++        self.assertEqual(result, f"2023-1-{sys.maxsize + 1}")
++
+     def test_value_omitted_from_data(self):
+         self.assertIs(self.widget.value_omitted_from_data({}, {}, "field"), True)
+         self.assertIs(

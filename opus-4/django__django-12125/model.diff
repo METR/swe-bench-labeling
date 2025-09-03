@@ -1,0 +1,336 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index 7d226955d5..ead81c398a 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -269,7 +269,7 @@ class TypeSerializer(BaseSerializer):
+             if module == builtins.__name__:
+                 return self.value.__name__, set()
+             else:
+-                return "%s.%s" % (module, self.value.__name__), {"import %s" % module}
++                return "%s.%s" % (module, self.value.__qualname__), {"import %s" % module}
+ 
+ 
+ class UUIDSerializer(BaseSerializer):
+diff --git a/test_complete_inner_class.py b/test_complete_inner_class.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_enum_field.py b/test_enum_field.py
+new file mode 100644
+index 0000000000..05539373bb
+--- /dev/null
++++ b/test_enum_field.py
+@@ -0,0 +1,86 @@
++#!/usr/bin/env python
++import os
++import sys
++import enum
++from io import StringIO
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test_settings module
++with open('test_settings.py', 'w') as f:
++    f.write("""
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++SECRET_KEY = 'test'
++INSTALLED_APPS = [
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'testapp',
++]
++""")
++
++# Create test app
++os.makedirs('testapp', exist_ok=True)
++with open('testapp/__init__.py', 'w') as f:
++    f.write('')
++
++# Create models
++with open('testapp/models.py', 'w') as f:
++    f.write("""
++from django.db import models
++import enum
++
++class Thing(models.Model):
++    @enum.unique
++    class State(enum.Enum):
++        on = 'on'
++        off = 'off'
++    
++    # This will use Django's built-in CharField with choices
++    state = models.CharField(max_length=10, choices=[(s.value, s.name) for s in State])
++""")
++
++# Create apps.py
++with open('testapp/apps.py', 'w') as f:
++    f.write("""
++from django.apps import AppConfig
++
++class TestappConfig(AppConfig):
++    name = 'testapp'
++""")
++
++# Setup Django
++import django
++django.setup()
++
++# Run makemigrations
++from django.core.management import call_command
++
++# Create migrations directory
++os.makedirs('testapp/migrations', exist_ok=True)
++with open('testapp/migrations/__init__.py', 'w') as f:
++    f.write('')
++
++# Capture output
++output = StringIO()
++call_command('makemigrations', 'testapp', stdout=output, stderr=output)
++print("makemigrations output:")
++print(output.getvalue())
++
++# Read the generated migration file
++migration_files = [f for f in os.listdir('testapp/migrations') if f.startswith('0001_') and f.endswith('.py')]
++if migration_files:
++    migration_file = migration_files[0]
++    with open(os.path.join('testapp/migrations', migration_file), 'r') as f:
++        print("\nGenerated migration file content:")
++        print(f.read())
++
++# Cleanup
++import shutil
++shutil.rmtree('testapp')
++os.remove('test_settings.py')
+diff --git a/test_inner_class.py b/test_inner_class.py
+new file mode 100644
+index 0000000000..bdeef7c59f
+--- /dev/null
++++ b/test_inner_class.py
+@@ -0,0 +1,52 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++# Define test models
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test serialization
++from django.db.migrations.serializer import serializer_factory
++
++field = A._meta.get_field('field')
++serializer = serializer_factory(field.__class__)
++result, imports = serializer.serialize()
++print(f"Serialized result: {result}")
++print(f"Imports: {imports}")
++
++# Also test the field's deconstruct method
++name, path, args, kwargs = field.deconstruct()
++print(f"\nField deconstruct:")
++print(f"Name: {name}")
++print(f"Path: {path}")
++print(f"Args: {args}")
++print(f"Kwargs: {kwargs}")
+diff --git a/test_inner_class_serialization.py b/test_inner_class_serialization.py
+new file mode 100644
+index 0000000000..ec5c6537ca
+--- /dev/null
++++ b/test_inner_class_serialization.py
+@@ -0,0 +1,74 @@
++#!/usr/bin/env python
++"""Test that inner classes are serialized with their full qualified name."""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django.db.migrations.serializer import serializer_factory
++from django.db.migrations.writer import MigrationWriter
++
++# Test 1: Simple inner class
++class Outer:
++    class Inner:
++        pass
++
++# Test TypeSerializer directly
++serializer = serializer_factory(Outer.Inner)
++result, imports = serializer.serialize()
++print(f"Test 1 - TypeSerializer for Outer.Inner:")
++print(f"  Result: {result}")
++print(f"  Expected: __main__.Outer.Inner")
++print(f"  Success: {result == '__main__.Outer.Inner'}")
++
++# Test 2: Deeply nested class
++class Level1:
++    class Level2:
++        class Level3:
++            pass
++
++serializer = serializer_factory(Level1.Level2.Level3)
++result, imports = serializer.serialize()
++print(f"\nTest 2 - TypeSerializer for Level1.Level2.Level3:")
++print(f"  Result: {result}")
++print(f"  Expected: __main__.Level1.Level2.Level3")
++print(f"  Success: {result == '__main__.Level1.Level2.Level3'}")
++
++# Test 3: Migration Writer serialize method
++result, imports = MigrationWriter.serialize(Outer.Inner)
++print(f"\nTest 3 - MigrationWriter.serialize for Outer.Inner:")
++print(f"  Result: {result}")
++print(f"  Expected: __main__.Outer.Inner")
++print(f"  Success: {result == '__main__.Outer.Inner'}")
++
++# Test 4: Builtin type (should not change)
++serializer = serializer_factory(str)
++result, imports = serializer.serialize()
++print(f"\nTest 4 - TypeSerializer for builtin str:")
++print(f"  Result: {result}")
++print(f"  Expected: str")
++print(f"  Success: {result == 'str'}")
++
++print("\nAll tests passed!" if all([
++    MigrationWriter.serialize(Outer.Inner)[0] == '__main__.Outer.Inner',
++    MigrationWriter.serialize(Level1.Level2.Level3)[0] == '__main__.Level1.Level2.Level3',
++    MigrationWriter.serialize(str)[0] == 'str',
++]) else "Some tests failed!")
+diff --git a/test_migration_generation.py b/test_migration_generation.py
+new file mode 100644
+index 0000000000..4af9891f3e
+--- /dev/null
++++ b/test_migration_generation.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++import os
++import sys
++import tempfile
++import shutil
++from io import StringIO
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test_settings module
++with open('test_settings.py', 'w') as f:
++    f.write("""
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++SECRET_KEY = 'test'
++INSTALLED_APPS = [
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'testapp',
++]
++""")
++
++# Create test app
++os.makedirs('testapp', exist_ok=True)
++with open('testapp/__init__.py', 'w') as f:
++    f.write('')
++
++# Create models
++with open('testapp/models.py', 'w') as f:
++    f.write("""
++from django.db import models
++
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++""")
++
++# Create apps.py
++with open('testapp/apps.py', 'w') as f:
++    f.write("""
++from django.apps import AppConfig
++
++class TestappConfig(AppConfig):
++    name = 'testapp'
++""")
++
++# Setup Django
++import django
++django.setup()
++
++# Run makemigrations
++from django.core.management import call_command
++from django.db import connection
++
++# Create migrations directory
++os.makedirs('testapp/migrations', exist_ok=True)
++with open('testapp/migrations/__init__.py', 'w') as f:
++    f.write('')
++
++# Capture output
++output = StringIO()
++call_command('makemigrations', 'testapp', stdout=output, stderr=output)
++print("makemigrations output:")
++print(output.getvalue())
++
++# Read the generated migration file
++migration_files = [f for f in os.listdir('testapp/migrations') if f.startswith('0001_') and f.endswith('.py')]
++if migration_files:
++    migration_file = migration_files[0]
++    with open(os.path.join('testapp/migrations', migration_file), 'r') as f:
++        print("\nGenerated migration file content:")
++        print(f.read())
++
++# Cleanup
++shutil.rmtree('testapp')
++os.remove('test_settings.py')

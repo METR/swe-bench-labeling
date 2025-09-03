@@ -1,0 +1,399 @@
+diff --git a/setup.py b/setup.py
+index a404f1fa5..2c6848797 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/napoleon/docstring.py b/sphinx/ext/napoleon/docstring.py
+index b3daa06f1..6020db922 100644
+--- a/sphinx/ext/napoleon/docstring.py
++++ b/sphinx/ext/napoleon/docstring.py
+@@ -392,15 +392,24 @@ class GoogleDocstring:
+         lines = []
+         for _name, _type, _desc in fields:
+             _desc = self._strip_empty(_desc)
+-            if any(_desc):
+-                _desc = self._fix_field_desc(_desc)
+-                field = ':%s %s: ' % (field_role, _name)
+-                lines.extend(self._format_block(field, _desc))
++            
++            # Check if we have multiple parameter names
++            if ',' in _name:
++                # For multiple parameters, use the field list format instead
++                # This provides better rendering for grouped parameters
++                field = self._format_field(_name, _type, _desc)
++                lines.extend(self._format_block(':param: ', field))
+             else:
+-                lines.append(':%s %s:' % (field_role, _name))
++                # Single parameter - use standard docutils format
++                if any(_desc):
++                    _desc = self._fix_field_desc(_desc)
++                    field = ':%s %s: ' % (field_role, _name)
++                    lines.extend(self._format_block(field, _desc))
++                else:
++                    lines.append(':%s %s:' % (field_role, _name))
+ 
+-            if _type:
+-                lines.append(':%s %s: %s' % (type_role, _name, _type))
++                if _type:
++                    lines.append(':%s %s: %s' % (type_role, _name, _type))
+         return lines + ['']
+ 
+     def _format_field(self, _name: str, _type: str, _desc: List[str]) -> List[str]:
+diff --git a/test_complete.py b/test_complete.py
+new file mode 100644
+index 000000000..9ea7291e8
+--- /dev/null
++++ b/test_complete.py
+@@ -0,0 +1,114 @@
++#!/usr/bin/env python
++"""Comprehensive test of Napoleon parameter parsing."""
++
++from sphinx.ext.napoleon import Config
++from sphinx.ext.napoleon.docstring import NumpyDocstring, GoogleDocstring
++
++# Test various parameter formats
++test_cases = [
++    # NumPy style - multiple params on one line
++    ("NumPy - Multiple params", '''
++    Test function.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like
++        Input arrays.
++    x3 : int
++        Single parameter.
++    '''),
++    
++    # NumPy style - multiple optional params
++    ("NumPy - Multiple optional params", '''
++    Test function.
++    
++    Parameters
++    ----------
++    a, b, c : array_like, optional
++        Optional input arrays.
++    d : str, optional
++        Single optional parameter.
++    '''),
++    
++    # NumPy style - complex types
++    ("NumPy - Complex types", '''
++    Test function.
++    
++    Parameters
++    ----------
++    x, y : Union[int, float]
++        Complex type parameters.
++    z : Dict[str, Any], optional
++        Dictionary parameter.
++    '''),
++    
++    # Google style - multiple params  
++    ("Google - Multiple params", '''
++    Test function.
++    
++    Args:
++        x1, x2 (array_like): Input arrays.
++        x3 (int): Single parameter.
++    '''),
++    
++    # Single parameter (should work as before)
++    ("Single param", '''
++    Test function.
++    
++    Parameters
++    ----------
++    param : str
++        A single parameter.
++    '''),
++]
++
++config = Config(napoleon_use_param=True, napoleon_use_rtype=True)
++
++for name, docstring in test_cases:
++    print(f"\n{'='*60}")
++    print(f"Test: {name}")
++    print('='*60)
++    
++    if "Args:" in docstring:
++        parsed = GoogleDocstring(docstring, config)
++    else:
++        parsed = NumpyDocstring(docstring, config)
++    
++    print(str(parsed))
++
++# Also test edge cases
++print("\n" + "="*60)
++print("Edge case: Empty parameter names")
++print("="*60)
++
++edge_case = '''
++Test function.
++
++Parameters
++----------
++, : str
++    Invalid parameter spec.
++'''
++
++try:
++    parsed = NumpyDocstring(edge_case, config)
++    print(str(parsed))
++except Exception as e:
++    print(f"Error (expected): {e}")
++
++# Test with escaped parameter names
++print("\n" + "="*60)
++print("Edge case: Escaped parameter names")
++print("="*60)
++
++escaped_case = '''
++Test function.
++
++Parameters
++----------
++*args, **kwargs : tuple, dict
++    Variable arguments.
++'''
++
++parsed = NumpyDocstring(escaped_case, config)
++print(str(parsed))
+diff --git a/test_failing.py b/test_failing.py
+new file mode 100644
+index 000000000..b5cdfb190
+--- /dev/null
++++ b/test_failing.py
+@@ -0,0 +1,35 @@
++#!/usr/bin/env python
++"""Test the failing case."""
++
++from sphinx.ext.napoleon import Config
++from sphinx.ext.napoleon.docstring import NumpyDocstring
++
++docstring = """
++Single line summary
++
++Parameters
++----------
++arg1:str
++     Extended description of arg1
++*args, **kwargs:
++    Variable length argument list and arbitrary keyword arguments.
++"""
++
++config = Config(
++    napoleon_use_param=False,
++    napoleon_use_rtype=False,
++    napoleon_use_keyword=False)
++
++actual = str(NumpyDocstring(docstring, config))
++print("Actual output:")
++print(repr(actual))
++
++expected = """
++Single line summary
++
++:Parameters: * **arg1** (*str*) -- Extended description of arg1
++             * **\\*args, \\*\\*kwargs** -- Variable length argument list and arbitrary keyword arguments.
++"""
++
++print("\nExpected output:")
++print(repr(expected))
+diff --git a/test_multiparams.py b/test_multiparams.py
+new file mode 100644
+index 000000000..af0738566
+--- /dev/null
++++ b/test_multiparams.py
+@@ -0,0 +1,36 @@
++#!/usr/bin/env python
++"""Test module for multiple parameter names on one line."""
++
++def test_function(x1, x2, x3):
++    """Test function with multiple parameters on one line.
++    
++    Parameters
++    ----------
++    x1, x2 : array_like
++        Input arrays, description of `x1`, `x2`.
++    x3 : int, optional
++        Optional parameter.
++    
++    Returns
++    -------
++    result : array_like
++        The result.
++    """
++    return x1 + x2 + x3
++
++def test_function2(a, b, c):
++    """Test function with optional parameters on one line.
++    
++    Parameters
++    ----------
++    a, b : array_like, optional
++        Input arrays, description of `a`, `b`.
++    c : int
++        Required parameter.
++    
++    Returns
++    -------
++    result : array_like
++        The result.
++    """
++    return a + b + c
+diff --git a/test_parse.py b/test_parse.py
+new file mode 100644
+index 000000000..fe406151b
+--- /dev/null
++++ b/test_parse.py
+@@ -0,0 +1,59 @@
++#!/usr/bin/env python
++"""Test Napoleon parsing of multiple parameters."""
++
++from sphinx.ext.napoleon import Config
++from sphinx.ext.napoleon.docstring import NumpyDocstring
++
++# Test docstring with multiple parameters on one line
++docstring1 = '''Test function with multiple parameters on one line.
++
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays, description of `x1`, `x2`.
++x3 : int, optional
++    Optional parameter.
++
++Returns
++-------
++result : array_like
++    The result.
++'''
++
++# Test docstring with optional multiple parameters
++docstring2 = '''Test function with optional parameters on one line.
++
++Parameters
++----------
++a, b : array_like, optional
++    Input arrays, description of `a`, `b`.
++c : int
++    Required parameter.
++
++Returns
++-------
++result : array_like
++    The result.
++'''
++
++# Test with napoleon_use_param=True (the default for most Sphinx setups)
++config = Config(napoleon_use_param=True, napoleon_use_rtype=True)
++
++print("=== Test 1: Multiple parameters on one line ===")
++parsed1 = NumpyDocstring(docstring1, config)
++print(str(parsed1))
++
++print("\n=== Test 2: Multiple optional parameters on one line ===")
++parsed2 = NumpyDocstring(docstring2, config)
++print(str(parsed2))
++
++# Also test with napoleon_use_param=False to see the difference
++config2 = Config(napoleon_use_param=False, napoleon_use_rtype=True)
++
++print("\n=== Test 1 with napoleon_use_param=False ===")
++parsed1_no_param = NumpyDocstring(docstring1, config2)
++print(str(parsed1_no_param))
++
++print("\n=== Test 2 with napoleon_use_param=False ===")
++parsed2_no_param = NumpyDocstring(docstring2, config2)
++print(str(parsed2_no_param))
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 000000000..26a5529cf
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,41 @@
++#!/usr/bin/env python
++"""Simple test of the fix."""
++
++from sphinx.ext.napoleon import Config
++from sphinx.ext.napoleon.docstring import NumpyDocstring
++
++# Test docstring with multiple parameters on one line
++docstring = '''Test function with multiple parameters on one line.
++
++Parameters
++----------
++x1, x2 : array_like
++    Input arrays, description of `x1`, `x2`.
++a, b : array_like, optional
++    Optional input arrays, description of `a`, `b`.
++x3 : int, optional
++    Optional parameter.
++'''
++
++# Test with napoleon_use_param=True
++config = Config(napoleon_use_param=True)
++parsed = NumpyDocstring(docstring, config)
++result = str(parsed)
++
++print("Result with napoleon_use_param=True:")
++print("=" * 50)
++print(result)
++
++# Extract just the parameter section for clarity
++print("\nParameter section only:")
++print("=" * 50)
++lines = result.split('\n')
++in_params = False
++for line in lines:
++    if ':param' in line:
++        in_params = True
++    if in_params:
++        if line.strip() == '' and ':param' not in lines[lines.index(line) + 1] if lines.index(line) + 1 < len(lines) else True:
++            print(line)
++            break
++        print(line)
+diff --git a/tox.ini b/tox.ini
+index bddd822a6..34baee205 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

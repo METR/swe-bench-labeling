@@ -1,0 +1,615 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 000000000..ce0f6867b
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,115 @@
++#!/usr/bin/env python
++"""Test with the exact example from the issue."""
++
++import os
++import sys
++import tempfile
++from pathlib import Path
++
++# Add sphinx to path  
++sys.path.insert(0, '/testbed')
++
++# Create test files
++tmpdir = Path(tempfile.mkdtemp())
++print(f"Working in: {tmpdir}")
++
++# Create the exact module from the issue
++test_py = tmpdir / "test_module.py"
++test_py.write_text('''
++from typing import Optional
++
++
++class Point:
++    """
++    A class representing a point.
++
++    Attributes:
++        x: Position X.
++        y: Position Y.
++    """
++    x: int
++    y: int
++
++
++class Square:
++    """A class representing a square figure."""
++    #: Square's start position (top-left corner).
++    start: Point
++    #: Square width.
++    width: int
++    #: Square height.
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Square's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++
++
++class Rectangle:
++    """
++    A class representing a square figure.
++
++    Attributes:
++        start: Rectangle's start position (top-left corner).
++        width: Rectangle width.
++        height: Rectangle width.
++    """
++    start: Point
++    width: int
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Rectangle's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++''')
++
++# Create conf.py
++conf_py = tmpdir / "conf.py"
++conf_py.write_text("""
++extensions = ['sphinx.ext.autodoc']
++""")
++
++# Create index.rst
++index_rst = tmpdir / "index.rst"
++index_rst.write_text("""
++Test Module
++===========
++
++.. automodule:: test_module
++   :members:
++   :undoc-members:
++""")
++
++# Change to tmpdir and run sphinx
++os.chdir(tmpdir)
++sys.path.insert(0, str(tmpdir))
++
++from sphinx.cmd.build import build_main
++
++# Build text output
++result = build_main(['-b', 'text', '.', '_build/text'])
++
++# Check text output
++text_output = tmpdir / '_build/text/index.txt'
++if text_output.exists():
++    content = text_output.read_text()
++    print("\n--- Text output (excerpt) ---")
++    # Find property sections
++    lines = content.split('\n')
++    for i, line in enumerate(lines):
++        if 'property end' in line:
++            # Print context around property
++            start = max(0, i-2)
++            end = min(len(lines), i+3)
++            print('\n'.join(lines[start:end]))
++            print()
++
++print(f"\nFiles saved in: {tmpdir}")
++
++# Check if cross-references are present
++if ':class:`test_module.Point`' in content:
++    print("\n✓ SUCCESS: Property type annotations are creating cross-references!")
++else:
++    print("\n✗ FAIL: Property type annotations are NOT creating cross-references")
+diff --git a/setup.py b/setup.py
+index 4a1d5aeed..3faa58e79 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 000000000..b135befc3
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,88 @@
++#!/usr/bin/env python
++"""Simple test to check property type annotations."""
++
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Add sphinx to path
++sys.path.insert(0, '/testbed')
++
++# Create test files
++tmpdir = Path(tempfile.mkdtemp())
++print(f"Working in: {tmpdir}")
++
++# Create the module
++test_py = tmpdir / "test_module.py" 
++test_py.write_text("""
++class Point:
++    '''A point class.'''
++    x: int
++    y: int
++
++class Square:
++    '''A square class.'''
++    
++    @property
++    def end(self) -> Point:
++        '''The end point.'''
++        return Point()
++""")
++
++# Create conf.py
++conf_py = tmpdir / "conf.py"
++conf_py.write_text("""
++extensions = ['sphinx.ext.autodoc']
++""")
++
++# Create index.rst
++index_rst = tmpdir / "index.rst"
++index_rst.write_text("""
++Test
++====
++
++.. autoclass:: test_module.Square
++   :members:
++""")
++
++# Change to tmpdir and run sphinx
++os.chdir(tmpdir)
++sys.path.insert(0, str(tmpdir))
++
++from sphinx.cmd.build import build_main
++
++# Build with text output first to see what's generated
++result = build_main(['-b', 'text', '.', '_build/text'])
++print(f"\nBuild result: {result}")
++
++# Check text output
++text_output = tmpdir / '_build/text/index.txt'
++if text_output.exists():
++    print("\n--- Text output ---")
++    print(text_output.read_text())
++
++# Now build HTML
++result = build_main(['-b', 'html', '.', '_build/html'])
++
++# Check HTML output
++html_output = tmpdir / '_build/html/index.html'
++if html_output.exists():
++    content = html_output.read_text()
++    # Look for type annotation
++    import re
++    type_matches = re.findall(r':type:.*?(?=\n|<)', content)
++    if type_matches:
++        print("\n--- Found :type: annotations ---")
++        for match in type_matches:
++            print(match)
++    
++    # Look for Point references
++    point_refs = re.findall(r'Point[^<]*', content)
++    if point_refs:
++        print("\n--- Found Point references ---") 
++        for ref in point_refs:
++            print(ref)
++
++print(f"\nFiles saved in: {tmpdir}")
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index 938f976cd..a6cd71dcd 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -2728,7 +2728,7 @@ class PropertyDocumenter(DocstringStripSignatureMixin, ClassLevelDocumenter):  #
+                 signature = inspect.signature(func,
+                                               type_aliases=self.config.autodoc_type_aliases)
+                 if signature.return_annotation is not Parameter.empty:
+-                    objrepr = stringify_typehint(signature.return_annotation)
++                    objrepr = restify(signature.return_annotation)
+                     self.add_line('   :type: ' + objrepr, sourcename)
+             except TypeError as exc:
+                 logger.warning(__("Failed to get a function signature for %s: %s"),
+diff --git a/test_issue_9585.py b/test_issue_9585.py
+new file mode 100644
+index 000000000..fbdad12cf
+--- /dev/null
++++ b/test_issue_9585.py
+@@ -0,0 +1,112 @@
++#!/usr/bin/env python
++"""Test for GitHub issue #9585: Cross-references don't work in property's type annotations."""
++
++import os
++import sys
++import tempfile
++import re
++from pathlib import Path
++
++# Add sphinx to path  
++sys.path.insert(0, '/testbed')
++
++# Create test files
++tmpdir = Path(tempfile.mkdtemp())
++print(f"Working in: {tmpdir}")
++
++# Create the exact module from the issue
++test_py = tmpdir / "mymodule.py"
++test_py.write_text('''
++from typing import Optional
++
++
++class Point:
++    """
++    A class representing a point.
++
++    Attributes:
++        x: Position X.
++        y: Position Y.
++    """
++    x: int
++    y: int
++
++
++class Square:
++    """A class representing a square figure."""
++    #: Square's start position (top-left corner).
++    start: Point
++    #: Square width.
++    width: int
++    #: Square height.
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Square's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++''')
++
++# Create conf.py
++conf_py = tmpdir / "conf.py"
++conf_py.write_text("""
++extensions = ['sphinx.ext.autodoc']
++""")
++
++# Create index.rst that tests both cross-module and same-module references
++index_rst = tmpdir / "index.rst"
++index_rst.write_text("""
++Test Issue #9585
++================
++
++.. automodule:: mymodule
++   :members:
++   :undoc-members:
++""")
++
++# Change to tmpdir and run sphinx
++os.chdir(tmpdir)
++sys.path.insert(0, str(tmpdir))
++
++from sphinx.cmd.build import build_main
++
++# Build HTML output
++result = build_main(['-b', 'html', '-E', '.', '_build/html'])
++
++# Check HTML output
++html_output = tmpdir / '_build/html/index.html'
++if html_output.exists():
++    content = html_output.read_text()
++    
++    # Look for property definitions with cross-references
++    # The key is that Point should be a hyperlink, not just plain text
++    
++    # Check if Point appears as a hyperlink in the property type
++    point_link_pattern = r'<a[^>]+href[^>]+>Point</a>'
++    point_links = re.findall(point_link_pattern, content)
++    
++    # Also check for the property type field pattern
++    property_type_pattern = r'<em class="property">\s*property\s*</em>.*?(?=</d[td]>)'
++    property_sections = re.findall(property_type_pattern, content, re.DOTALL)
++    
++    success = False
++    for section in property_sections:
++        if 'Point</a>' in section or 'mymodule.Point</a>' in section:
++            success = True
++            break
++    
++    if success:
++        print("\n✓ SUCCESS: Property type annotations now create cross-references!")
++        print(f"  Found {len(point_links)} Point cross-references in the HTML")
++    else:
++        print("\n✗ FAIL: Property type annotations are NOT creating cross-references")
++        
++    # Save a snippet for debugging
++    snippet_file = tmpdir / "snippet.html"
++    # Find property sections
++    prop_matches = re.findall(r'<dt[^>]*>.*?property.*?</dt>.*?<dd>.*?</dd>', content, re.DOTALL)
++    if prop_matches:
++        snippet_file.write_text('\n\n'.join(prop_matches[:2]))
++        print(f"\nHTML snippets saved to: {snippet_file}")
++
++print(f"\nAll files saved in: {tmpdir}")
+diff --git a/test_property_annotation.py b/test_property_annotation.py
+new file mode 100644
+index 000000000..aa52e2934
+--- /dev/null
++++ b/test_property_annotation.py
+@@ -0,0 +1,47 @@
++from typing import Optional
++
++
++class Point:
++    """
++    A class representing a point.
++
++    Attributes:
++        x: Position X.
++        y: Position Y.
++    """
++    x: int
++    y: int
++
++
++class Square:
++    """A class representing a square figure."""
++    #: Square's start position (top-left corner).
++    start: Point
++    #: Square width.
++    width: int
++    #: Square height.
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Square's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++
++
++class Rectangle:
++    """
++    A class representing a square figure.
++
++    Attributes:
++        start: Rectangle's start position (top-left corner).
++        width: Rectangle width.
++        height: Rectangle width.
++    """
++    start: Point
++    width: int
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Rectangle's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
+diff --git a/test_property_fix.py b/test_property_fix.py
+new file mode 100644
+index 000000000..2c1cd45ce
+--- /dev/null
++++ b/test_property_fix.py
+@@ -0,0 +1,132 @@
++#!/usr/bin/env python
++"""Test to verify property type annotation cross-references work correctly."""
++
++import os
++import sys
++import tempfile
++import shutil
++from textwrap import dedent
++
++# Add sphinx to path
++sys.path.insert(0, '/testbed')
++
++from sphinx.cmd.build import build_main
++from sphinx.testing.path import path
++
++
++def test_property_type_annotation():
++    """Test that property type annotations create proper cross-references."""
++    
++    # Create a temporary directory
++    tmpdir = path(tempfile.mkdtemp())
++    srcdir = tmpdir / 'source'
++    srcdir.makedirs()
++    outdir = tmpdir / 'build'
++    
++    # Create test module
++    test_module = srcdir / 'test_module.py'
++    test_module.write_text(dedent('''
++        """Test module for property type annotations."""
++        
++        
++        class Point:
++            """
++            A class representing a point.
++            
++            Attributes:
++                x: Position X.
++                y: Position Y.
++            """
++            x: int
++            y: int
++            
++            def __init__(self, x: int, y: int):
++                self.x = x
++                self.y = y
++        
++        
++        class Square:
++            """A class representing a square figure."""
++            #: Square's start position (top-left corner).
++            start: Point
++            #: Square width.
++            width: int
++            #: Square height.
++            height: int
++            
++            def __init__(self, start: Point, width: int, height: int):
++                self.start = start
++                self.width = width
++                self.height = height
++            
++            @property
++            def end(self) -> Point:
++                """Square's end position (bottom-right corner)."""
++                return Point(self.start.x + self.width, self.start.y + self.height)
++    '''))
++    
++    # Create conf.py
++    conf_py = srcdir / 'conf.py'
++    conf_py.write_text(dedent('''
++        extensions = ['sphinx.ext.autodoc']
++        master_doc = 'index'
++        exclude_patterns = ['_build']
++        
++        # Add current directory to path
++        import sys
++        sys.path.insert(0, '.')
++    '''))
++    
++    # Create index.rst
++    index_rst = srcdir / 'index.rst'
++    index_rst.write_text(dedent('''
++        Test Property Type Annotations
++        ==============================
++        
++        .. automodule:: test_module
++           :members:
++           :undoc-members:
++           :show-inheritance:
++    '''))
++    
++    # Build the docs
++    args = ['-b', 'html', '-E', str(srcdir), str(outdir)]
++    result = build_main(args)
++    
++    if result != 0:
++        print("Build failed!")
++        return False
++    
++    # Check the output
++    output_file = outdir / 'index.html'
++    if not output_file.exists():
++        print("Output file not found!")
++        return False
++        
++    content = output_file.read_text()
++    
++    # Check for cross-reference in property type
++    # The property type should be a link to the Point class
++    if 'class="reference internal"' in content and 'Point</a>' in content:
++        # Check specifically for the property type annotation
++        if '<em class="property">property </em>' in content:
++            print("✓ Property type annotation creates cross-reference correctly!")
++            return True
++    
++    print("✗ Property type annotation does not create cross-reference")
++    print("\nGenerated HTML snippet:")
++    # Find and print relevant part
++    import re
++    property_match = re.search(r'<dt.*?>.*?end.*?</dt>.*?<dd.*?>.*?</dd>', content, re.DOTALL)
++    if property_match:
++        print(property_match.group(0))
++    
++    # Cleanup
++    shutil.rmtree(str(tmpdir))
++    
++    return False
++
++
++if __name__ == '__main__':
++    success = test_property_type_annotation()
++    sys.exit(0 if success else 1)
+diff --git a/tests/test_ext_autodoc_autoproperty.py b/tests/test_ext_autodoc_autoproperty.py
+index 47528a99d..4b1beda07 100644
+--- a/tests/test_ext_autodoc_autoproperty.py
++++ b/tests/test_ext_autodoc_autoproperty.py
+@@ -23,7 +23,7 @@ def test_properties(app):
+         '',
+         '.. py:property:: Foo.prop1',
+         '   :module: target.properties',
+-        '   :type: int',
++        '   :type: :class:`int`',
+         '',
+         '   docstring',
+         '',
+@@ -38,7 +38,7 @@ def test_class_properties(app):
+         '.. py:property:: Foo.prop2',
+         '   :module: target.properties',
+         '   :classmethod:',
+-        '   :type: int',
++        '   :type: :class:`int`',
+         '',
+         '   docstring',
+         '',
+@@ -53,6 +53,6 @@ def test_cached_properties(app):
+         '',
+         '.. py:property:: Foo.prop',
+         '   :module: target.cached_property',
+-        '   :type: int',
++        '   :type: :class:`int`',
+         '',
+     ]
+diff --git a/tox.ini b/tox.ini
+index a363e187f..3b8bc12d0 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

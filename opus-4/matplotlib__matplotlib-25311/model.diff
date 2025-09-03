@@ -1,0 +1,136 @@
+diff --git a/test_draggable_pickle.py b/test_draggable_pickle.py
+new file mode 100644
+index 0000000000..94549bdf52
+--- /dev/null
++++ b/test_draggable_pickle.py
+@@ -0,0 +1,64 @@
++import matplotlib
++matplotlib.use('Agg')  # Use non-interactive backend
++import matplotlib.pyplot as plt
++import pickle
++import io
++
++# Test 1: Basic draggable legend
++fig = plt.figure()
++ax = fig.add_subplot(111)
++
++time=[0,1,2,3,4]
++speed=[40,43,45,47,48]
++
++ax.plot(time,speed,label="speed")
++
++leg=ax.legend()
++leg.set_draggable(True)
++
++print("Test 1 - Draggable legend:")
++try:
++    buffer = io.BytesIO()
++    pickle.dump(fig, buffer)
++    buffer.seek(0)
++    fig2 = pickle.load(buffer)
++    print("✓ Pickling successful!")
++    
++    # Check if the legend is still draggable after unpickling
++    leg2 = fig2.axes[0].get_legend()
++    print(f"  Legend draggable after unpickling: {leg2.get_draggable()}")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
++
++# Test 2: Test with draggable annotation
++fig3 = plt.figure()
++ax3 = fig3.add_subplot(111)
++ax3.plot([1, 2, 3], [1, 2, 3])
++ann = ax3.annotate("Test", xy=(2, 2), xytext=(1, 1))
++ann.draggable = True
++
++print("\nTest 2 - Draggable annotation:")
++try:
++    buffer = io.BytesIO()
++    pickle.dump(fig3, buffer)
++    buffer.seek(0)
++    fig4 = pickle.load(buffer)
++    print("✓ Pickling successful!")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
++
++# Test 3: Non-draggable legend should work
++fig5 = plt.figure()
++ax5 = fig5.add_subplot(111)
++ax5.plot([1, 2, 3], [1, 2, 3], label="test")
++leg5 = ax5.legend()
++
++print("\nTest 3 - Non-draggable legend:")
++try:
++    buffer = io.BytesIO()
++    pickle.dump(fig5, buffer)
++    buffer.seek(0)
++    fig6 = pickle.load(buffer)
++    print("✓ Pickling successful!")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
+diff --git a/test_issue_example.py b/test_issue_example.py
+new file mode 100644
+index 0000000000..56f77d487e
+--- /dev/null
++++ b/test_issue_example.py
+@@ -0,0 +1,33 @@
++import matplotlib
++matplotlib.use('Agg')  # Use Agg backend for now
++import matplotlib.pyplot as plt
++import pickle
++
++fig = plt.figure()
++ax = fig.add_subplot(111)
++
++time=[0,1,2,3,4]
++speed=[40,43,45,47,48]
++
++ax.plot(time,speed,label="speed")
++
++leg=ax.legend()
++leg.set_draggable(True) #pickling works after removing this line 
++
++try:
++    result = pickle.dumps(fig)
++    print("Pickling successful!")
++    
++    # Test unpickling
++    import io
++    buffer = io.BytesIO(result)
++    fig2 = pickle.load(buffer)
++    print("Unpickling successful!")
++    
++    # Check if legend is still draggable
++    leg2 = fig2.axes[0].get_legend()
++    print(f"Legend draggable after unpickling: {leg2.get_draggable()}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_pickle_legend.py b/test_pickle_legend.py
+new file mode 100644
+index 0000000000..abdc505004
+--- /dev/null
++++ b/test_pickle_legend.py
+@@ -0,0 +1,21 @@
++import matplotlib
++matplotlib.use('Agg')  # Use non-interactive backend
++import matplotlib.pyplot as plt
++import pickle
++
++fig = plt.figure()
++ax = fig.add_subplot(111)
++
++time=[0,1,2,3,4]
++speed=[40,43,45,47,48]
++
++ax.plot(time,speed,label="speed")
++
++leg=ax.legend()
++leg.set_draggable(True) #pickling works after removing this line 
++
++try:
++    pickle.dumps(fig)
++    print("Pickling successful!")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")

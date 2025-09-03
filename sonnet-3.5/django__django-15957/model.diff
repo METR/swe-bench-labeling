@@ -1,0 +1,51 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index be0deb90b0..ea1c28580b 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -2162,6 +2162,13 @@ class Prefetch:
+ 
+         self.queryset = queryset
+         self.to_attr = to_attr
++        self.slice = None
++        if queryset is not None and queryset._result_cache is None:
++            if queryset._limit is not None or queryset._high_mark is not None:
++                self.slice = (queryset._low_mark, queryset._high_mark)
++                queryset._limit = None
++                queryset._high_mark = None
++                queryset._low_mark = 0
+ 
+     def __getstate__(self):
+         obj_dict = self.__dict__.copy()
+@@ -2287,6 +2294,10 @@ def prefetch_related_objects(model_instances, *related_lookups):
+                 first_obj, through_attr, to_attr
+             )
+ 
++            if lookup.queryset is not None and lookup.slice is not None:
++                # Apply the slice to the queryset
++                lookup.queryset = lookup.queryset[lookup.slice[0]:lookup.slice[1]]
++
+             if not attr_found:
+                 raise AttributeError(
+                     "Cannot find '%s' on %s object, '%s' is an invalid "
+diff --git a/docs/ref/models/querysets.txt b/docs/ref/models/querysets.txt
+index 223bb452b0..d77e14b2ea 100644
+--- a/docs/ref/models/querysets.txt
++++ b/docs/ref/models/querysets.txt
+@@ -1116,6 +1116,17 @@ must be restricted to a homogeneous set of results. For example, prefetching
+ objects referenced by a ``GenericForeignKey`` is only supported if the query
+ is restricted to one ``ContentType``.
+ 
++``prefetch_related`` now supports sliced querysets, allowing you to limit the number
++of related objects fetched. This is particularly useful when you want to prefetch
++a subset of related objects. For example:
++
++    >>> Pizza.objects.prefetch_related(Prefetch('toppings', queryset=Topping.objects.all()[:3]))
++
++This will prefetch only the first three toppings for each pizza. The slicing is
++applied to the queryset before the prefetch operation is performed, which can
++significantly reduce the amount of data transferred and improve performance when
++dealing with large datasets.
++
+ For example, suppose you have these models::
+ 
+     from django.db import models

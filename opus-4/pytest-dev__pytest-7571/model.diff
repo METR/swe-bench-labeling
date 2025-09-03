@@ -1,0 +1,119 @@
+diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py
+index 11031f2f2..1b4d9d385 100644
+--- a/src/_pytest/logging.py
++++ b/src/_pytest/logging.py
+@@ -346,6 +346,7 @@ class LogCaptureFixture:
+         self._item = item
+         # dict of log name -> log level
+         self._initial_logger_levels = {}  # type: Dict[Optional[str], int]
++        self._initial_handler_level = None  # type: Optional[int]
+ 
+     def _finalize(self) -> None:
+         """Finalizes the fixture.
+@@ -356,6 +357,9 @@ class LogCaptureFixture:
+         for logger_name, level in self._initial_logger_levels.items():
+             logger = logging.getLogger(logger_name)
+             logger.setLevel(level)
++        # restore handler level
++        if self._initial_handler_level is not None:
++            self.handler.setLevel(self._initial_handler_level)
+ 
+     @property
+     def handler(self) -> LogCaptureHandler:
+@@ -434,6 +438,9 @@ class LogCaptureFixture:
+         # save the original log-level to restore it during teardown
+         self._initial_logger_levels.setdefault(logger, logger_obj.level)
+         logger_obj.setLevel(level)
++        # save the original handler level to restore it during teardown
++        if self._initial_handler_level is None:
++            self._initial_handler_level = self.handler.level
+         self.handler.setLevel(level)
+ 
+     @contextmanager
+diff --git a/test_caplog_comprehensive.py b/test_caplog_comprehensive.py
+new file mode 100644
+index 000000000..0331e5c8b
+--- /dev/null
++++ b/test_caplog_comprehensive.py
+@@ -0,0 +1,48 @@
++import logging
++
++def test_multiple_set_level_calls(caplog):
++    """Test that multiple set_level calls only save the initial handler level once"""
++    print(f"Initial handler level: {caplog.handler.level}")
++    
++    # First set_level
++    caplog.set_level(10)
++    print(f"After first set_level(10): {caplog.handler.level}")
++    
++    # Second set_level 
++    caplog.set_level(20)
++    print(f"After second set_level(20): {caplog.handler.level}")
++    
++    # Third set_level
++    caplog.set_level(30)
++    print(f"After third set_level(30): {caplog.handler.level}")
++
++def test_after_multiple_calls(caplog):
++    """Verify handler level is properly restored after multiple set_level calls"""
++    print(f"Handler level should be 0: {caplog.handler.level}")
++    assert caplog.handler.level == 0
++
++def test_with_logger_name(caplog):
++    """Test set_level with specific logger name"""
++    logger_name = "test.logger"
++    logger = logging.getLogger(logger_name)
++    
++    initial_handler_level = caplog.handler.level
++    initial_logger_level = logger.level
++    
++    print(f"Initial handler level: {initial_handler_level}")
++    print(f"Initial logger '{logger_name}' level: {initial_logger_level}")
++    
++    caplog.set_level(25, logger=logger_name)
++    
++    print(f"After set_level(25, logger='{logger_name}')")
++    print(f"  Handler level: {caplog.handler.level}")
++    print(f"  Logger level: {logger.level}")
++
++def test_after_logger_name(caplog):
++    """Verify levels are restored after test with specific logger"""
++    logger_name = "test.logger"
++    logger = logging.getLogger(logger_name)
++    
++    print(f"Handler level should be 0: {caplog.handler.level}")
++    print(f"Logger '{logger_name}' level: {logger.level}")
++    assert caplog.handler.level == 0
+diff --git a/test_caplog_handler_level_regression.py b/test_caplog_handler_level_regression.py
+new file mode 100644
+index 000000000..19e60a358
+--- /dev/null
++++ b/test_caplog_handler_level_regression.py
+@@ -0,0 +1,14 @@
++"""
++Regression test for the caplog fixture handler level restoration bug.
++From GitHub issue: caplog fixture doesn't restore log level after test
++"""
++
++def test_foo(caplog):
++    """First test that sets a custom handler level"""
++    assert caplog.handler.level == 0  # Should start at 0
++    caplog.set_level(42)
++    assert caplog.handler.level == 42  # Should be set to 42
++
++def test_bar(caplog):
++    """Second test that should see the handler level restored to 0"""
++    assert caplog.handler.level == 0  # Should be restored to 0, not 42
+diff --git a/test_caplog_issue.py b/test_caplog_issue.py
+new file mode 100644
+index 000000000..655d56a56
+--- /dev/null
++++ b/test_caplog_issue.py
+@@ -0,0 +1,7 @@
++def test_foo(caplog):
++    print(f"test_foo: handler level before set_level: {caplog.handler.level}")
++    caplog.set_level(42)
++    print(f"test_foo: handler level after set_level: {caplog.handler.level}")
++
++def test_bar(caplog):
++    print(f"test_bar: handler level at start: {caplog.handler.level}")

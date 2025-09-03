@@ -1,0 +1,113 @@
+From dea64fa9a5c93739e09ed3da49821c64519c103c Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Thu, 4 May 2023 07:54:58 -0400
+Subject: [PATCH 1/2] FIX Sets remainder's output in ColumnTransformer
+
+---
+ doc/whats_new/v1.3.rst                        |  6 +++++
+ sklearn/compose/_column_transformer.py        |  4 +++
+ .../compose/tests/test_column_transformer.py  | 25 +++++++++++++++++++
+ 3 files changed, 35 insertions(+)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index 41d5d1fdeeabd..e7a6dee789f4f 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -184,6 +184,12 @@ Changelog
+   :user:`Jérémie du Boisberranger <jeremiedbb>`,
+   :user:`Guillaume Lemaitre <glemaitre>`.
+ 
++:mod:`sklearn.compose`
++......................
++
++- |Fix| :class:`compose.ColumnTransformer` correctly sets the output of the
++  remainder when `set_output` is called. :pr:`xxxxx` by `Thomas Fan`_.
++
+ :mod:`sklearn.covariance`
+ .........................
+ 
+diff --git a/sklearn/compose/_column_transformer.py b/sklearn/compose/_column_transformer.py
+index 90718d86d2d89..fc8618aa71301 100644
+--- a/sklearn/compose/_column_transformer.py
++++ b/sklearn/compose/_column_transformer.py
+@@ -292,6 +292,7 @@ def set_output(self, *, transform=None):
+             Estimator instance.
+         """
+         super().set_output(transform=transform)
++
+         transformers = (
+             trans
+             for _, trans, _ in chain(
+@@ -302,6 +303,9 @@ def set_output(self, *, transform=None):
+         for trans in transformers:
+             _safe_set_output(trans, transform=transform)
+ 
++        if self.remainder not in {"passthrough", "drop"}:
++            _safe_set_output(self.remainder, transform=transform)
++
+         return self
+ 
+     def get_params(self, deep=True):
+diff --git a/sklearn/compose/tests/test_column_transformer.py b/sklearn/compose/tests/test_column_transformer.py
+index a2d1cef0412ba..7c19d214f77f3 100644
+--- a/sklearn/compose/tests/test_column_transformer.py
++++ b/sklearn/compose/tests/test_column_transformer.py
+@@ -22,6 +22,7 @@
+ from sklearn.exceptions import NotFittedError
+ from sklearn.preprocessing import FunctionTransformer
+ from sklearn.preprocessing import StandardScaler, Normalizer, OneHotEncoder
++from sklearn.feature_selection import VarianceThreshold
+ 
+ 
+ class Trans(TransformerMixin, BaseEstimator):
+@@ -2157,3 +2158,27 @@ def test_empty_selection_pandas_output(empty_selection):
+     ct.set_params(verbose_feature_names_out=False)
+     X_out = ct.fit_transform(X)
+     assert_array_equal(X_out.columns, ["a", "b"])
++
++
++def test_remainder_set_output():
++    """Check that the output is set for the remainder.
++
++    Non-regression test for #26306.
++    """
++
++    pd = pytest.importorskip("pandas")
++    df = pd.DataFrame({"a": [True, False, True], "b": [1, 2, 3]})
++
++    ct = make_column_transformer(
++        (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++        remainder=VarianceThreshold(),
++        verbose_feature_names_out=False,
++    )
++    ct.set_output(transform="pandas")
++
++    out = ct.fit_transform(df)
++    pd.testing.assert_frame_equal(out, df)
++
++    ct.set_output(transform="default")
++    out = ct.fit_transform(df)
++    assert isinstance(out, np.ndarray)
+
+From 06ecbd4a1c08ca374cf2cab512707edf8ade4d25 Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Thu, 4 May 2023 07:56:17 -0400
+Subject: [PATCH 2/2] DOC Adds PR number
+
+---
+ doc/whats_new/v1.3.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index e7a6dee789f4f..f0cc0f0802d77 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -188,7 +188,7 @@ Changelog
+ ......................
+ 
+ - |Fix| :class:`compose.ColumnTransformer` correctly sets the output of the
+-  remainder when `set_output` is called. :pr:`xxxxx` by `Thomas Fan`_.
++  remainder when `set_output` is called. :pr:`26323` by `Thomas Fan`_.
+ 
+ :mod:`sklearn.covariance`
+ .........................

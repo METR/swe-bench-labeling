@@ -1,0 +1,11 @@
+diff --git a/django/contrib/admindocs/views.py b/django/contrib/admindocs/views.py
+index 0474c38fd4..096dbec48b 100644
+--- a/django/contrib/admindocs/views.py
++++ b/django/contrib/admindocs/views.py
+@@ -411,4 +411,6 @@ def simplify_regex(pattern):
+     pattern = pattern.replace('^', '').replace('$', '').replace('?', '')
+     if not pattern.startswith('/'):
+         pattern = '/' + pattern
++    if not pattern.endswith('/'):
++        pattern = pattern + '/'
+     return pattern

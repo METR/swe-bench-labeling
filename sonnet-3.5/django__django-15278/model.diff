@@ -1,0 +1,46 @@
+diff --git a/django/db/migrations/operations/fields.py b/django/db/migrations/operations/fields.py
+index 094c3e3cda..be7d47f723 100644
+--- a/django/db/migrations/operations/fields.py
++++ b/django/db/migrations/operations/fields.py
+@@ -1,5 +1,5 @@
+ from django.db.migrations.utils import field_references
+-from django.db.models import NOT_PROVIDED
++from django.db.models import NOT_PROVIDED, OneToOneField
+ from django.utils.functional import cached_property
+ 
+ from .base import Operation
+@@ -97,10 +97,30 @@ class AddField(FieldOperation):
+             field = to_model._meta.get_field(self.name)
+             if not self.preserve_default:
+                 field.default = self.field.default
+-            schema_editor.add_field(
+-                from_model,
+-                field,
+-            )
++            
++            # Check if we're adding a nullable OneToOneField on SQLite
++            if (isinstance(field, OneToOneField) and
++                field.null and
++                schema_editor.connection.vendor == 'sqlite'):
++                # Add the column without the UNIQUE constraint
++                schema_editor.add_field(
++                    from_model,
++                    field,
++                    unique=False,
++                )
++                # Add the UNIQUE constraint separately
++                schema_editor.alter_field(
++                    from_model,
++                    field,
++                    field,
++                )
++            else:
++                # For other cases, use the original method
++                schema_editor.add_field(
++                    from_model,
++                    field,
++                )
++            
+             if not self.preserve_default:
+                 field.default = NOT_PROVIDED
+ 

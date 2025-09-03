@@ -1,0 +1,16 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 9735ce10c8..041cbd7b35 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -446,6 +446,11 @@ class Query(BaseExpression):
+             for alias, annotation in self.annotations.items()
+             if alias not in added_aggregate_names
+         ]
++        
++        # Strip unused annotations for count queries
++        if len(added_aggregate_names) == 1 and list(added_aggregate_names)[0] == '__count':
++            self.annotation_select = {alias: annot for alias, annot in self.annotation_select.items() if alias == '__count'}
++            existing_annotations = []
+         # Decide if we need to use a subquery.
+         #
+         # Existing annotations would cause incorrect results as get_aggregation()

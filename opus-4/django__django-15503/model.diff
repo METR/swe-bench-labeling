@@ -1,0 +1,326 @@
+diff --git a/django/db/models/fields/json.py b/django/db/models/fields/json.py
+index fdca700c9d..9543ffcbd1 100644
+--- a/django/db/models/fields/json.py
++++ b/django/db/models/fields/json.py
+@@ -139,6 +139,18 @@ def compile_json_path(key_transforms, include_root=True):
+     return "".join(path)
+ 
+ 
++def compile_json_path_for_object_keys(key_transforms, include_root=True):
++    """
++    Compile a JSON path that treats all keys as object keys (not array indices).
++    This is used for has_key lookups where we're always checking object keys.
++    """
++    path = ["$"] if include_root else []
++    for key_transform in key_transforms:
++        path.append(".")
++        path.append(json.dumps(str(key_transform)))
++    return "".join(path)
++
++
+ class DataContains(PostgresOperatorLookup):
+     lookup_name = "contains"
+     postgres_operator = "@>"
+@@ -191,15 +203,24 @@ class HasKeyLookup(PostgresOperatorLookup):
+         for key in rhs:
+             if isinstance(key, KeyTransform):
+                 *_, rhs_key_transforms = key.preprocess_lhs(compiler, connection)
++                # Use regular compile_json_path for KeyTransform as it might contain array indices
++                rhs_params.append(
++                    "%s%s"
++                    % (
++                        lhs_json_path,
++                        compile_json_path(rhs_key_transforms, include_root=False),
++                    )
++                )
+             else:
++                # For simple string keys, treat them as object keys
+                 rhs_key_transforms = [key]
+-            rhs_params.append(
+-                "%s%s"
+-                % (
+-                    lhs_json_path,
+-                    compile_json_path(rhs_key_transforms, include_root=False),
++                rhs_params.append(
++                    "%s%s"
++                    % (
++                        lhs_json_path,
++                        compile_json_path_for_object_keys(rhs_key_transforms, include_root=False),
++                    )
+                 )
+-            )
+         # Add condition for each key.
+         if self.logical_operator:
+             sql = "(%s)" % self.logical_operator.join([sql] * len(rhs_params))
+diff --git a/test_has_keys.py b/test_has_keys.py
+new file mode 100644
+index 0000000000..3d022d6a29
+--- /dev/null
++++ b/test_has_keys.py
+@@ -0,0 +1,67 @@
++import os
++import django
++from django.db import models
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test settings
++with open('/testbed/test_settings.py', 'w') as f:
++    f.write("""
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test'
++USE_TZ = False
++""")
++
++django.setup()
++
++# Define test model
++class JsonFieldHasKeyTest(models.Model):
++    data = models.JSONField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(JsonFieldHasKeyTest)
++
++# Test has_keys and has_any_keys
++print("Creating test data...")
++test1 = JsonFieldHasKeyTest(data={'123': 'value1', '456': 'value2', 'foo': 'bar'})
++test2 = JsonFieldHasKeyTest(data={'789': 'value3', 'abc': 'value4'})
++test3 = JsonFieldHasKeyTest(data={'123': 'value5', 'def': 'value6'})
++test1.save()
++test2.save()
++test3.save()
++
++print("\nTesting has_keys (AND logic)...")
++# Should find only test1 since it has both '123' and '456'
++count = JsonFieldHasKeyTest.objects.filter(data__has_keys=['123', '456']).count()
++print(f"Count with keys ['123', '456']: {count} (expected: 1)")
++
++# Should find test1 and test3 since both have '123' 
++print("\nTesting has_any_keys (OR logic)...")
++count = JsonFieldHasKeyTest.objects.filter(data__has_any_keys=['123', '456']).count()
++print(f"Count with any keys ['123', '456']: {count} (expected: 2)")
++
++# Mixed numeric and non-numeric keys
++count = JsonFieldHasKeyTest.objects.filter(data__has_any_keys=['123', 'abc']).count()
++print(f"Count with any keys ['123', 'abc']: {count} (expected: 3)")
++
++# Check SQL queries
++print("\nChecking SQL queries...")
++queries = JsonFieldHasKeyTest.objects.filter(data__has_keys=['123', '456']).query
++print(f"Query for has_keys ['123', '456']: {queries}")
++
++queries2 = JsonFieldHasKeyTest.objects.filter(data__has_any_keys=['123', '456']).query
++print(f"Query for has_any_keys ['123', '456']: {queries2}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..4654a55d2c
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,58 @@
++import os
++import django
++from django.test import TestCase
++from django.db import models
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test settings matching the issue
++with open('/testbed/test_settings.py', 'w') as f:
++    f.write("""
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': 'db.sqlite3',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test'
++USE_TZ = False
++""")
++
++django.setup()
++
++# Define test model
++class JsonFieldHasKeyTest(models.Model):
++    data = models.JSONField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(JsonFieldHasKeyTest)
++
++
++class JsonFieldHasKeyTestCase(TestCase):
++    def setUp(self) -> None:
++        test = JsonFieldHasKeyTest(data={'foo': 'bar'})
++        test2 = JsonFieldHasKeyTest(data={'1111': 'bar'})
++        test.save()
++        test2.save()
++
++    def test_json_field_has_key(self):
++        c1 = JsonFieldHasKeyTest.objects.filter(data__has_key='foo').count()
++        c2 = JsonFieldHasKeyTest.objects.filter(data__has_key='1111').count()
++        self.assertEqual(c1, 1, "Should have found 1 entry with key 'foo'")
++        self.assertEqual(c2, 1, "Should have found 1 entry with key '1111'")
++
++
++# Run the test
++test_case = JsonFieldHasKeyTestCase()
++test_case.setUp()
++test_case.test_json_field_has_key()
++print("Test passed!")
+diff --git a/test_json_debug.py b/test_json_debug.py
+new file mode 100644
+index 0000000000..435ed338b7
+--- /dev/null
++++ b/test_json_debug.py
+@@ -0,0 +1,40 @@
++import os
++import django
++import json
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++from django.db import connection
++
++# Test the JSON path syntax directly in SQLite
++with connection.cursor() as cursor:
++    # Create a test table
++    cursor.execute("CREATE TABLE test_json (data TEXT)")
++    
++    # Insert test data
++    cursor.execute("INSERT INTO test_json VALUES (?)", [json.dumps({'1111': 'bar'})])
++    cursor.execute("INSERT INTO test_json VALUES (?)", [json.dumps({'foo': 'bar'})])
++    
++    # Test different JSON path syntaxes
++    print("Testing different JSON path syntaxes...")
++    
++    # This should fail (treating '1111' as array index)
++    cursor.execute("SELECT data, JSON_TYPE(data, '$[1111]') FROM test_json WHERE data LIKE ?", ['%1111%'])
++    result = cursor.fetchone()
++    print(f"JSON_TYPE(data, '$[1111]') for {result[0]}: {result[1]}")
++    
++    # This should work (treating '1111' as object key)
++    cursor.execute("SELECT data, JSON_TYPE(data, '$.\"1111\"') FROM test_json WHERE data LIKE ?", ['%1111%']) 
++    result = cursor.fetchone()
++    print(f"JSON_TYPE(data, '$.\"1111\"') for {result[0]}: {result[1]}")
++    
++    # Test with regular string key
++    cursor.execute("SELECT data, JSON_TYPE(data, '$.foo') FROM test_json WHERE data LIKE ?", ['%foo%'])
++    result = cursor.fetchone()
++    print(f"JSON_TYPE(data, '$.foo') for {result[0]}: {result[1]}")
++    
++    # Test with quoted regular key
++    cursor.execute("SELECT data, JSON_TYPE(data, '$.\"foo\"') FROM test_json WHERE data LIKE ?", ['%foo%'])
++    result = cursor.fetchone()
++    print(f"JSON_TYPE(data, '$.\"foo\"') for {result[0]}: {result[1]}")
+diff --git a/test_json_numeric_keys.py b/test_json_numeric_keys.py
+new file mode 100644
+index 0000000000..9fe2715bed
+--- /dev/null
++++ b/test_json_numeric_keys.py
+@@ -0,0 +1,64 @@
++import os
++import django
++from django.test import TestCase
++from django.db import models
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test settings
++with open('/testbed/test_settings.py', 'w') as f:
++    f.write("""
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test'
++USE_TZ = False
++""")
++
++django.setup()
++
++# Define test model
++class JsonFieldHasKeyTest(models.Model):
++    data = models.JSONField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(JsonFieldHasKeyTest)
++
++# Run tests
++print("Creating test data...")
++test1 = JsonFieldHasKeyTest(data={'foo': 'bar'})
++test2 = JsonFieldHasKeyTest(data={'1111': 'bar'})
++test3 = JsonFieldHasKeyTest(data={'123': 'value'})
++test4 = JsonFieldHasKeyTest(data={'key123': 'value'})
++test1.save()
++test2.save()
++test3.save()
++test4.save()
++
++print("\nTesting has_key lookups...")
++print(f"Count with key 'foo': {JsonFieldHasKeyTest.objects.filter(data__has_key='foo').count()}")
++print(f"Count with key '1111': {JsonFieldHasKeyTest.objects.filter(data__has_key='1111').count()}")
++print(f"Count with key '123': {JsonFieldHasKeyTest.objects.filter(data__has_key='123').count()}")
++print(f"Count with key 'key123': {JsonFieldHasKeyTest.objects.filter(data__has_key='key123').count()}")
++
++print("\nChecking SQL queries...")
++from django.db import connection
++with connection.cursor() as cursor:
++    # Let's see what the actual SQL looks like
++    queries = JsonFieldHasKeyTest.objects.filter(data__has_key='1111').query
++    print(f"Query for numeric key '1111': {queries}")
++    
++    queries2 = JsonFieldHasKeyTest.objects.filter(data__has_key='foo').query  
++    print(f"Query for text key 'foo': {queries2}")
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..833d089dbb
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,13 @@
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++SECRET_KEY = 'test'
++USE_TZ = False

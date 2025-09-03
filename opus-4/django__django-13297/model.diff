@@ -1,0 +1,210 @@
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index 28374272f4..f4714571c3 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -806,6 +806,10 @@ class Field(RegisterLookupMixin):
+         """Perform preliminary non-db specific value checks and conversions."""
+         if isinstance(value, Promise):
+             value = value._proxy____cast()
++        # Handle SimpleLazyObject instances by forcing their evaluation
++        from django.utils.functional import SimpleLazyObject
++        if isinstance(value, SimpleLazyObject):
++            value = str(value)  # Force evaluation by converting to string
+         return value
+ 
+     def get_db_prep_value(self, value, connection, prepared=False):
+diff --git a/test_field_lazy_object.py b/test_field_lazy_object.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..b038e96013
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,85 @@
++import django
++from django.conf import settings
++
++# Configure Django first
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    SECRET_KEY='test',
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++    }]
++)
++
++django.setup()
++
++# Now we can import Django stuff
++from django.test import TestCase, RequestFactory
++from django.views.generic import TemplateView
++from django.db import models
++from django.shortcuts import get_object_or_404
++from django.http import Http404
++
++
++# Create a simple model for testing
++class Account(models.Model):
++    slug = models.SlugField(unique=True)
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++# The problematic view from the issue
++class OfferView(TemplateView):
++    template_name = "offers/offer.html"
++    
++    def get_context_data(self, **kwargs):
++        offer_slug = kwargs.get("offer_slug", "")
++        print(f"offer_slug type: {type(offer_slug)}, value: {offer_slug}")
++        # This line will fail in Django 3.1 because offer_slug is a SimpleLazyObject
++        offer = get_object_or_404(Account, slug=offer_slug)
++        return {"offer": offer, "offer_slug": offer_slug}
++
++
++# Test to reproduce the issue
++def test_template_view_kwargs_lazy_object():
++    # Setup
++    from django.db import connection
++    from django.db.migrations.executor import MigrationExecutor
++    from django.db.migrations.migration import Migration
++    from django.db.migrations import operations
++    
++    # Create table
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Account)
++    
++    # Create test data
++    Account.objects.create(slug="test-offer", name="Test Offer")
++    
++    # Create a mock request
++    factory = RequestFactory()
++    request = factory.get('/offers/test-offer/')
++    
++    # Create view instance
++    view = OfferView()
++    view.setup(request, offer_slug="test-offer")
++    
++    # Test the get method - this should trigger the issue
++    try:
++        response = view.get(request, offer_slug="test-offer")
++        print("SUCCESS: No error occurred")
++    except Exception as e:
++        print(f"ERROR: {type(e).__name__}: {e}")
++        import traceback
++        traceback.print_exc()
++
++
++if __name__ == "__main__":
++    test_template_view_kwargs_lazy_object()
+diff --git a/test_simplelazyobject_db.py b/test_simplelazyobject_db.py
+new file mode 100644
+index 0000000000..257786e1c8
+--- /dev/null
++++ b/test_simplelazyobject_db.py
+@@ -0,0 +1,85 @@
++"""
++Test that SimpleLazyObject instances can be used in database queries.
++"""
++import django
++from django.conf import settings
++from django.test import TestCase
++from django.utils.functional import SimpleLazyObject
++
++# Configure Django
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    SECRET_KEY='test',
++)
++django.setup()
++
++from django.db import models
++from django.db import connection
++
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    slug = models.SlugField(unique=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class SimpleLazyObjectDBTest(TestCase):
++    def setUp(self):
++        # Create table
++        with connection.schema_editor() as schema_editor:
++            schema_editor.create_model(TestModel)
++        
++    def test_simplelazyobject_in_filter(self):
++        """Test that SimpleLazyObject can be used in queryset filters."""
++        # Create test data
++        obj = TestModel.objects.create(name="Test", slug="test-slug")
++        
++        # Create a SimpleLazyObject that wraps the slug value
++        @SimpleLazyObject
++        def lazy_slug():
++            return "test-slug"
++        
++        # This should not raise an error
++        result = TestModel.objects.filter(slug=lazy_slug).first()
++        self.assertEqual(result.id, obj.id)
++        self.assertEqual(result.slug, "test-slug")
++        
++    def test_simplelazyobject_in_get(self):
++        """Test that SimpleLazyObject can be used in get() queries."""
++        # Create test data
++        obj = TestModel.objects.create(name="Test2", slug="test-slug-2")
++        
++        # Create a SimpleLazyObject that wraps the slug value
++        lazy_slug = SimpleLazyObject(lambda: "test-slug-2")
++        
++        # This should not raise an error
++        result = TestModel.objects.get(slug=lazy_slug)
++        self.assertEqual(result.id, obj.id)
++        self.assertEqual(result.slug, "test-slug-2")
++        
++    def test_simplelazyobject_with_different_field_types(self):
++        """Test SimpleLazyObject with different field types."""
++        obj = TestModel.objects.create(name="Test3", slug="test-3")
++        
++        # Test with CharField
++        lazy_name = SimpleLazyObject(lambda: "Test3")
++        result = TestModel.objects.filter(name=lazy_name).first()
++        self.assertEqual(result.id, obj.id)
++        
++        # Test with primary key (IntegerField)
++        lazy_pk = SimpleLazyObject(lambda: obj.id)
++        result = TestModel.objects.get(pk=lazy_pk)
++        self.assertEqual(result.id, obj.id)
++
++
++if __name__ == "__main__":
++    import unittest
++    unittest.main()
+diff --git a/view_file.py b/view_file.py
+new file mode 100644
+index 0000000000..6814ca0fb2
+--- /dev/null
++++ b/view_file.py
+@@ -0,0 +1,4 @@
++with open('/testbed/django/db/models/fields/__init__.py', 'r') as f:
++    lines = f.readlines()
++    for i in range(800, 820):
++        print(f"{i}: {lines[i]}", end="")

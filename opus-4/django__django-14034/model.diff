@@ -1,0 +1,66 @@
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 65d6a9ec82..45ee6b5273 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -1026,7 +1026,12 @@ class MultiValueField(Field):
+                 if self.required:
+                     raise ValidationError(self.error_messages['required'], code='required')
+                 else:
+-                    return self.compress([])
++                    # When require_all_fields is False, we still need to check if any
++                    # individual field is required, even when all values are empty.
++                    # Don't return early - continue to field validation below.
++                    if self.require_all_fields:
++                        return self.compress([])
++                    # else: fall through to validate individual fields
+         else:
+             raise ValidationError(self.error_messages['invalid'], code='invalid')
+         for i, field in enumerate(self.fields):
+diff --git a/tests/forms_tests/field_tests/test_multivaluefield.py b/tests/forms_tests/field_tests/test_multivaluefield.py
+index 29287d0b01..eb9b8885ba 100644
+--- a/tests/forms_tests/field_tests/test_multivaluefield.py
++++ b/tests/forms_tests/field_tests/test_multivaluefield.py
+@@ -172,3 +172,43 @@ class MultiValueFieldTest(SimpleTestCase):
+         })
+         form.is_valid()
+         self.assertEqual(form.cleaned_data['field1'], 'some text,JP,2007-04-25 06:24:00')
++
++    def test_require_all_fields_false_with_required_subfield(self):
++        """
++        When require_all_fields=False, if a subfield is required and all values
++        are empty, the validation should fail.
++        """
++        # Define a MultiValueField with one optional and one required field
++        class TestMultiValueField(MultiValueField):
++            def __init__(self):
++                fields = [
++                    CharField(required=False),
++                    CharField(required=True),
++                ]
++                super().__init__(
++                    fields=fields,
++                    require_all_fields=False,
++                    required=False,
++                )
++            
++            def compress(self, data_list):
++                return data_list
++        
++        # Test 1: Both fields empty - should fail because second field is required
++        field = TestMultiValueField()
++        with self.assertRaises(ValidationError) as cm:
++            field.clean(['', ''])
++        self.assertEqual(cm.exception.messages[0], 'Enter a complete value.')
++        
++        # Test 2: First field has value, second field empty - should fail
++        with self.assertRaises(ValidationError) as cm:
++            field.clean(['test', ''])
++        self.assertEqual(cm.exception.messages[0], 'Enter a complete value.')
++        
++        # Test 3: Only second field (required) has value - should pass
++        result = field.clean(['', 'test'])
++        self.assertEqual(result, ['', 'test'])
++        
++        # Test 4: Both fields have values - should pass
++        result = field.clean(['test1', 'test2'])
++        self.assertEqual(result, ['test1', 'test2'])

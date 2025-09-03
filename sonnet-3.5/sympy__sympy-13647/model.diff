@@ -1,0 +1,32 @@
+diff --git a/sympy/matrices/common.py b/sympy/matrices/common.py
+index 056d9bc497..4aa75e4d77 100644
+--- a/sympy/matrices/common.py
++++ b/sympy/matrices/common.py
+@@ -86,7 +86,7 @@ def entry(i, j):
+                 return self[i, j]
+             elif pos <= j < pos + other.cols:
+                 return other[i, j - pos]
+-            return self[i, j - pos - other.cols]
++            return self[i, j - other.cols]
+ 
+         return self._new(self.rows, self.cols + other.cols,
+                          lambda i, j: entry(i, j))
+diff --git a/sympy/matrices/tests/test_matrices.py b/sympy/matrices/tests/test_matrices.py
+index 78bd30fc81..ea0b126364 100644
+--- a/sympy/matrices/tests/test_matrices.py
++++ b/sympy/matrices/tests/test_matrices.py
+@@ -2996,3 +2996,13 @@ def test_deprecated():
+         P, Jcells = m.jordan_cells()
+         assert Jcells[1] == Matrix(1, 1, [2])
+         assert Jcells[0] == Matrix(2, 2, [2, 1, 0, 2])
++
++def test_col_insert():
++    m = Matrix([[1, 2], [3, 4]])
++    v = Matrix([5, 6])
++    assert m.col_insert(0, v) == Matrix([[5, 1, 2], [6, 3, 4]])
++    assert m.col_insert(1, v) == Matrix([[1, 5, 2], [3, 6, 4]])
++    assert m.col_insert(2, v) == Matrix([[1, 2, 5], [3, 4, 6]])
++    m = Matrix([[1, 2, 3], [4, 5, 6]])
++    v = Matrix([[7], [8]])
++    assert m.col_insert(1, v) == Matrix([[1, 7, 2, 3], [4, 8, 5, 6]])
+\ No newline at end of file

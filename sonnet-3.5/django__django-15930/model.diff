@@ -1,0 +1,62 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 822968ef56..fe3f4476cd 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1386,10 +1386,11 @@ class Case(SQLiteNumericMixin, Expression):
+         for case in self.cases:
+             try:
+                 case_sql, case_params = compiler.compile(case)
++                if case_sql.strip():  # Skip empty conditions
++                    case_parts.append(case_sql)
++                    sql_params.extend(case_params)
+             except EmptyResultSet:
+                 continue
+-            case_parts.append(case_sql)
+-            sql_params.extend(case_params)
+         default_sql, default_params = compiler.compile(self.default)
+         if not case_parts:
+             return default_sql, default_params
+diff --git a/tests/expressions/test_case_expression.py b/tests/expressions/test_case_expression.py
+new file mode 100644
+index 0000000000..03a5cab70a
+--- /dev/null
++++ b/tests/expressions/test_case_expression.py
+@@ -0,0 +1,37 @@
++
++from django.db.models import BooleanField, Case, Q, Value, When
++from django.test import TestCase
++from django.contrib.auth.models import User
++
++class CaseTests(TestCase):
++    def setUp(self):
++        User.objects.create(username='user1')
++        User.objects.create(username='user2')
++
++    def test_case_with_empty_q_object(self):
++        queryset = User.objects.annotate(
++            _a=Case(
++                When(~Q(pk__in=[]), then=Value(True)),
++                default=Value(False),
++                output_field=BooleanField(),
++            )
++        ).order_by('pk').values('pk', '_a')
++
++        self.assertEqual(list(queryset), [
++            {'pk': 1, '_a': True},
++            {'pk': 2, '_a': True},
++        ])
++
++    def test_case_with_non_empty_q_object(self):
++        queryset = User.objects.annotate(
++            _a=Case(
++                When(Q(pk__in=[1]), then=Value(True)),
++                default=Value(False),
++                output_field=BooleanField(),
++            )
++        ).order_by('pk').values('pk', '_a')
++
++        self.assertEqual(list(queryset), [
++            {'pk': 1, '_a': True},
++            {'pk': 2, '_a': False},
++        ])
+\ No newline at end of file

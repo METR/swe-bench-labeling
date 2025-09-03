@@ -1,0 +1,44 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index abc6f79a15..880abdcee1 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -71,6 +71,15 @@ class CommandParser(ArgumentParser):
+         else:
+             raise CommandError("Error: %s" % message)
+ 
++    def add_subparsers(self, **kwargs):
++        subparsers = super().add_subparsers(**kwargs)
++        subparsers._parser_class = lambda **kw: self.__class__(
++            missing_args_message=self.missing_args_message,
++            called_from_command_line=self.called_from_command_line,
++            **kw
++        )
++        return subparsers
++
+ 
+ def handle_default_options(options):
+     """
+diff --git a/django/core/management/commands/test_subparser.py b/django/core/management/commands/test_subparser.py
+new file mode 100644
+index 0000000000..6b8fd86ecc
+--- /dev/null
++++ b/django/core/management/commands/test_subparser.py
+@@ -0,0 +1,18 @@
++from django.core.management.base import BaseCommand, CommandError
++
++class Command(BaseCommand):
++    help = 'Test command for subparser error formatting'
++
++    def add_arguments(self, parser):
++        subparsers = parser.add_subparsers(dest='subcommand', required=True)
++        
++        create_parser = subparsers.add_parser('create')
++        create_parser.add_argument('name', type=str)
++
++    def handle(self, *args, **options):
++        subcommand = options['subcommand']
++        if subcommand == 'create':
++            name = options['name']
++            self.stdout.write(self.style.SUCCESS(f'Created {name}'))
++        else:
++            raise CommandError('Unknown subcommand')

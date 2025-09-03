@@ -1,0 +1,178 @@
+diff --git a/sympy/physics/units/unitsystem.py b/sympy/physics/units/unitsystem.py
+index 3daf84c108..d2d8cec901 100644
+--- a/sympy/physics/units/unitsystem.py
++++ b/sympy/physics/units/unitsystem.py
+@@ -192,8 +192,16 @@ def _collect_factor_and_dimension(self, expr):
+         elif isinstance(expr, Function):
+             fds = [self._collect_factor_and_dimension(
+                 arg) for arg in expr.args]
+-            return (expr.func(*(f[0] for f in fds)),
+-                    *(d[1] for d in fds))
++            # Check if all arguments are dimensionless
++            dims = [d[1] for d in fds]
++            for dim in dims:
++                if not self.get_dimension_system().is_dimensionless(dim):
++                    raise ValueError(
++                        'Dimension of "{}" is {}, '
++                        'but it should be {}'.format(
++                            expr.func(*(f[0] for f in fds)), dim, Dimension(1)))
++            # If all arguments are dimensionless, the function result is also dimensionless
++            return expr.func(*(f[0] for f in fds)), Dimension(1)
+         elif isinstance(expr, Dimension):
+             return S.One, expr
+         else:
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..096e8a714f
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,69 @@
++from sympy import exp, sin, cos, log, tan, sqrt, E, pi
++from sympy.physics import units
++from sympy.physics.units.systems.si import SI
++from sympy.physics.units import meter, second, joule, volt, ohm, farad
++
++# Test 1: Original issue - exp with dimensionless argument
++expr = units.second / (units.ohm * units.farad)
++dim = SI._collect_factor_and_dimension(expr)[1]
++print(f"Test 1 - Expression: {expr}")
++print(f"Test 1 - Dimension: {dim}")
++print(f"Test 1 - Is dimensionless: {SI.get_dimension_system().is_dimensionless(dim)}")
++assert SI.get_dimension_system().is_dimensionless(dim)
++
++buggy_expr = 100 + exp(expr)
++print(f"Test 1 - Buggy expression: {buggy_expr}")
++result = SI._collect_factor_and_dimension(buggy_expr)
++print(f"Test 1 - Result: {result}")
++print(f"Test 1 - PASSED!\n")
++
++# Test 2: Various functions with dimensionless arguments
++print("Test 2 - Testing various functions with dimensionless arguments:")
++functions = [sin, cos, tan, log]
++for func in functions:
++    try:
++        test_expr = func(expr)
++        factor, dim = SI._collect_factor_and_dimension(test_expr)
++        print(f"  {func.__name__}({expr}) -> factor: {factor}, dimension: {dim}")
++        assert SI.get_dimension_system().is_dimensionless(dim)
++    except Exception as e:
++        print(f"  {func.__name__} failed: {e}")
++
++print("Test 2 - PASSED!\n")
++
++# Test 3: Functions with dimensional arguments should raise error
++print("Test 3 - Testing functions with dimensional arguments (should fail):")
++try:
++    bad_expr = exp(meter)
++    SI._collect_factor_and_dimension(bad_expr)
++    print("  ERROR: Should have raised ValueError!")
++except ValueError as e:
++    print(f"  Correctly raised ValueError: {e}")
++
++print("Test 3 - PASSED!\n")
++
++# Test 4: Test from test_issue_20288
++from sympy.physics.units import energy
++u = units.Quantity('u')
++v = units.Quantity('v')
++SI.set_quantity_dimension(u, energy)
++SI.set_quantity_dimension(v, energy)
++u.set_global_relative_scale_factor(1, joule)
++v.set_global_relative_scale_factor(1, joule)
++expr = 1 + exp(u**2/v**2)
++result = SI._collect_factor_and_dimension(expr)
++print(f"Test 4 - Expression: {expr}")
++print(f"Test 4 - Result: {result}")
++assert result == (1 + E, units.dimensions.Dimension(1))
++print("Test 4 - PASSED!\n")
++
++# Test 5: Nested functions
++print("Test 5 - Testing nested functions:")
++dimensionless_expr = units.second / (units.ohm * units.farad)
++nested_expr = sin(exp(dimensionless_expr))
++factor, dim = SI._collect_factor_and_dimension(nested_expr)
++print(f"  sin(exp({dimensionless_expr})) -> factor: {factor}, dimension: {dim}")
++assert SI.get_dimension_system().is_dimensionless(dim)
++print("Test 5 - PASSED!\n")
++
++print("\nAll tests passed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..cd312ffd50
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,45 @@
++from sympy import exp, sin, sqrt, symbols
++from sympy.physics import units
++from sympy.physics.units.systems.si import SI
++from sympy.physics.units import meter, second, ohm, farad
++
++# Test: Functions with multiple arguments
++x = symbols('x')
++print("Test 1: Functions with multiple arguments")
++try:
++    # Functions like atan2, etc. might have multiple arguments
++    # For now, our implementation requires all args to be dimensionless
++    print("  - Testing function with symbol and dimensionless quantity")
++    expr = units.second / (units.ohm * units.farad)
++    # This should work since x is dimensionless and expr is dimensionless
++    factor, dim = SI._collect_factor_and_dimension(exp(x + expr))
++    print(f"    exp(x + {expr}) -> factor: {factor}, dimension: {dim}")
++    assert SI.get_dimension_system().is_dimensionless(dim)
++    print("  PASSED!")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++print("\nTest 2: Functions that don't require dimensionless arguments")
++# sqrt doesn't necessarily require dimensionless arguments
++try:
++    sqrt_expr = sqrt(meter**2)
++    factor, dim = SI._collect_factor_and_dimension(sqrt_expr)
++    print(f"  sqrt(meter**2) -> factor: {factor}, dimension: {dim}")
++    # sqrt is not a transcendental function, so it shouldn't check dimensions
++    print("  PASSED!")
++except Exception as e:
++    print(f"  Failed (expected): {e}")
++
++print("\nTest 3: Mixed expressions")
++try:
++    expr = units.second / (units.ohm * units.farad)
++    mixed = 2*exp(expr) + 3*sin(expr) + 5
++    factor, dim = SI._collect_factor_and_dimension(mixed)
++    print(f"  2*exp({expr}) + 3*sin({expr}) + 5")
++    print(f"    -> factor: {factor}, dimension: {dim}")
++    assert SI.get_dimension_system().is_dimensionless(dim)
++    print("  PASSED!")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++print("\nAll edge case tests completed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..cc9f7b72f2
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,23 @@
++from sympy import exp
++from sympy.physics import units
++from sympy.physics.units.systems.si import SI
++
++# First test - this should work
++expr = units.second / (units.ohm * units.farad)
++dim = SI._collect_factor_and_dimension(expr)[1]
++
++print(f"Expression: {expr}")
++print(f"Dimension: {dim}")
++print(f"Is dimensionless: {SI.get_dimension_system().is_dimensionless(dim)}")
++
++assert SI.get_dimension_system().is_dimensionless(dim)
++print("First assertion passed!")
++
++# Second test - this should fail with the bug
++try:
++    buggy_expr = 100 + exp(expr)
++    print(f"\nBuggy expression: {buggy_expr}")
++    result = SI._collect_factor_and_dimension(buggy_expr)
++    print(f"Result: {result}")
++except ValueError as e:
++    print(f"\nError occurred: {e}")

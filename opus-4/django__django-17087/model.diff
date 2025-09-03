@@ -1,0 +1,78 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index d88cda6e20..06657ebaab 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -168,7 +168,7 @@ class FunctionTypeSerializer(BaseSerializer):
+         ):
+             klass = self.value.__self__
+             module = klass.__module__
+-            return "%s.%s.%s" % (module, klass.__name__, self.value.__name__), {
++            return "%s.%s.%s" % (module, klass.__qualname__, self.value.__name__), {
+                 "import %s" % module
+             }
+         # Further error checking
+diff --git a/run_writer_test.py b/run_writer_test.py
+new file mode 100644
+index 0000000000..eaee7fb365
+--- /dev/null
++++ b/run_writer_test.py
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.test.utils import get_runner
++
++if __name__ == "__main__":
++    os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_sqlite'
++    django.setup()
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner()
++    
++    # Run only our specific test
++    failures = test_runner.run_tests(["migrations.test_writer.WriterTests.test_serialize_nested_class_method"])
++    
++    if failures:
++        sys.exit(1)
+diff --git a/tests/migrations/test_writer.py b/tests/migrations/test_writer.py
+index bef8f64061..463c9452af 100644
+--- a/tests/migrations/test_writer.py
++++ b/tests/migrations/test_writer.py
+@@ -739,6 +739,36 @@ class WriterTests(SimpleTestCase):
+         """An unbound method used within a class body can be serialized."""
+         self.serialize_round_trip(TestModel1.thing)
+ 
++    def test_serialize_nested_class_method(self):
++        """Test serialization of class methods from nested classes."""
++        class OuterModel:
++            class InnerClass:
++                @classmethod
++                def inner_method(cls):
++                    return []
++        
++        # Test direct serialization of nested class method
++        result = self.serialize_round_trip(OuterModel.InnerClass.inner_method)
++        self.assertEqual(result(), [])
++        
++        # Test that the serialized string contains the full qualified name
++        string, imports = MigrationWriter.serialize(OuterModel.InnerClass.inner_method)
++        self.assertIn("OuterModel.InnerClass.inner_method", string)
++        
++        # Test deeply nested classes
++        class Level1:
++            class Level2:
++                class Level3:
++                    @classmethod
++                    def deep_method(cls):
++                        return "deep"
++        
++        result = self.serialize_round_trip(Level1.Level2.Level3.deep_method)
++        self.assertEqual(result(), "deep")
++        
++        string, imports = MigrationWriter.serialize(Level1.Level2.Level3.deep_method)
++        self.assertIn("Level1.Level2.Level3.deep_method", string)
++
+     def test_serialize_local_function_reference(self):
+         """A reference in a local scope can't be serialized."""
+ 

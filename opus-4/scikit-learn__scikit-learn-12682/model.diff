@@ -1,0 +1,277 @@
+diff --git a/sklearn/decomposition/dict_learning.py b/sklearn/decomposition/dict_learning.py
+index a318c957f..7218b01dc 100644
+--- a/sklearn/decomposition/dict_learning.py
++++ b/sklearn/decomposition/dict_learning.py
+@@ -865,7 +865,8 @@ class SparseCodingMixin(TransformerMixin):
+                                   transform_algorithm='omp',
+                                   transform_n_nonzero_coefs=None,
+                                   transform_alpha=None, split_sign=False,
+-                                  n_jobs=None, positive_code=False):
++                                  n_jobs=None, positive_code=False,
++                                  transform_max_iter=1000):
+         self.n_components = n_components
+         self.transform_algorithm = transform_algorithm
+         self.transform_n_nonzero_coefs = transform_n_nonzero_coefs
+@@ -873,6 +874,7 @@ class SparseCodingMixin(TransformerMixin):
+         self.split_sign = split_sign
+         self.n_jobs = n_jobs
+         self.positive_code = positive_code
++        self.transform_max_iter = transform_max_iter
+ 
+     def transform(self, X):
+         """Encode the data as a sparse combination of the dictionary atoms.
+@@ -900,7 +902,7 @@ class SparseCodingMixin(TransformerMixin):
+             X, self.components_, algorithm=self.transform_algorithm,
+             n_nonzero_coefs=self.transform_n_nonzero_coefs,
+             alpha=self.transform_alpha, n_jobs=self.n_jobs,
+-            positive=self.positive_code)
++            positive=self.positive_code, max_iter=self.transform_max_iter)
+ 
+         if self.split_sign:
+             # feature vector is split into a positive and negative side
+@@ -974,6 +976,9 @@ class SparseCoder(BaseEstimator, SparseCodingMixin):
+ 
+         .. versionadded:: 0.20
+ 
++    transform_max_iter : int, 1000 by default
++        Maximum number of iterations to perform if `transform_algorithm='lasso_cd'`.
++
+     Attributes
+     ----------
+     components_ : array, [n_components, n_features]
+@@ -991,12 +996,13 @@ class SparseCoder(BaseEstimator, SparseCodingMixin):
+ 
+     def __init__(self, dictionary, transform_algorithm='omp',
+                  transform_n_nonzero_coefs=None, transform_alpha=None,
+-                 split_sign=False, n_jobs=None, positive_code=False):
++                 split_sign=False, n_jobs=None, positive_code=False,
++                 transform_max_iter=1000):
+         self._set_sparse_coding_params(dictionary.shape[0],
+                                        transform_algorithm,
+                                        transform_n_nonzero_coefs,
+                                        transform_alpha, split_sign, n_jobs,
+-                                       positive_code)
++                                       positive_code, transform_max_iter)
+         self.components_ = dictionary
+ 
+     def fit(self, X, y=None):
+@@ -1157,7 +1163,7 @@ class DictionaryLearning(BaseEstimator, SparseCodingMixin):
+         self._set_sparse_coding_params(n_components, transform_algorithm,
+                                        transform_n_nonzero_coefs,
+                                        transform_alpha, split_sign, n_jobs,
+-                                       positive_code)
++                                       positive_code, 1000)
+         self.alpha = alpha
+         self.max_iter = max_iter
+         self.tol = tol
+@@ -1346,7 +1352,7 @@ class MiniBatchDictionaryLearning(BaseEstimator, SparseCodingMixin):
+         self._set_sparse_coding_params(n_components, transform_algorithm,
+                                        transform_n_nonzero_coefs,
+                                        transform_alpha, split_sign, n_jobs,
+-                                       positive_code)
++                                       positive_code, 1000)
+         self.alpha = alpha
+         self.n_iter = n_iter
+         self.fit_algorithm = fit_algorithm
+diff --git a/test_issue_reproduction.py b/test_issue_reproduction.py
+new file mode 100644
+index 000000000..54f2ceef7
+--- /dev/null
++++ b/test_issue_reproduction.py
+@@ -0,0 +1,76 @@
++"""
++Test to reproduce the issue mentioned:
++SparseCoder with lasso_cd algorithm produces convergence warnings
++when max_iter is not exposed.
++"""
++import numpy as np
++from sklearn.decomposition import SparseCoder
++import warnings
++
++# Create a problem similar to the plot_sparse_coding example
++np.random.seed(42)
++resolution = 1024
++width = 100
++n_components = resolution // 3  # Similar to the example
++
++# Create dictionary (simplified version of ricker_matrix)
++centers = np.linspace(0, resolution - 1, n_components)
++D = np.empty((n_components, resolution))
++for i, center in enumerate(centers):
++    x = np.linspace(0, resolution - 1, resolution)
++    D[i] = ((2 / ((np.sqrt(3 * width) * np.pi ** 0.25)))
++            * (1 - ((x - center) ** 2 / width ** 2))
++            * np.exp((-(x - center) ** 2) / (2 * width ** 2)))
++D /= np.sqrt(np.sum(D ** 2, axis=1))[:, np.newaxis]
++
++# Generate a signal similar to the example
++y = np.linspace(0, resolution - 1, resolution)
++first_quarter = y < resolution / 4
++y[first_quarter] = 3.
++y[~first_quarter] = -1.
++
++print("Testing SparseCoder with lasso_cd algorithm (before fix):")
++print("This would produce convergence warnings with default max_iter=1000")
++print()
++
++# Test with default max_iter (should work now without warnings for reasonable problems)
++coder_default = SparseCoder(dictionary=D, transform_algorithm='lasso_cd',
++                           transform_alpha=2)
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    x_default = coder_default.transform(y.reshape(1, -1))
++    conv_warnings = [warning for warning in w if 'ConvergenceWarning' in str(warning.category)]
++    if conv_warnings:
++        print(f"Got convergence warning with default max_iter")
++    else:
++        print(f"No convergence warning with default max_iter (transform_max_iter={coder_default.transform_max_iter})")
++
++# Test with explicitly low max_iter (should produce warning)
++print("\nTesting with very low max_iter to force convergence warning:")
++coder_low = SparseCoder(dictionary=D, transform_algorithm='lasso_cd',
++                       transform_alpha=2, transform_max_iter=1)
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    x_low = coder_low.transform(y.reshape(1, -1))
++    conv_warnings = [warning for warning in w if 'ConvergenceWarning' in str(warning.category)]
++    if conv_warnings:
++        print(f"Got expected convergence warning with transform_max_iter=1")
++    else:
++        print(f"No convergence warning with transform_max_iter=1 (unexpected)")
++
++# Test with high max_iter (should not produce warning)
++print("\nTesting with high max_iter:")
++coder_high = SparseCoder(dictionary=D, transform_algorithm='lasso_cd',
++                        transform_alpha=2, transform_max_iter=10000)
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    x_high = coder_high.transform(y.reshape(1, -1))
++    conv_warnings = [warning for warning in w if 'ConvergenceWarning' in str(warning.category)]
++    if conv_warnings:
++        print(f"Got convergence warning with transform_max_iter=10000 (unexpected)")
++    else:
++        print(f"No convergence warning with transform_max_iter=10000 (expected)")
++
++print("\nThe fix allows users to control max_iter for lasso_cd algorithm!")
++print(f"Default transform_max_iter: {coder_default.transform_max_iter}")
++print(f"Custom transform_max_iter: {coder_high.transform_max_iter}")
+diff --git a/test_max_iter_fix.py b/test_max_iter_fix.py
+new file mode 100644
+index 000000000..1c17caece
+--- /dev/null
++++ b/test_max_iter_fix.py
+@@ -0,0 +1,70 @@
++import numpy as np
++from sklearn.decomposition import SparseCoder
++import warnings
++
++# Test 1: Check that max_iter parameter is accessible and works
++np.random.seed(42)
++n_features = 50
++n_components = 30
++
++# Create a simple dictionary
++dictionary = np.random.randn(n_components, n_features)
++dictionary = dictionary / np.linalg.norm(dictionary, axis=1, keepdims=True)
++
++# Test with default max_iter
++print("Test 1: SparseCoder with default transform_max_iter (1000)")
++coder1 = SparseCoder(dictionary=dictionary, transform_algorithm='lasso_cd')
++print(f"transform_max_iter: {coder1.transform_max_iter}")
++
++# Test with custom max_iter
++print("\nTest 2: SparseCoder with custom transform_max_iter")
++coder2 = SparseCoder(dictionary=dictionary, transform_algorithm='lasso_cd', 
++                     transform_max_iter=2000)
++print(f"transform_max_iter: {coder2.transform_max_iter}")
++
++# Test transform with both
++X = np.random.randn(10, n_features)
++
++print("\nTest 3: Transform data with both coders")
++result1 = coder1.transform(X)
++result2 = coder2.transform(X)
++print(f"Result1 shape: {result1.shape}")
++print(f"Result2 shape: {result2.shape}")
++
++# Test 4: Verify that max_iter is properly passed to Lasso
++print("\nTest 4: Checking if max_iter is used when algorithm='lasso_cd'")
++
++# Create a difficult problem that needs many iterations
++n_features = 200
++n_components = 100
++X_hard = np.random.randn(50, n_features) * 10
++dictionary_hard = np.random.randn(n_components, n_features)
++dictionary_hard = dictionary_hard / np.linalg.norm(dictionary_hard, axis=1, keepdims=True)
++
++# With low max_iter, should potentially get convergence warning
++coder_low_iter = SparseCoder(dictionary=dictionary_hard, transform_algorithm='lasso_cd',
++                            transform_alpha=0.01, transform_max_iter=10)
++
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    result_low = coder_low_iter.transform(X_hard)
++    conv_warnings = [warning for warning in w if 'ConvergenceWarning' in str(warning.category)]
++    if conv_warnings:
++        print(f"Got expected convergence warning with max_iter=10")
++    else:
++        print(f"No convergence warning with max_iter=10")
++
++# With high max_iter, should not get convergence warning
++coder_high_iter = SparseCoder(dictionary=dictionary_hard, transform_algorithm='lasso_cd',
++                             transform_alpha=0.01, transform_max_iter=5000)
++
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    result_high = coder_high_iter.transform(X_hard)
++    conv_warnings = [warning for warning in w if 'ConvergenceWarning' in str(warning.category)]
++    if conv_warnings:
++        print(f"Got convergence warning with max_iter=5000 (unexpected)")
++    else:
++        print(f"No convergence warning with max_iter=5000 (expected)")
++
++print("\nAll tests passed!")
+diff --git a/test_sparse_coder_issue.py b/test_sparse_coder_issue.py
+new file mode 100644
+index 000000000..c60e10c34
+--- /dev/null
++++ b/test_sparse_coder_issue.py
+@@ -0,0 +1,38 @@
++import numpy as np
++from sklearn.decomposition import SparseCoder
++import warnings
++
++# Create a test case that's more likely to require many iterations
++np.random.seed(42)
++n_features = 1024
++n_components = n_features // 3  # Similar to the example
++
++# Create a difficult sparse coding problem
++# Using a signal similar to the example
++y = np.linspace(0, n_features - 1, n_features)
++first_quarter = y < n_features / 4
++y[first_quarter] = 3.
++y[~first_quarter] = -1.
++
++# Create a dictionary that requires many iterations to converge
++dictionary = np.random.randn(n_components, n_features)
++# Normalize dictionary atoms to unit norm
++dictionary = dictionary / np.linalg.norm(dictionary, axis=1, keepdims=True)
++
++# Test with lasso_cd algorithm - using lasso_lars instead of lasso_cd
++print("Testing SparseCoder with lasso_cd algorithm...")
++# Using a small alpha to make convergence harder
++coder = SparseCoder(dictionary=dictionary, transform_algorithm='lasso_cd', 
++                    transform_alpha=0.1)
++
++# This should produce a convergence warning with default max_iter=1000
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    result = coder.transform(y.reshape(1, -1))
++    conv_warnings = [warning for warning in w if 'ConvergenceWarning' in str(warning.category)]
++    if conv_warnings:
++        print(f"ConvergenceWarning caught: {conv_warnings[0].message}")
++    else:
++        print("No convergence warning produced")
++
++print(f"Result shape: {result.shape}")

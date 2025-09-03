@@ -1,0 +1,177 @@
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index c120f5d32d..3b660b4b5f 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -490,6 +490,20 @@ class AlterTogetherOptionOperation(ModelOptionOperation):
+             [],
+             kwargs
+         )
++    
++    def reduce(self, operation, app_label):
++        # Special case: if we have the same AlterTogetherOptionOperation class and same model,
++        # we can reduce them to just the second operation, as it fully replaces the first
++        if isinstance(operation, self.__class__) and self.name_lower == operation.name_lower:
++            return [operation]
++        # AlterUniqueTogether and AlterIndexTogether can optimize through each other
++        # as they operate on different types of constraints
++        if (isinstance(operation, AlterTogetherOptionOperation) and 
++            not isinstance(operation, self.__class__) and 
++            self.name_lower == operation.name_lower):
++            return True
++        # Otherwise, use the default behavior from parent class
++        return super().reduce(operation, app_label)
+ 
+     def state_forwards(self, app_label, state):
+         state.alter_model_options(
+diff --git a/test_alter_together_optimization.py b/test_alter_together_optimization.py
+new file mode 100644
+index 0000000000..821e6a6197
+--- /dev/null
++++ b/test_alter_together_optimization.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import migrations, models
++from django.db.migrations.optimizer import MigrationOptimizer
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++django.setup()
++
++# Test the issue
++optimizer = MigrationOptimizer()
++
++# Example from the issue
++operations = [
++    migrations.AlterUniqueTogether(
++        name='mymodel',
++        unique_together=set(),
++    ),
++    migrations.AlterIndexTogether(
++        name='mymodel',
++        index_together=set(),
++    ),
++    migrations.AlterUniqueTogether(
++        name='mymodel',
++        unique_together={("col",)},
++    ),
++    migrations.AlterIndexTogether(
++        name='mymodel',
++        index_together={("col",)},
++    ),
++]
++
++print("Original operations:")
++for i, op in enumerate(operations):
++    print(f"{i}: {op.__class__.__name__}(name='{op.name}', {op.option_name}={getattr(op, op.option_name)})")
++
++optimized = optimizer.optimize(operations, 'testapp')
++
++print("\nOptimized operations:")
++for i, op in enumerate(optimized):
++    print(f"{i}: {op.__class__.__name__}(name='{op.name}', {op.option_name}={getattr(op, op.option_name)})")
++
++print(f"\nOriginal count: {len(operations)}, Optimized count: {len(optimized)}")
++
++# Expected result: should be optimized to just 2 operations, not 4
++expected_count = 2
++if len(optimized) == expected_count:
++    print(f"✓ SUCCESS: Operations were optimized correctly to {expected_count} operations")
++else:
++    print(f"✗ FAIL: Expected {expected_count} operations but got {len(optimized)}")
+diff --git a/test_debug_reduce.py b/test_debug_reduce.py
+new file mode 100644
+index 0000000000..b86cd65bfe
+--- /dev/null
++++ b/test_debug_reduce.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import migrations, models
++from django.db.migrations.optimizer import MigrationOptimizer
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++django.setup()
++
++# Test the issue
++optimizer = MigrationOptimizer()
++
++# Example from the issue
++operations = [
++    migrations.AlterUniqueTogether(
++        name='mymodel',
++        unique_together=set(),
++    ),
++    migrations.AlterIndexTogether(
++        name='mymodel',
++        index_together=set(),
++    ),
++    migrations.AlterUniqueTogether(
++        name='mymodel',
++        unique_together={("col",)},
++    ),
++    migrations.AlterIndexTogether(
++        name='mymodel',
++        index_together={("col",)},
++    ),
++]
++
++print("Original operations:")
++for i, op in enumerate(operations):
++    print(f"{i}: {op.__class__.__name__}(name='{op.name}', {op.option_name}={getattr(op, op.option_name)})")
++
++# Let's trace through what reduce does
++print("\nTesting reduce operations:")
++for i in range(len(operations)):
++    for j in range(i + 1, len(operations)):
++        op1 = operations[i]
++        op2 = operations[j]
++        result = op1.reduce(op2, 'testapp')
++        if result is not True:
++            print(f"  {op1.__class__.__name__}[{i}].reduce({op2.__class__.__name__}[{j}]) = {result}")
++
++optimized = optimizer.optimize(operations, 'testapp')
++
++print("\nOptimized operations:")
++for i, op in enumerate(optimized):
++    print(f"{i}: {op.__class__.__name__}(name='{op.name}', {op.option_name}={getattr(op, op.option_name)})")
++
++print(f"\nOriginal count: {len(operations)}, Optimized count: {len(optimized)}")
++
++# Expected result: should be optimized to just 2 operations, not 4
++expected_count = 2
++if len(optimized) == expected_count:
++    print(f"✓ SUCCESS: Operations were optimized correctly to {expected_count} operations")
++else:
++    print(f"✗ FAIL: Expected {expected_count} operations but got {len(optimized)}")

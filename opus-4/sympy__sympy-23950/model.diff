@@ -1,0 +1,140 @@
+diff --git a/sympy/sets/contains.py b/sympy/sets/contains.py
+index b2d4268d12..ed052ea9bd 100644
+--- a/sympy/sets/contains.py
++++ b/sympy/sets/contains.py
+@@ -45,4 +45,36 @@ def binary_symbols(self):
+             isinstance(i, (Eq, Ne))])
+ 
+     def as_set(self):
+-        raise NotImplementedError()
++        """
++        Rewrite `Contains(x, S)` in terms of real sets.
++
++        If `x` is a symbol, this returns the set S itself, since 
++        Contains(x, S) is true for all x in S.
++
++        Examples
++        ========
++
++        >>> from sympy import Symbol, S, Contains
++        >>> x = Symbol('x', real=True)
++        >>> Contains(x, S.Reals).as_set()
++        Reals
++        >>> Contains(x, S.Integers).as_set()
++        Integers
++
++        """
++        x, S = self.args
++        if x.is_Symbol:
++            return S
++        else:
++            # For non-symbols, follow the behavior of Boolean.as_set()
++            free = self.free_symbols
++            if len(free) == 1:
++                # Single free symbol case
++                sym = free.pop()
++                from sympy.sets.conditionset import ConditionSet
++                return ConditionSet(sym, self, S)
++            else:
++                # Multiple free symbols
++                raise NotImplementedError("Sorry, as_set has not yet been"
++                                          " implemented for multivariate"
++                                          " expressions")
+diff --git a/test_contains.py b/test_contains.py
+new file mode 100644
+index 0000000000..742e8c09dd
+--- /dev/null
++++ b/test_contains.py
+@@ -0,0 +1,54 @@
++from sympy import *
++
++x = Symbol('x')
++
++# Test 1: Basic as_set() functionality
++print("Test 1: Contains(x, Reals).as_set()")
++result = Contains(x, Reals).as_set()
++print(f"Result: {result}")
++print(f"Type: {type(result)}")
++assert result == Reals
++print("✓ Passed\n")
++
++# Test 2: as_relational functionality  
++print("Test 2: Contains(x, Reals).as_set().as_relational(x)")
++result = Contains(x, Reals).as_set().as_relational(x)
++print(f"Result: {result}")
++assert result == And(-oo < x, x < oo)
++print("✓ Passed\n")
++
++# Test 3: Piecewise with Contains
++print("Test 3: Piecewise((6, Contains(x, Reals)), (7, True))")
++try:
++    result = Piecewise((6, Contains(x, Reals)), (7, True))
++    print(f"Result: {result}")
++    print("✓ Passed - No AttributeError\n")
++except AttributeError as e:
++    print(f"✗ Failed with AttributeError: {e}\n")
++
++# Test 4: Contains with different sets
++print("Test 4: Contains with various sets")
++print("Contains(x, Integers).as_set():", Contains(x, Integers).as_set())
++print("Contains(x, Naturals).as_set():", Contains(x, Naturals).as_set())
++print("Contains(x, Interval(0, 1)).as_set():", Contains(x, Interval(0, 1)).as_set())
++print("✓ All return the respective sets\n")
++
++# Test 5: Non-symbol case
++print("Test 5: Contains with non-symbol")
++try:
++    y = Symbol('y')
++    expr = x + y
++    result = Contains(expr, Reals).as_set()
++    print(f"✗ Failed - Should have raised NotImplementedError")
++except NotImplementedError as e:
++    print(f"✓ Correctly raises NotImplementedError: {e}")
++    
++# Test single variable expression
++expr2 = x**2
++result2 = Contains(expr2, Reals).as_set()
++print(f"Contains(x**2, Reals).as_set(): {result2}")
++from sympy.sets.conditionset import ConditionSet
++assert isinstance(result2, ConditionSet)
++print("✓ Returns ConditionSet for univariate non-symbol expressions\n")
++
++print("All tests passed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1 @@
++
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..b15531f4e2
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,25 @@
++from sympy import *
++
++x = Symbol('x')
++
++# Issue example 1: Contains.as_set() should not return Contains
++print("Issue example 1:")
++result = Contains(x, Reals).as_set()
++print(f"Contains(x, Reals).as_set() = {result}")
++print(f"Is result a Contains object? {isinstance(result, Contains)}")
++print(f"Is result a Set object? {isinstance(result, Set)}")
++assert not isinstance(result, Contains), "as_set() should not return Contains"
++assert isinstance(result, Set), "as_set() should return a Set"
++print("✓ Fixed: as_set() returns a proper Set, not Contains\n")
++
++# Issue example 2: Piecewise with Contains should work
++print("Issue example 2 (from PR #14965):")
++try:
++    # This was failing with AttributeError: 'Contains' object has no attribute 'as_relational'
++    pw = Piecewise((6, Contains(x, Reals)), (7, True))
++    print(f"Piecewise((6, Contains(x, Reals)), (7, True)) = {pw}")
++    print("✓ Fixed: No AttributeError raised")
++except AttributeError as e:
++    print(f"✗ Failed with AttributeError: {e}")
++
++print("\nThe issue has been successfully resolved!")

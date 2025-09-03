@@ -1,0 +1,262 @@
+diff --git a/fix_scale.py b/fix_scale.py
+new file mode 100644
+index 0000000000..2eb659a573
+--- /dev/null
++++ b/fix_scale.py
+@@ -0,0 +1,47 @@
++import re
++
++# Read the file
++with open('./lib/matplotlib/scale.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the limit_range_for_scale method in LogScale
++old_method = '''    def limit_range_for_scale(self, vmin, vmax, minpos):
++        """
++        Limit the domain to positive values.
++        """
++        if not np.isfinite(minpos):
++            minpos = 1e-300  # This value should rarely if ever
++                             # end up with a visible effect.
++
++        return (minpos if vmin <= 0 else vmin,
++                minpos if vmax <= 0 else vmax)'''
++
++new_method = '''    def limit_range_for_scale(self, vmin, vmax, minpos):
++        """
++        Limit the domain to positive values.
++        """
++        if not np.isfinite(minpos):
++            minpos = 1e-300  # This value should rarely if ever
++                             # end up with a visible effect.
++
++        # Preserve the order of vmin and vmax to handle inverted axes
++        inverted = vmin > vmax
++        if inverted:
++            vmin, vmax = vmax, vmin
++            
++        vmin = minpos if vmin <= 0 else vmin
++        vmax = minpos if vmax <= 0 else vmax
++        
++        if inverted:
++            vmin, vmax = vmax, vmin
++            
++        return vmin, vmax'''
++
++# Replace the method
++content = content.replace(old_method, new_method)
++
++# Write back
++with open('./lib/matplotlib/scale.py', 'w') as f:
++    f.write(content)
++
++print("File updated successfully!")
+diff --git a/fix_set_ylim.py b/fix_set_ylim.py
+new file mode 100644
+index 0000000000..88b47250b9
+--- /dev/null
++++ b/fix_set_ylim.py
+@@ -0,0 +1,62 @@
++import re
++
++# Read the file
++with open('./lib/matplotlib/axes/_base.py', 'r') as f:
++    content = f.read()
++
++# Find the set_ylim method section that needs modification
++old_code = '''        bottom, top = self.yaxis.get_major_locator().nonsingular(bottom, top)
++        bottom, top = self.yaxis.limit_range_for_scale(bottom, top)
++
++        self.viewLim.intervaly = (bottom, top)'''
++
++new_code = '''        # Preserve the inverted state of the axis
++        inverted = bottom > top
++        bottom, top = self.yaxis.get_major_locator().nonsingular(bottom, top)
++        bottom, top = self.yaxis.limit_range_for_scale(bottom, top)
++        
++        # Restore inverted state if needed
++        if inverted and bottom < top:
++            bottom, top = top, bottom
++
++        self.viewLim.intervaly = (bottom, top)'''
++
++# Replace the code
++content = content.replace(old_code, new_code)
++
++# Write back
++with open('./lib/matplotlib/axes/_base.py', 'w') as f:
++    f.write(content)
++
++print("Fixed set_ylim method!")
++
++# Now do the same for set_xlim
++# Read the file again
++with open('./lib/matplotlib/axes/_base.py', 'r') as f:
++    content = f.read()
++
++# Find the set_xlim method section that needs modification  
++old_code = '''        left, right = self.xaxis.get_major_locator().nonsingular(left, right)
++        left, right = self.xaxis.limit_range_for_scale(left, right)
++
++        self.viewLim.intervalx = (left, right)'''
++
++new_code = '''        # Preserve the inverted state of the axis
++        inverted = left > right
++        left, right = self.xaxis.get_major_locator().nonsingular(left, right)
++        left, right = self.xaxis.limit_range_for_scale(left, right)
++        
++        # Restore inverted state if needed
++        if inverted and left < right:
++            left, right = right, left
++
++        self.viewLim.intervalx = (left, right)'''
++
++# Replace the code
++content = content.replace(old_code, new_code)
++
++# Write back
++with open('./lib/matplotlib/axes/_base.py', 'w') as f:
++    f.write(content)
++
++print("Fixed set_xlim method!")
+diff --git a/lib/matplotlib/scale.py b/lib/matplotlib/scale.py
+index b482a664b7..84aa143bf7 100644
+--- a/lib/matplotlib/scale.py
++++ b/lib/matplotlib/scale.py
+@@ -425,8 +425,18 @@ class LogScale(ScaleBase):
+             minpos = 1e-300  # This value should rarely if ever
+                              # end up with a visible effect.
+ 
+-        return (minpos if vmin <= 0 else vmin,
+-                minpos if vmax <= 0 else vmax)
++        # Preserve the order of vmin and vmax to handle inverted axes
++        inverted = vmin > vmax
++        if inverted:
++            vmin, vmax = vmax, vmin
++            
++        vmin = minpos if vmin <= 0 else vmin
++        vmax = minpos if vmax <= 0 else vmax
++        
++        if inverted:
++            vmin, vmax = vmax, vmin
++            
++        return vmin, vmax
+ 
+ 
+ class FuncScaleLog(LogScale):
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..041d983cd1
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,28 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++fig, ax = plt.subplots()
++y = np.linspace(1000e2, 1, 100)
++x = np.exp(-np.linspace(0, 1, y.size))
++ax.plot(x, y)
++
++print("Before set_yscale('log'):")
++print(f"  viewLim.intervaly: {ax.viewLim.intervaly}")
++
++ax.set_yscale('log')
++print("\nAfter set_yscale('log'):")
++print(f"  viewLim.intervaly: {ax.viewLim.intervaly}")
++
++print("\nCalling set_ylim(100000.0, 1.0)...")
++ax.set_ylim(100000.0, 1.0)
++print(f"  viewLim.intervaly: {ax.viewLim.intervaly}")
++
++# Let's try using set_view_interval directly
++print("\nCalling yaxis.set_view_interval(100000.0, 1.0)...")
++ax.yaxis.set_view_interval(100000.0, 1.0)
++print(f"  viewLim.intervaly: {ax.viewLim.intervaly}")
++
++# Let's try with ignore=True
++print("\nCalling yaxis.set_view_interval(100000.0, 1.0, ignore=True)...")
++ax.yaxis.set_view_interval(100000.0, 1.0, ignore=True)
++print(f"  viewLim.intervaly: {ax.viewLim.intervaly}")
+diff --git a/test_debug2.py b/test_debug2.py
+new file mode 100644
+index 0000000000..5e5ba362eb
+--- /dev/null
++++ b/test_debug2.py
+@@ -0,0 +1,26 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Patch the limit_range_for_scale method to add debug output
++from matplotlib.scale import LogScale
++original_limit_range = LogScale.limit_range_for_scale
++
++def debug_limit_range(self, vmin, vmax, minpos):
++    print(f"LogScale.limit_range_for_scale called with vmin={vmin}, vmax={vmax}, minpos={minpos}")
++    result = original_limit_range(self, vmin, vmax, minpos)
++    print(f"  returning: {result}")
++    return result
++
++LogScale.limit_range_for_scale = debug_limit_range
++
++# Now test
++fig, ax = plt.subplots()
++y = np.linspace(1000e2, 1, 100)
++x = np.exp(-np.linspace(0, 1, y.size))
++ax.plot(x, y)
++
++ax.set_yscale('log')
++print("\nCalling set_ylim(100000.0, 1.0)...")
++ax.set_ylim(100000.0, 1.0)
++print(f"Final viewLim.intervaly: {ax.viewLim.intervaly}")
++print(f"Final get_ylim(): {ax.get_ylim()}")
+diff --git a/test_debug3.py b/test_debug3.py
+new file mode 100644
+index 0000000000..a605ddfdb5
+--- /dev/null
++++ b/test_debug3.py
+@@ -0,0 +1,14 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++fig, ax = plt.subplots()
++y = np.linspace(1000e2, 1, 100)
++x = np.exp(-np.linspace(0, 1, y.size))
++ax.plot(x, y)
++ax.set_yscale('log')
++
++# Test nonsingular
++locator = ax.yaxis.get_major_locator()
++print(f"Locator type: {type(locator)}")
++print(f"nonsingular(100000.0, 1.0): {locator.nonsingular(100000.0, 1.0)}")
++print(f"nonsingular(1.0, 100000.0): {locator.nonsingular(1.0, 100000.0)}")
+diff --git a/test_linear.png b/test_linear.png
+new file mode 100644
+index 0000000000..76f2deee55
+Binary files /dev/null and b/test_linear.png differ
+diff --git a/test_log.png b/test_log.png
+new file mode 100644
+index 0000000000..3bbe803282
+Binary files /dev/null and b/test_log.png differ
+diff --git a/test_log_invert.py b/test_log_invert.py
+new file mode 100644
+index 0000000000..0b3ff61a4b
+--- /dev/null
++++ b/test_log_invert.py
+@@ -0,0 +1,16 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++y = np.linspace(1000e2, 1, 100)
++x = np.exp(-np.linspace(0, 1, y.size))
++
++for yscale in ('linear', 'log'):
++    fig, ax = plt.subplots()
++    ax.plot(x, y)
++    ax.set_yscale(yscale)
++    ax.set_ylim(y.max(), y.min())
++    print(f"Scale: {yscale}")
++    print(f"  ylim: {ax.get_ylim()}")
++    print(f"  inverted: {ax.yaxis_inverted()}")
++    plt.savefig(f'test_{yscale}.png')
++    plt.close()

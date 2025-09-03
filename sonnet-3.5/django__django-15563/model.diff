@@ -1,0 +1,177 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 5c78c6e315..9135cd6d60 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -987,12 +987,26 @@ class QuerySet:
+         if self.query.is_sliced:
+             raise TypeError("Cannot update a query once a slice has been taken.")
+         self._for_write = True
+-        query = self.query.chain(sql.UpdateQuery)
+-        query.add_update_values(kwargs)
+-        # Clear any annotations so that they won't be present in subqueries.
+-        query.annotations = {}
+-        with transaction.mark_for_rollback_on_error(using=self.db):
+-            rows = query.get_compiler(self.db).execute_sql(CURSOR)
++        
++        # Handle multiple inheritance
++        base_tables = [
++            base._meta.db_table
++            for base in self.model.__bases__
++            if hasattr(base, '_meta') and not base._meta.abstract
++        ]
++        
++        rows = 0
++        with transaction.atomic(using=self.db):
++            for table in base_tables:
++                query = self.query.clone()
++                query.__class__ = sql.UpdateQuery
++                query.model = self.model
++                query.add_update_values(kwargs)
++                query.table_map = {self.model._meta.db_table: table}
++                # Clear any annotations so that they won't be present in subqueries.
++                query.annotations = {}
++                rows += query.get_compiler(self.db).execute_sql(CURSOR) or 0
++        
+         self._result_cache = None
+         return rows
+ 
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index c07a4b342a..bdde96b42f 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -796,14 +796,21 @@ class Query(BaseExpression):
+         """
+         alias_list = self.table_map.get(table_name)
+         if not create and alias_list:
+-            alias = alias_list[0]
++            if isinstance(alias_list, list):
++                alias = alias_list[0]
++            else:
++                alias = alias_list
+             self.alias_refcount[alias] += 1
+             return alias, False
+ 
+         # Create a new alias for this table.
+         if alias_list:
+-            alias = "%s%d" % (self.alias_prefix, len(self.alias_map) + 1)
+-            alias_list.append(alias)
++            if isinstance(alias_list, list):
++                alias = "%s%d" % (self.alias_prefix, len(self.alias_map) + 1)
++                alias_list.append(alias)
++            else:
++                alias = "%s%d" % (self.alias_prefix, len(self.alias_map) + 1)
++                self.table_map[table_name] = [alias_list, alias]
+         else:
+             # The first occurrence of a table uses the table name directly.
+             alias = (
+diff --git a/django/db/models/sql/subqueries.py b/django/db/models/sql/subqueries.py
+index 04063f73bc..dbf76eb409 100644
+--- a/django/db/models/sql/subqueries.py
++++ b/django/db/models/sql/subqueries.py
+@@ -83,6 +83,8 @@ class UpdateQuery(Query):
+         query. This is the entry point for the public update() method on
+         querysets.
+         """
++        if not hasattr(self, 'related_updates'):
++            self.related_updates = {}
+         values_seq = []
+         for name, val in values.items():
+             field = self.get_meta().get_field(name)
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..d2965ef7b1
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,13 @@
++
++from django.db import models
++
++class Base(models.Model):
++    base_id = models.AutoField(primary_key=True)
++    field_base = models.IntegerField()
++
++class OtherBase(models.Model):
++    otherbase_id = models.AutoField(primary_key=True)
++    field_otherbase = models.IntegerField()
++
++class Child(Base, OtherBase):
++    pass
+\ No newline at end of file
+diff --git a/test_multiple_inheritance_update.py b/test_multiple_inheritance_update.py
+new file mode 100644
+index 0000000000..029e7df5eb
+--- /dev/null
++++ b/test_multiple_inheritance_update.py
+@@ -0,0 +1,47 @@
++
++import os
++import django
++import unittest
++
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "test_project.settings")
++django.setup()
++
++from django.db import connection
++from test_app.models import Base, OtherBase, Child
++
++class MultipleInheritanceUpdateTestCase(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        super().setUpClass()
++        with connection.schema_editor() as schema_editor:
++            schema_editor.create_model(Base)
++            schema_editor.create_model(OtherBase)
++            schema_editor.create_model(Child)
++
++    def setUp(self):
++        OtherBase.objects.create(field_otherbase=100)
++        OtherBase.objects.create(field_otherbase=101)
++        Child.objects.create(field_base=0, field_otherbase=0)
++        Child.objects.create(field_base=1, field_otherbase=1)
++
++    def test_update_child(self):
++        Child.objects.update(field_otherbase=55)
++        
++        # Check if Child instances are updated
++        child_instances = Child.objects.values('field_otherbase')
++        self.assertEqual(list(child_instances), [{'field_otherbase': 55}, {'field_otherbase': 55}])
++        
++        # Check if OtherBase instances are not affected
++        otherbase_instances = OtherBase.objects.filter(otherbase_id__in=[1, 2]).values('field_otherbase')
++        self.assertEqual(list(otherbase_instances), [{'field_otherbase': 100}, {'field_otherbase': 101}])
++
++    @classmethod
++    def tearDownClass(cls):
++        with connection.schema_editor() as schema_editor:
++            schema_editor.delete_model(Child)
++            schema_editor.delete_model(OtherBase)
++            schema_editor.delete_model(Base)
++        super().tearDownClass()
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file
+diff --git a/test_project/settings.py b/test_project/settings.py
+new file mode 100644
+index 0000000000..1a60f90511
+--- /dev/null
++++ b/test_project/settings.py
+@@ -0,0 +1,17 @@
++
++SECRET_KEY = 'dummy_secret_key'
++DEBUG = True
++INSTALLED_APPS = [
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'django.contrib.sessions',
++    'django.contrib.messages',
++    'test_app',
++]
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++USE_TZ = False
+\ No newline at end of file

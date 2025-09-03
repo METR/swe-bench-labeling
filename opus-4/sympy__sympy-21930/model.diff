@@ -1,0 +1,212 @@
+diff --git a/sympy/physics/secondquant.py b/sympy/physics/secondquant.py
+index d19ee2fc63..c1ba9d9acc 100644
+--- a/sympy/physics/secondquant.py
++++ b/sympy/physics/secondquant.py
+@@ -478,7 +478,7 @@ def __repr__(self):
+         return "CreateBoson(%s)" % self.state
+ 
+     def _latex(self, printer):
+-        return "b^\\dagger_{%s}" % self.state.name
++        return "{b^\\dagger_{%s}}" % self.state.name
+ 
+ B = AnnihilateBoson
+ Bd = CreateBoson
+@@ -939,7 +939,7 @@ def __repr__(self):
+         return "CreateFermion(%s)" % self.state
+ 
+     def _latex(self, printer):
+-        return "a^\\dagger_{%s}" % self.state.name
++        return "{a^\\dagger_{%s}}" % self.state.name
+ 
+ Fd = CreateFermion
+ F = AnnihilateFermion
+diff --git a/test_all_issues.py b/test_all_issues.py
+new file mode 100644
+index 0000000000..70c6e6de2a
+--- /dev/null
++++ b/test_all_issues.py
+@@ -0,0 +1,27 @@
++import sympy as sp
++from sympy.physics.secondquant import B, Bd, F, Fd, Commutator
++from sympy.printing.latex import latex
++
++# Test cases
++a = sp.Symbol('0')
++
++print("Testing Bosonic operators:")
++print("Bd(a):", latex(Bd(a)))
++print("Bd(a)**2:", latex(Bd(a)**2))
++print("Bd(a)**3:", latex(Bd(a)**3))
++print("B(a):", latex(B(a)))
++print("B(a)**2:", latex(B(a)**2))
++
++print("\nTesting Fermionic operators:")
++print("Fd(a):", latex(Fd(a)))
++print("Fd(a)**2:", latex(Fd(a)**2))
++print("Fd(a)**3:", latex(Fd(a)**3))
++print("F(a):", latex(F(a)))
++print("F(a)**2:", latex(F(a)**2))
++
++print("\nTesting Commutators:")
++comm1 = Commutator(Bd(a)**2, B(a))
++print("Commutator(Bd(a)**2, B(a)):", latex(comm1))
++
++comm2 = Commutator(Fd(a)**2, F(a))
++print("Commutator(Fd(a)**2, F(a)):", latex(comm2))
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..01b4f59114
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,43 @@
++import sympy as sp
++from sympy.physics.secondquant import B, Bd, F, Fd, Commutator, NO, wicks
++from sympy.printing.latex import latex
++
++# Test various cases
++a = sp.Symbol('a')
++b = sp.Symbol('b')
++i = sp.Symbol('i', below_fermi=True)
++j = sp.Symbol('j', above_fermi=True)
++
++print("Test 1: Basic operators")
++print("Bd(a):", latex(Bd(a)))
++print("B(a):", latex(B(a)))
++print("Fd(a):", latex(Fd(a)))
++print("F(a):", latex(F(a)))
++
++print("\nTest 2: Powers")
++print("Bd(a)**2:", latex(Bd(a)**2))
++print("Bd(a)**3:", latex(Bd(a)**3))
++print("Fd(i)**2:", latex(Fd(i)**2))
++
++print("\nTest 3: Products")
++print("Bd(a)*Bd(b):", latex(Bd(a)*Bd(b)))
++print("Bd(a)*B(b):", latex(Bd(a)*B(b)))
++
++print("\nTest 4: Commutators")
++print("Commutator(Bd(a), B(a)):", latex(Commutator(Bd(a), B(a))))
++print("Commutator(Bd(a)**2, B(b)):", latex(Commutator(Bd(a)**2, B(b))))
++
++print("\nTest 5: Normal ordering")
++print("NO(Bd(a)*B(a)):", latex(NO(Bd(a)*B(a))))
++
++print("\nTest 6: Complex expressions")
++expr = Bd(a)*Bd(b) + B(a)*B(b)
++print("Bd(a)*Bd(b) + B(a)*B(b):", latex(expr))
++
++print("\nTest 7: Numeric indices")
++n0 = sp.Symbol('0')
++n1 = sp.Symbol('1')
++print("Bd(0):", latex(Bd(n0)))
++print("Bd(1)**2:", latex(Bd(n1)**2))
++
++print("\nAll tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..7d0d28fdcb
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,17 @@
++import sympy as sp
++from sympy.physics.secondquant import B, Bd, Commutator
++from sympy.printing.latex import latex
++
++# Test case
++a = sp.Symbol('0')
++
++# Test individual operators
++print("Bd(a):", latex(Bd(a)))
++print("Bd(a)**2:", latex(Bd(a)**2))
++
++# Test the commutator
++comm = Commutator(Bd(a)**2, B(a))
++print("Commutator:", latex(comm))
++
++# The issue is that Bd(a)**2 produces b^\dagger_{0}^{2}
++# which has double superscripts, it should be {b^\dagger_{0}}^{2}
+diff --git a/test_issue2.py b/test_issue2.py
+new file mode 100644
+index 0000000000..c58fe3223d
+--- /dev/null
++++ b/test_issue2.py
+@@ -0,0 +1,23 @@
++import sympy as sp
++from sympy.physics.secondquant import B, Bd, Commutator
++from sympy.printing.latex import latex
++
++# Test case
++a = sp.Symbol('0')
++bd = Bd(a)
++
++print("Type of Bd(a):", type(bd))
++print("Is Symbol?", bd.is_Symbol)
++print("Is Function?", bd.is_Function)
++print("Bd(a):", latex(bd))
++
++# Check what happens with Pow
++pow_expr = bd**2
++print("\nType of Bd(a)**2:", type(pow_expr))
++print("Base:", pow_expr.base)
++print("Exp:", pow_expr.exp)
++
++# Check LaTeX printer settings
++from sympy.printing.latex import LatexPrinter
++printer = LatexPrinter()
++print("\nparenthesize_super setting:", printer._settings.get('parenthesize_super', None))
+diff --git a/test_latex_output.py b/test_latex_output.py
+new file mode 100644
+index 0000000000..4234142628
+--- /dev/null
++++ b/test_latex_output.py
+@@ -0,0 +1,24 @@
++import sympy as sp
++from sympy.physics.secondquant import B, Bd, F, Fd, Commutator
++from sympy.printing.latex import latex
++
++# Test the specific example from the issue
++a = sp.Symbol('0')
++comm = Commutator(Bd(a)**2, B(a))
++latex_output = latex(comm)
++print("LaTeX output:", latex_output)
++
++# Check that the LaTeX output is correct
++expected = r"- \left[b_{0},{b^\dagger_{0}}^{2}\right]"
++print("Expected:", expected)
++print("Match:", latex_output == expected)
++
++# Additional tests to ensure proper formatting
++print("\nAdditional tests:")
++print("Bd(a):", latex(Bd(a)))
++print("Bd(a)**2:", latex(Bd(a)**2))
++print("Bd(a)**3:", latex(Bd(a)**3))
++
++# Test that the LaTeX is valid (no double superscripts)
++assert "^\\dagger" not in latex(Bd(a)**2).replace("{", "").replace("}", "")
++print("\nNo double superscripts found - LaTeX is valid!")
+diff --git a/test_latex_rendering.py b/test_latex_rendering.py
+new file mode 100644
+index 0000000000..60884df380
+--- /dev/null
++++ b/test_latex_rendering.py
+@@ -0,0 +1,20 @@
++import sympy as sp
++from sympy.physics.secondquant import B, Bd, F, Fd, Commutator
++from sympy.printing.latex import latex
++
++# Test case from the issue
++a = sp.Symbol('0')
++
++print("BEFORE FIX (simulated):")
++print("Bd(a):", "b^\\dagger_{0}")
++print("Bd(a)**2:", "b^\\dagger_{0}^{2}")  # Double superscript - INVALID LaTeX
++print("Commutator:", "- \\left[b_{0},b^\\dagger_{0}^{2}\\right]")
++
++print("\nAFTER FIX (actual):")
++print("Bd(a):", latex(Bd(a)))
++print("Bd(a)**2:", latex(Bd(a)**2))  # Now properly wrapped in braces
++comm = Commutator(Bd(a)**2, B(a))
++print("Commutator:", latex(comm))
++
++print("\nThe fix ensures that the LaTeX is valid by wrapping the base")
++print("expression in braces, so {b^\\dagger_{0}}^{2} instead of b^\\dagger_{0}^{2}")

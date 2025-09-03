@@ -1,0 +1,285 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 8ea6c05ef9..a8a7a6376b 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -200,9 +200,9 @@ class ModelBase(type):
+             # Skip concrete parent classes.
+             if base != new_class and not base._meta.abstract:
+                 continue
+-            # Locate OneToOneField instances.
++            # Locate OneToOneField instances with parent_link=True.
+             for field in base._meta.local_fields:
+-                if isinstance(field, OneToOneField):
++                if isinstance(field, OneToOneField) and field.remote_field.parent_link:
+                     related = resolve_relation(new_class, field.remote_field.model)
+                     parent_links[make_model_tuple(related)] = field
+ 
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e8ea21b8b9
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,110 @@
++import os
++import django
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++from django.db import models
++
++# Test 1: Multiple OneToOne fields - order shouldn't matter
++print("Test 1: Multiple OneToOne fields with parent_link")
++try:
++    class BaseModel1(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class Child1(BaseModel1):
++        # parent_link field after non-parent_link field
++        other_relation = models.OneToOneField(BaseModel1, on_delete=models.CASCADE, related_name='child1_other')
++        basemodel1_ptr = models.OneToOneField(BaseModel1, on_delete=models.CASCADE, parent_link=True, related_name='+')
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("  - parent_link after non-parent_link: SUCCESS")
++except Exception as e:
++    print(f"  - parent_link after non-parent_link: FAILED - {type(e).__name__}: {e}")
++
++try:
++    class BaseModel2(models.Model):
++        class Meta:
++            app_label = 'test_app'
++    
++    class Child2(BaseModel2):
++        # parent_link field before non-parent_link field 
++        basemodel2_ptr = models.OneToOneField(BaseModel2, on_delete=models.CASCADE, parent_link=True, related_name='+')
++        other_relation = models.OneToOneField(BaseModel2, on_delete=models.CASCADE, related_name='child2_other')
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("  - parent_link before non-parent_link: SUCCESS")
++except Exception as e:
++    print(f"  - parent_link before non-parent_link: FAILED - {type(e).__name__}: {e}")
++
++# Test 2: Auto-generated parent link
++print("\nTest 2: Auto-generated parent link")
++try:
++    class BaseModel3(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class Child3(BaseModel3):
++        # No explicit parent link - should be auto-generated
++        other_relation = models.OneToOneField(BaseModel3, on_delete=models.CASCADE, related_name='child3_other')
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    # Check if basemodel3_ptr was auto-generated
++    assert hasattr(Child3, 'basemodel3_ptr'), "Auto-generated parent link missing"
++    print("  - Auto-generated parent link with other OneToOne: SUCCESS")
++except Exception as e:
++    print(f"  - Auto-generated parent link with other OneToOne: FAILED - {type(e).__name__}: {e}")
++
++# Test 3: Multiple inheritance
++print("\nTest 3: Multiple inheritance")
++try:
++    class Parent1(models.Model):
++        class Meta:
++            app_label = 'test_app'
++            
++    class Parent2(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class MultiChild(Parent1, Parent2):
++        # Explicit parent links for both parents
++        parent1_ptr = models.OneToOneField(Parent1, on_delete=models.CASCADE, parent_link=True, related_name='+')
++        parent2_ptr = models.OneToOneField(Parent2, on_delete=models.CASCADE, parent_link=True, related_name='+')
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("  - Multiple inheritance with explicit parent links: SUCCESS")
++except Exception as e:
++    print(f"  - Multiple inheritance with explicit parent links: FAILED - {type(e).__name__}: {e}")
++
++# Test 4: Abstract base class shouldn't have parent links
++print("\nTest 4: Abstract base class")
++try:
++    class AbstractBase(models.Model):
++        name = models.CharField(max_length=100)
++        
++        class Meta:
++            abstract = True
++            app_label = 'test_app'
++
++    class ConcreteChild(AbstractBase):
++        extra_field = models.CharField(max_length=100)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    # Should not have any parent link to abstract base
++    assert not hasattr(ConcreteChild, 'abstractbase_ptr'), "Unexpected parent link to abstract base"
++    print("  - No parent link to abstract base: SUCCESS")
++except Exception as e:
++    print(f"  - Abstract base test: FAILED - {type(e).__name__}: {e}")
++
++print("\nAll tests completed!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..70c4188ad6
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,67 @@
++import os
++import django
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++from django.db import models
++from django.core.exceptions import ImproperlyConfigured
++
++# Edge case 1: OneToOneField with parent_link but pointing to wrong model
++print("Test 1: OneToOneField with parent_link pointing to wrong model")
++try:
++    class Parent1(models.Model):
++        class Meta:
++            app_label = 'test_app'
++            
++    class Parent2(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class Child1(Parent1):
++        # This should work - auto-generated parent1_ptr
++        other = models.OneToOneField(Parent2, on_delete=models.CASCADE, parent_link=True)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("  SUCCESS - No exception for parent_link to different model")
++except Exception as e:
++    print(f"  FAILED - {type(e).__name__}: {e}")
++
++# Edge case 2: Multiple parent_link fields to same parent
++print("\nTest 2: Multiple parent_link fields to same parent")
++try:
++    class Parent3(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class Child2(Parent3):
++        ptr1 = models.OneToOneField(Parent3, on_delete=models.CASCADE, parent_link=True, related_name='child2_1')
++        ptr2 = models.OneToOneField(Parent3, on_delete=models.CASCADE, parent_link=True, related_name='child2_2')
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("  SUCCESS - Multiple parent_link fields allowed")
++except Exception as e:
++    print(f"  FAILED - {type(e).__name__}: {e}")
++
++# Edge case 3: Wrong field name with parent_link in options.py scenario
++print("\nTest 3: Explicit parent_link field")
++try:
++    class Parent4(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class Child3(Parent4):
++        # Explicit parent link with custom name
++        my_parent_ptr = models.OneToOneField(Parent4, on_delete=models.CASCADE, parent_link=True, primary_key=True)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print(f"  SUCCESS - Custom parent link field created")
++    print(f"  Primary key: {Child3._meta.pk.name}")
++except Exception as e:
++    print(f"  FAILED - {type(e).__name__}: {e}")
+diff --git a/test_issue_reproduction.py b/test_issue_reproduction.py
+new file mode 100644
+index 0000000000..39b4e9590f
+--- /dev/null
++++ b/test_issue_reproduction.py
+@@ -0,0 +1,41 @@
++import os
++import django
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++from django.db import models
++
++# Test case 1: document_ptr defined before origin (should fail according to issue)
++try:
++    class Document(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class Picking1(Document):
++        document_ptr = models.OneToOneField(Document, on_delete=models.CASCADE, parent_link=True, related_name='+')
++        origin = models.OneToOneField(Document, related_name='picking1', on_delete=models.PROTECT)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("Test case 1: document_ptr before origin - SUCCESS (no exception)")
++except Exception as e:
++    print(f"Test case 1: document_ptr before origin - FAILED with: {type(e).__name__}: {e}")
++
++# Test case 2: origin defined before document_ptr (should work according to issue)
++try:
++    class Document2(models.Model):
++        class Meta:
++            app_label = 'test_app'
++            
++    class Picking2(Document2):
++        origin = models.OneToOneField(Document2, related_name='picking2', on_delete=models.PROTECT)
++        document_ptr = models.OneToOneField(Document2, on_delete=models.CASCADE, parent_link=True, related_name='+')
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    print("Test case 2: origin before document_ptr - SUCCESS (no exception)")
++except Exception as e:
++    print(f"Test case 2: origin before document_ptr - FAILED with: {type(e).__name__}: {e}")
+diff --git a/test_no_parent_link.py b/test_no_parent_link.py
+new file mode 100644
+index 0000000000..6ce571c787
+--- /dev/null
++++ b/test_no_parent_link.py
+@@ -0,0 +1,27 @@
++import os
++import django
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++from django.db import models
++
++# Test: Model with OneToOne but no parent_link should auto-generate parent link
++try:
++    class Place(models.Model):
++        class Meta:
++            app_label = 'test_app'
++
++    class ParkingLot(Place):
++        # No parent_link=True, so this shouldn't be treated as the parent link
++        parent = models.OneToOneField(Place, on_delete=models.CASCADE)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    # Check if place_ptr was auto-generated
++    print(f"Has place_ptr: {hasattr(ParkingLot, 'place_ptr')}")
++    print(f"Fields: {[f.name for f in ParkingLot._meta.get_fields()]}")
++    print("SUCCESS - No exception raised, parent link auto-generated")
++except Exception as e:
++    print(f"FAILED - {type(e).__name__}: {e}")

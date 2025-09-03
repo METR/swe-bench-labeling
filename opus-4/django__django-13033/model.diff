@@ -1,0 +1,418 @@
+diff --git a/test_debug_ordering.py b/test_debug_ordering.py
+new file mode 100644
+index 0000000000..7c258d0fff
+--- /dev/null
++++ b/test_debug_ordering.py
+@@ -0,0 +1,97 @@
++import django
++from django.conf import settings
++
++# Configure Django first
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=False,
++        SECRET_KEY='test-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models import F
++from django.db.models.constants import LOOKUP_SEP
++
++
++class OneModel(models.Model):
++    class Meta:
++        ordering = ("-id",)
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    root = models.ForeignKey("OneModel", on_delete=models.CASCADE, null=True)
++    oneval = models.BigIntegerField(null=True)
++
++
++class TwoModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    record = models.ForeignKey(OneModel, on_delete=models.CASCADE)
++    twoval = models.BigIntegerField(null=True)
++
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(OneModel)
++        schema_editor.create_model(TwoModel)
++    
++    # Test setup_joins behavior
++    from django.db.models.sql.query import Query
++    from django.db.models.sql.compiler import SQLCompiler
++    
++    # Create a query for debugging
++    query = Query(TwoModel)
++    compiler = SQLCompiler(query, connection, 'default')
++    
++    # Test different path resolutions
++    print("Testing 'record__root_id':")
++    pieces = 'record__root_id'.split(LOOKUP_SEP)
++    alias = query.get_initial_alias()
++    field, targets, alias, joins, path, opts, transform_function = compiler._setup_joins(pieces, TwoModel._meta, alias)
++    print(f"  Field: {field}")
++    print(f"  Field type: {type(field)}")
++    print(f"  Field name: {field.name}")
++    print(f"  Field attname: {getattr(field, 'attname', None)}")
++    print(f"  Is relation: {field.is_relation}")
++    print(f"  Targets: {targets}")
++    print(f"  Opts model: {opts.model}")
++    print(f"  Opts ordering: {opts.ordering}")
++    
++    print("\nTesting 'record__root__id':")
++    pieces = 'record__root__id'.split(LOOKUP_SEP)
++    alias = query.get_initial_alias()
++    field, targets, alias, joins, path, opts, transform_function = compiler._setup_joins(pieces, TwoModel._meta, alias)
++    print(f"  Field: {field}")
++    print(f"  Field type: {type(field)}")
++    print(f"  Field name: {field.name}")
++    print(f"  Field attname: {getattr(field, 'attname', None)}")
++    print(f"  Is relation: {field.is_relation}")
++    print(f"  Targets: {targets}")
++    print(f"  Opts model: {opts.model}")
++    print(f"  Opts ordering: {opts.ordering}")
++    
++    print("\nTesting 'record__root':")
++    pieces = 'record__root'.split(LOOKUP_SEP)
++    alias = query.get_initial_alias()
++    field, targets, alias, joins, path, opts, transform_function = compiler._setup_joins(pieces, TwoModel._meta, alias)
++    print(f"  Field: {field}")
++    print(f"  Field type: {type(field)}")
++    print(f"  Field name: {field.name}")
++    print(f"  Field attname: {getattr(field, 'attname', None)}")
++    print(f"  Is relation: {field.is_relation}")
++    print(f"  Targets: {targets}")
++    print(f"  Opts model: {opts.model}")
++    print(f"  Opts ordering: {opts.ordering}")
+diff --git a/test_debug_ordering2.py b/test_debug_ordering2.py
+new file mode 100644
+index 0000000000..3733fc9fe4
+--- /dev/null
++++ b/test_debug_ordering2.py
+@@ -0,0 +1,98 @@
++import django
++from django.conf import settings
++
++# Configure Django first
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=False,
++        SECRET_KEY='test-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models import F
++from django.db.models.constants import LOOKUP_SEP
++from django.db.models.sql.constants import ORDER_DIR
++from django.db.models.sql.query import get_order_dir
++
++
++class OneModel(models.Model):
++    class Meta:
++        ordering = ("-id",)
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    root = models.ForeignKey("OneModel", on_delete=models.CASCADE, null=True)
++    oneval = models.BigIntegerField(null=True)
++
++
++class TwoModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    record = models.ForeignKey(OneModel, on_delete=models.CASCADE)
++    twoval = models.BigIntegerField(null=True)
++
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(OneModel)
++        schema_editor.create_model(TwoModel)
++    
++    # Test find_ordering_name behavior
++    from django.db.models.sql.query import Query
++    from django.db.models.sql.compiler import SQLCompiler
++    
++    # Create a query for debugging
++    query = Query(TwoModel)
++    query.model = TwoModel
++    compiler = SQLCompiler(query, connection, 'default')
++    
++    # Test different ordering scenarios
++    print("Testing find_ordering_name for 'record__root_id':")
++    result = compiler.find_ordering_name('record__root_id', TwoModel._meta)
++    print(f"  Result: {result}")
++    print(f"  Number of OrderBy items: {len(result)}")
++    for i, (order_by, _) in enumerate(result):
++        print(f"  OrderBy {i}: {order_by}")
++        print(f"    Expression: {order_by.expression}")
++        print(f"    Descending: {order_by.descending}")
++    
++    print("\nTesting find_ordering_name for 'record__root__id':")
++    result = compiler.find_ordering_name('record__root__id', TwoModel._meta)
++    print(f"  Result: {result}")
++    print(f"  Number of OrderBy items: {len(result)}")
++    for i, (order_by, _) in enumerate(result):
++        print(f"  OrderBy {i}: {order_by}")
++        print(f"    Expression: {order_by.expression}")
++        print(f"    Descending: {order_by.descending}")
++    
++    print("\nTesting find_ordering_name for 'record__root':")
++    result = compiler.find_ordering_name('record__root', TwoModel._meta)
++    print(f"  Result: {result}")
++    print(f"  Number of OrderBy items: {len(result)}")
++    for i, (order_by, _) in enumerate(result):
++        print(f"  OrderBy {i}: {order_by}")
++        print(f"    Expression: {order_by.expression}")
++        print(f"    Descending: {order_by.descending}")
++    
++    # Check what's happening with the name comparison
++    print("\nDebugging the name comparison issue:")
++    pieces = 'record__root_id'.split(LOOKUP_SEP)
++    name = pieces[-1]  # This would be 'root_id'
++    print(f"  Last piece of 'record__root_id': '{name}'")
++    
++    # Simulate what happens in find_ordering_name
++    name, order = get_order_dir('record__root_id', 'ASC')
++    print(f"  After get_order_dir: name='{name}', order='{order}'")
+diff --git a/test_debug_ordering3.py b/test_debug_ordering3.py
+new file mode 100644
+index 0000000000..b4f7cbdcae
+--- /dev/null
++++ b/test_debug_ordering3.py
+@@ -0,0 +1,99 @@
++import django
++from django.conf import settings
++
++# Configure Django first
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=False,
++        SECRET_KEY='test-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models.constants import LOOKUP_SEP
++from django.db.models.sql.query import get_order_dir
++
++
++class OneModel(models.Model):
++    class Meta:
++        ordering = ("-id",)
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    root = models.ForeignKey("OneModel", on_delete=models.CASCADE, null=True)
++    oneval = models.BigIntegerField(null=True)
++
++
++class TwoModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    record = models.ForeignKey(OneModel, on_delete=models.CASCADE)
++    twoval = models.BigIntegerField(null=True)
++
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(OneModel)
++        schema_editor.create_model(TwoModel)
++    
++    # Test find_ordering_name behavior with custom debugging
++    from django.db.models.sql.query import Query
++    from django.db.models.sql.compiler import SQLCompiler
++    
++    # Create a query for debugging
++    query = Query(TwoModel)
++    query.model = TwoModel
++    compiler = SQLCompiler(query, connection, 'default')
++    
++    # Simulate what happens inside find_ordering_name for 'record__root_id'
++    name = 'record__root_id'
++    print(f"Debugging find_ordering_name for '{name}':")
++    
++    # Step 1: get_order_dir
++    name, order = get_order_dir(name, 'ASC')
++    print(f"  After get_order_dir: name='{name}', order='{order}'")
++    
++    # Step 2: split and setup_joins
++    pieces = name.split(LOOKUP_SEP)
++    print(f"  Pieces: {pieces}")
++    
++    field, targets, alias, joins, path, opts, transform_function = compiler._setup_joins(pieces, TwoModel._meta, None)
++    print(f"  Field: {field}")
++    print(f"  Field name: {field.name}")
++    print(f"  Field attname: {getattr(field, 'attname', None)}")
++    print(f"  Is relation: {field.is_relation}")
++    print(f"  Opts model: {opts.model}")
++    print(f"  Opts ordering: {opts.ordering}")
++    
++    # Step 3: check the condition
++    print(f"\n  Checking condition:")
++    print(f"    field.is_relation = {field.is_relation}")
++    print(f"    opts.ordering = {opts.ordering}")
++    print(f"    getattr(field, 'attname', None) = {getattr(field, 'attname', None)}")
++    print(f"    name = '{name}'")
++    print(f"    name != 'pk' = {name != 'pk'}")
++    
++    # The problematic condition
++    if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name and name != 'pk':
++        print(f"  CONDITION TRUE: Will apply related model's ordering!")
++    else:
++        print(f"  CONDITION FALSE: Will NOT apply related model's ordering")
++    
++    # Let's check what the last part of the name is
++    print(f"\n  Analyzing the name issue:")
++    print(f"    Full name passed to find_ordering_name: '{name}'")
++    print(f"    Last piece from split: '{pieces[-1]}'")
++    print(f"    Field attname: '{getattr(field, 'attname', None)}'")
++    print(f"    Comparison: '{getattr(field, 'attname', None)}' != '{name}' = {getattr(field, 'attname', None) != name}")
+diff --git a/test_self_referencing_fk_order.py b/test_self_referencing_fk_order.py
+new file mode 100644
+index 0000000000..e61c72c495
+--- /dev/null
++++ b/test_self_referencing_fk_order.py
+@@ -0,0 +1,100 @@
++import django
++from django.conf import settings
++
++# Configure Django first
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=False,
++        SECRET_KEY='test-key',
++    )
++    django.setup()
++
++from django.db import models
++from django.test import TestCase
++from django.db.models import F
++
++
++class OneModel(models.Model):
++    class Meta:
++        ordering = ("-id",)
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    root = models.ForeignKey("OneModel", on_delete=models.CASCADE, null=True)
++    oneval = models.BigIntegerField(null=True)
++
++
++class TwoModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++    id = models.BigAutoField(primary_key=True)
++    record = models.ForeignKey(OneModel, on_delete=models.CASCADE)
++    twoval = models.BigIntegerField(null=True)
++
++
++class TestSelfReferencingForeignKeyOrder(TestCase):
++    def setUp(self):
++        # Create test data
++        root1 = OneModel.objects.create(oneval=1)
++        root2 = OneModel.objects.create(oneval=2) 
++        child1 = OneModel.objects.create(root=root1, oneval=1)
++        child2 = OneModel.objects.create(root=root2, oneval=2)
++        
++        TwoModel.objects.create(record=child1, twoval=10)
++        TwoModel.objects.create(record=child2, twoval=20)
++    
++    def test_order_by_root_id(self):
++        # Test the problematic queryset
++        qs = TwoModel.objects.filter(record__oneval__in=[1,2,3])
++        qs = qs.order_by("record__root_id")
++        
++        print("Problematic query:")
++        print(qs.query)
++        print("Query results:", list(qs.values_list('id', flat=True)))
++        
++        # Test the working queryset
++        qs2 = TwoModel.objects.filter(record__oneval__in=[1,2,3])
++        qs2 = qs2.order_by("record__root__id")
++        
++        print("\nWorking query:")
++        print(qs2.query)
++        print("Query results:", list(qs2.values_list('id', flat=True)))
++        
++        # Test with annotation workaround
++        qs3 = TwoModel.objects.filter(record__oneval__in=[1,2,3])
++        qs3 = qs3.annotate(root_id=F("record__root_id"))
++        qs3 = qs3.order_by("root_id")
++        
++        print("\nAnnotation workaround query:")
++        print(qs3.query)
++        print("Query results:", list(qs3.values_list('id', flat=True)))
++        
++        # Test inverted sort
++        qs4 = TwoModel.objects.filter(record__oneval__in=[1,2,3])
++        qs4 = qs4.order_by("-record__root_id")
++        
++        print("\nInverted sort query:")
++        print(qs4.query)
++        print("Query results:", list(qs4.values_list('id', flat=True)))
++
++
++if __name__ == "__main__":
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(OneModel)
++        schema_editor.create_model(TwoModel)
++    
++    # Run test
++    test = TestSelfReferencingForeignKeyOrder()
++    test.setUp()
++    test.test_order_by_root_id()

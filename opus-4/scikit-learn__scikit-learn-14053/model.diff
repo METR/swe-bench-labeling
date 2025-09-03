@@ -1,0 +1,147 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 000000000..4277db991
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,14 @@
++from sklearn.tree import DecisionTreeClassifier
++from sklearn.datasets import load_iris
++import numpy as np
++
++X, y = load_iris(return_X_y=True)
++X = X[:, 0].reshape(-1, 1)
++
++tree = DecisionTreeClassifier()
++tree.fit(X, y)
++
++print("tree_.feature:", tree.tree_.feature)
++print("tree_.n_features:", tree.tree_.n_features)
++print("Number of feature names provided:", 1)
++print("Max feature index:", np.max(tree.tree_.feature[tree.tree_.feature >= 0]) if any(tree.tree_.feature >= 0) else "No features")
+diff --git a/sklearn/tree/export.py b/sklearn/tree/export.py
+index 1fe11e596..fe06471d4 100644
+--- a/sklearn/tree/export.py
++++ b/sklearn/tree/export.py
+@@ -889,11 +889,6 @@ def export_text(decision_tree, feature_names=None, max_depth=10,
+     else:
+         value_fmt = "{}{} value: {}\n"
+ 
+-    if feature_names:
+-        feature_names_ = [feature_names[i] for i in tree_.feature]
+-    else:
+-        feature_names_ = ["feature_{}".format(i) for i in tree_.feature]
+-
+     export_text.report = ""
+ 
+     def _add_leaf(value, class_name, indent):
+@@ -928,7 +923,13 @@ def export_text(decision_tree, feature_names=None, max_depth=10,
+             info_fmt_right = info_fmt
+ 
+             if tree_.feature[node] != _tree.TREE_UNDEFINED:
+-                name = feature_names_[node]
++                # Get the feature index for this node
++                feature_idx = tree_.feature[node]
++                # Get the feature name for this feature
++                if feature_names:
++                    name = feature_names[feature_idx]
++                else:
++                    name = "feature_{}".format(feature_idx)
+                 threshold = tree_.threshold[node]
+                 threshold = "{1:.{0}f}".format(decimals, threshold)
+                 export_text.report += right_child_fmt.format(indent,
+diff --git a/sklearn/tree/tests/test_export.py b/sklearn/tree/tests/test_export.py
+index 503431f45..89843ddf8 100644
+--- a/sklearn/tree/tests/test_export.py
++++ b/sklearn/tree/tests/test_export.py
+@@ -397,6 +397,23 @@ def test_export_text():
+     assert export_text(reg, decimals=1, show_weights=True) == expected_report
+ 
+ 
++def test_export_text_single_feature():
++    # Test fix for issue: IndexError when tree only has one feature
++    X_single = [[1], [2], [3], [4], [5], [6]]
++    y_single = [0, 0, 0, 1, 1, 1]
++    
++    clf = DecisionTreeClassifier(max_depth=2)
++    clf.fit(X_single, y_single)
++    
++    # Should not raise IndexError
++    report_with_names = export_text(clf, feature_names=['feature_name'])
++    assert 'feature_name' in report_with_names
++    
++    # Should also work without feature names
++    report_without_names = export_text(clf)
++    assert 'feature_0' in report_without_names
++
++
+ def test_plot_tree_entropy(pyplot):
+     # mostly smoke tests
+     # Check correctness of export_graphviz for criterion = entropy
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..deaac0eed
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,11 @@
++from sklearn.tree import DecisionTreeClassifier
++from sklearn.tree.export import export_text
++from sklearn.datasets import load_iris
++
++X, y = load_iris(return_X_y=True)
++X = X[:, 0].reshape(-1, 1)
++
++tree = DecisionTreeClassifier()
++tree.fit(X, y)
++tree_text = export_text(tree, feature_names=['sepal_length'])
++print(tree_text)
+diff --git a/test_multiple_features.py b/test_multiple_features.py
+new file mode 100644
+index 000000000..b22ec3cb8
+--- /dev/null
++++ b/test_multiple_features.py
+@@ -0,0 +1,10 @@
++from sklearn.tree import DecisionTreeClassifier
++from sklearn.tree.export import export_text
++from sklearn.datasets import load_iris
++
++X, y = load_iris(return_X_y=True)
++
++tree = DecisionTreeClassifier(max_depth=2)
++tree.fit(X, y)
++tree_text = export_text(tree, feature_names=['sepal_length', 'sepal_width', 'petal_length', 'petal_width'])
++print(tree_text)
+diff --git a/test_no_feature_names.py b/test_no_feature_names.py
+new file mode 100644
+index 000000000..6153ec22e
+--- /dev/null
++++ b/test_no_feature_names.py
+@@ -0,0 +1,11 @@
++from sklearn.tree import DecisionTreeClassifier
++from sklearn.tree.export import export_text
++from sklearn.datasets import load_iris
++
++X, y = load_iris(return_X_y=True)
++X = X[:, 0].reshape(-1, 1)
++
++tree = DecisionTreeClassifier(max_depth=2)
++tree.fit(X, y)
++tree_text = export_text(tree)  # No feature names provided
++print(tree_text)
+diff --git a/test_regression_single_feature.py b/test_regression_single_feature.py
+new file mode 100644
+index 000000000..b39f689e7
+--- /dev/null
++++ b/test_regression_single_feature.py
+@@ -0,0 +1,12 @@
++from sklearn.tree import DecisionTreeRegressor
++from sklearn.tree.export import export_text
++import numpy as np
++
++# Test with regression tree
++X = np.array([[1], [2], [3], [4], [5], [6]])
++y = np.array([1.5, 2.5, 3.5, 4.5, 5.5, 6.5])
++
++tree = DecisionTreeRegressor(max_depth=2)
++tree.fit(X, y)
++tree_text = export_text(tree, feature_names=['single_feature'])
++print(tree_text)

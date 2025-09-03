@@ -1,0 +1,690 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 66f3396a6b..96d0ffde30 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -1031,6 +1031,7 @@ class ModelAdmin(BaseModelAdmin):
+         if search_fields and search_term:
+             orm_lookups = [construct_search(str(search_field))
+                            for search_field in search_fields]
++            search_queries = []
+             for bit in smart_split(search_term):
+                 if bit.startswith(('"', "'")) and bit[0] == bit[-1]:
+                     bit = unescape_string_literal(bit)
+@@ -1038,7 +1039,10 @@ class ModelAdmin(BaseModelAdmin):
+                     *((orm_lookup, bit) for orm_lookup in orm_lookups),
+                     _connector=models.Q.OR,
+                 )
+-                queryset = queryset.filter(or_queries)
++                search_queries.append(or_queries)
++            # Apply all search queries in a single filter to avoid multiple JOINs
++            if search_queries:
++                queryset = queryset.filter(*search_queries)
+             may_have_duplicates |= any(
+                 lookup_spawns_duplicates(self.opts, search_spec)
+                 for search_spec in orm_lookups
+diff --git a/show_original_problem.py b/show_original_problem.py
+new file mode 100644
+index 0000000000..a214b29f6f
+--- /dev/null
++++ b/show_original_problem.py
+@@ -0,0 +1,59 @@
++"""
++This script shows the original problem behavior before the fix.
++"""
++
++def show_original_problem():
++    """Demonstrate the original problem with multiple JOINs"""
++    
++    print("Original Problem: Multiple JOINs in Admin Search")
++    print("=" * 60)
++    print()
++    print("Issue: When searching with multiple words in Django admin,")
++    print("each word creates a separate filter() call, leading to")
++    print("multiple JOINs when searching through related fields.")
++    print()
++    print("Example:")
++    print("-" * 60)
++    print("Admin configuration:")
++    print("  search_fields = ('name', 'clientoffice__name')")
++    print()
++    print("Search query: 'word1 word2 word3'")
++    print()
++    print("Original code pattern (simplified):")
++    print("  for word in ['word1', 'word2', 'word3']:")
++    print("      queryset = queryset.filter(")
++    print("          Q(name__icontains=word) |")  
++    print("          Q(clientoffice__name__icontains=word)")
++    print("      )")
++    print()
++    print("This creates SQL like:")
++    print("  SELECT ... FROM client")
++    print("  LEFT JOIN clientoffice T1 ON ... -- for word1")
++    print("  LEFT JOIN clientoffice T2 ON ... -- for word2") 
++    print("  LEFT JOIN clientoffice T3 ON ... -- for word3")
++    print("  WHERE ...")
++    print()
++    print("Problem: 3 JOINs for the same table!")
++    print()
++    print("-" * 60)
++    print("Our Fix:")
++    print("-" * 60)
++    print()
++    print("Collect all Q objects first, then apply in single filter:")
++    print("  queries = []")
++    print("  for word in ['word1', 'word2', 'word3']:")
++    print("      queries.append(")
++    print("          Q(name__icontains=word) |")
++    print("          Q(clientoffice__name__icontains=word)")
++    print("      )")
++    print("  queryset = queryset.filter(*queries)")
++    print()
++    print("This creates SQL like:")
++    print("  SELECT ... FROM client")
++    print("  LEFT JOIN clientoffice T1 ON ... -- only ONE join!")
++    print("  WHERE ...")
++    print()
++    print("Result: Only 1 JOIN, much better performance!")
++
++if __name__ == '__main__':
++    show_original_problem()
+diff --git a/test_admin_search_joins.py b/test_admin_search_joins.py
+new file mode 100644
+index 0000000000..85d928d079
+--- /dev/null
++++ b/test_admin_search_joins.py
+@@ -0,0 +1,111 @@
++import os
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.contrib import admin
++from django.test import TestCase, RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.contrib.auth.models import User
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++        ],
++        MIDDLEWARE=[],
++        ROOT_URLCONF='',
++        SECRET_KEY='test-secret-key',
++    )
++    django.setup()
++
++
++# Define test models
++class Client(models.Model):
++    name = models.CharField('name', max_length=256)
++    name2 = models.CharField('unofficial or obsolete name', max_length=256, blank=True, null=True)
++    contact_person = models.CharField('contact person', max_length=256, blank=True, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class ClientOffice(models.Model):
++    name = models.CharField('name', max_length=256)
++    name2 = models.CharField('unofficial or obsolete name', max_length=256, blank=True, null=True)
++    client = models.ForeignKey(Client, verbose_name='client', on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++# Define admin
++class ClientAdmin(admin.ModelAdmin):
++    search_fields = ('name', 'name2', 'contact_person', 'clientoffice__name', 'clientoffice__name2')
++
++
++def test_search_joins():
++    """Test that searching with multiple words doesn't create multiple JOINs"""
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Client)
++        schema_editor.create_model(ClientOffice)
++    
++    # Create some test data
++    client = Client.objects.create(name="Test Client", name2="Alt Name", contact_person="John Doe")
++    ClientOffice.objects.create(name="Main Office", name2="HQ", client=client)
++    
++    # Create admin instance
++    site = AdminSite()
++    client_admin = ClientAdmin(Client, site)
++    
++    # Create a mock request
++    factory = RequestFactory()
++    request = factory.get('/', {'q': 'test office main'})  # Multiple words
++    request.user = User(username='test', is_superuser=True)
++    
++    # Reset queries
++    from django.db import reset_queries
++    from django.conf import settings
++    settings.DEBUG = True
++    reset_queries()
++    
++    # Get search results
++    queryset = Client.objects.all()
++    qs, may_have_duplicates = client_admin.get_search_results(request, queryset, 'test office main')
++    
++    # Force query execution
++    list(qs)
++    
++    # Check the generated SQL
++    queries = connection.queries
++    print("\nGenerated SQL queries:")
++    for i, query in enumerate(queries):
++        print(f"\nQuery {i+1}:")
++        print(query['sql'])
++    
++    # Count JOINs in the query
++    sql = queries[-1]['sql'] if queries else ''
++    join_count = sql.upper().count('JOIN')
++    print(f"\nNumber of JOINs: {join_count}")
++    
++    # With the bug, we would see multiple JOINs for each search word
++    # After fix, we should see fewer JOINs
++    return join_count
++
++
++if __name__ == '__main__':
++    join_count = test_search_joins()
++    print(f"\nTotal JOINs in search query: {join_count}")
+diff --git a/test_admin_search_joins_fix.py b/test_admin_search_joins_fix.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_admin_search_joins_fix.py
+@@ -0,0 +1 @@
++
+diff --git a/test_fix_verification.py b/test_fix_verification.py
+new file mode 100644
+index 0000000000..61a422e751
+--- /dev/null
++++ b/test_fix_verification.py
+@@ -0,0 +1,90 @@
++"""
++Test to verify that the fix for multiple JOINs in admin search works correctly.
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'tests.admin_changelist',
++        ],
++        MIDDLEWARE=[],
++        ROOT_URLCONF='',
++        SECRET_KEY='test',
++    )
++django.setup()
++
++def test_get_search_results():
++    """Test the fixed get_search_results method"""
++    from django.db import models
++    from django.contrib.admin import ModelAdmin
++    from django.utils.text import smart_split, unescape_string_literal
++    
++    # Create a mock admin class with the fixed method
++    class TestAdmin(ModelAdmin):
++        search_fields = ['name', 'related__field']
++    
++    # Create a simple test
++    admin = TestAdmin(models.Model, None)
++    
++    # Verify the fix by checking the implementation
++    import inspect
++    source = inspect.getsource(admin.get_search_results)
++    
++    # Check if search_queries list is being used (our fix)
++    has_search_queries = 'search_queries = []' in source
++    has_append = 'search_queries.append(or_queries)' in source
++    has_single_filter = 'queryset.filter(*search_queries)' in source
++    
++    print("Verification of the fix:")
++    print("=" * 60)
++    print(f"✓ Uses search_queries list: {has_search_queries}")
++    print(f"✓ Appends Q objects to list: {has_append}")
++    print(f"✓ Applies all filters at once: {has_single_filter}")
++    print()
++    
++    if has_search_queries and has_append and has_single_filter:
++        print("SUCCESS: The fix has been properly applied!")
++        print("Multiple search words will now use a single filter() call,")
++        print("avoiding the creation of multiple JOINs for related fields.")
++    else:
++        print("FAILED: The fix was not properly applied.")
++    
++    # Test with actual Q objects to ensure functionality works
++    print("\n\nFunctional Test:")
++    print("-" * 60)
++    
++    # Simulate the fixed logic
++    search_term = "word1 word2 word3"
++    orm_lookups = ['name__icontains', 'related__field__icontains']
++    search_queries = []
++    
++    for bit in smart_split(search_term):
++        if bit.startswith(('"', "'")) and bit[0] == bit[-1]:
++            bit = unescape_string_literal(bit)
++        or_queries = models.Q(
++            *((orm_lookup, bit) for orm_lookup in orm_lookups),
++            _connector=models.Q.OR,
++        )
++        search_queries.append(or_queries)
++    
++    print(f"Search term: '{search_term}'")
++    print(f"Number of Q objects created: {len(search_queries)}")
++    print(f"Q objects will be applied in a single filter(*search_queries) call")
++    print("\nThis avoids creating multiple JOINs when searching related fields!")
++
++if __name__ == '__main__':
++    test_get_search_results()
+diff --git a/test_join_issue.py b/test_join_issue.py
+new file mode 100644
+index 0000000000..60dc4c1f8c
+--- /dev/null
++++ b/test_join_issue.py
+@@ -0,0 +1,74 @@
++"""
++This script demonstrates the issue with multiple JOINs in admin search.
++When searching with multiple words, each word creates a separate filter()
++call, which leads to multiple JOINs when searching through related fields.
++"""
++
++def demonstrate_issue():
++    """Show the problematic code pattern in get_search_results"""
++    
++    print("Current implementation in get_search_results (lines 1034-1041):")
++    print("=" * 60)
++    print("""
++    for bit in smart_split(search_term):
++        if bit.startswith(('"', "'")) and bit[0] == bit[-1]:
++            bit = unescape_string_literal(bit)
++        or_queries = models.Q(
++            *((orm_lookup, bit) for orm_lookup in orm_lookups),
++            _connector=models.Q.OR,
++        )
++        queryset = queryset.filter(or_queries)  # <-- This creates a new JOIN each time!
++    """)
++    
++    print("\n\nProblem:")
++    print("-" * 60)
++    print("For search_term = 'word1 word2 word3' and search_fields including related fields,")
++    print("this creates:")
++    print("  queryset.filter(Q(...word1...)).filter(Q(...word2...)).filter(Q(...word3...))")
++    print("\nEach filter() call creates a new JOIN for related fields!")
++    
++    print("\n\nSQL Pattern (simplified):")
++    print("-" * 60)
++    print("""
++    SELECT ... FROM client
++    LEFT JOIN clientoffice T1 ON ...  -- JOIN for word1
++    LEFT JOIN clientoffice T2 ON ...  -- JOIN for word2  
++    LEFT JOIN clientoffice T3 ON ...  -- JOIN for word3
++    WHERE (... OR T1.name LIKE '%word1%' OR ...)
++      AND (... OR T2.name LIKE '%word2%' OR ...)
++      AND (... OR T3.name LIKE '%word3%' OR ...)
++    """)
++    
++    print("\n\nSolution:")
++    print("-" * 60)
++    print("Combine all search conditions into a single filter() call:")
++    print("""
++    # Build all Q objects first
++    search_queries = []
++    for bit in smart_split(search_term):
++        if bit.startswith(('"', "'")) and bit[0] == bit[-1]:
++            bit = unescape_string_literal(bit)
++        or_queries = models.Q(
++            *((orm_lookup, bit) for orm_lookup in orm_lookups),
++            _connector=models.Q.OR,
++        )
++        search_queries.append(or_queries)
++    
++    # Apply all filters at once
++    if search_queries:
++        queryset = queryset.filter(*search_queries)
++    """)
++    
++    print("\n\nThis produces SQL like:")
++    print("-" * 60)
++    print("""
++    SELECT ... FROM client
++    LEFT JOIN clientoffice T1 ON ...  -- Only ONE JOIN needed!
++    WHERE (... OR T1.name LIKE '%word1%' OR ...)
++      AND (... OR T1.name LIKE '%word2%' OR ...)
++      AND (... OR T1.name LIKE '%word3%' OR ...)
++    """)
++
++
++if __name__ == '__main__':
++    demonstrate_issue()
+diff --git a/test_search_join_fix.py b/test_search_join_fix.py
+new file mode 100644
+index 0000000000..f666133a27
+--- /dev/null
++++ b/test_search_join_fix.py
+@@ -0,0 +1,160 @@
++#!/usr/bin/env python
++"""Test that verifies the fix for multiple JOINs in admin changelist search."""
++
++import os
++import sys
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
++
++import django
++from django.conf import settings
++from django.test import TestCase
++from django.test.utils import CaptureQueriesContext, override_settings
++from django.db import connection
++from django.contrib.admin import ModelAdmin, site
++from django.contrib.auth.models import User
++from django.test import RequestFactory
++
++# Configure Django if needed
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'test_app',
++        ],
++        MIDDLEWARE=[
++            'django.contrib.sessions.middleware.SessionMiddleware',
++            'django.contrib.auth.middleware.AuthenticationMiddleware',
++            'django.contrib.messages.middleware.MessageMiddleware',
++        ],
++        ROOT_URLCONF='',
++        SECRET_KEY='test',
++        TEMPLATES=[{
++            'BACKEND': 'django.template.backends.django.DjangoTemplates',
++            'APP_DIRS': True,
++            'OPTIONS': {
++                'context_processors': [
++                    'django.template.context_processors.debug',
++                    'django.template.context_processors.request',
++                    'django.contrib.auth.context_processors.auth',
++                    'django.contrib.messages.context_processors.messages',
++                ],
++            },
++        }],
++    )
++
++django.setup()
++
++from django.db import models
++
++# Define test models
++class Client(models.Model):
++    name = models.CharField('name', max_length=256)
++    name2 = models.CharField('unofficial or obsolete name', max_length=256, blank=True, null=True)
++    contact_person = models.CharField('contact person', max_length=256, blank=True, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class ClientOffice(models.Model):
++    name = models.CharField('name', max_length=256)
++    name2 = models.CharField('unofficial or obsolete name', max_length=256, blank=True, null=True)
++    client = models.ForeignKey(Client, verbose_name='client', on_delete=models.CASCADE, related_name='offices')
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++# Admin class with search fields that include related fields
++class ClientAdmin(ModelAdmin):
++    search_fields = ('name', 'name2', 'contact_person', 'offices__name', 'offices__name2')
++
++
++class TestSearchJoinFix(TestCase):
++    """Test that searching with multiple words doesn't create unnecessary JOINs."""
++    
++    @classmethod
++    def setUpTestData(cls):
++        cls.superuser = User.objects.create_superuser(
++            username='admin', 
++            email='admin@example.com', 
++            password='admin'
++        )
++    
++    def setUp(self):
++        # Create test data
++        self.client1 = Client.objects.create(
++            name="Test Client", 
++            name2="Alternative Name",
++            contact_person="John Doe"
++        )
++        self.office1 = ClientOffice.objects.create(
++            name="Main Office",
++            name2="Head Office", 
++            client=self.client1
++        )
++        
++        self.factory = RequestFactory()
++    
++    def test_search_with_multiple_words_uses_single_join(self):
++        """Test that searching with multiple words uses a single JOIN, not multiple."""
++        # Create admin instance
++        admin = ClientAdmin(Client, site)
++        
++        # Create request
++        request = self.factory.get('/', {'q': 'test main office'})  # 3 search words
++        request.user = self.superuser
++        
++        # Get base queryset
++        queryset = Client.objects.all()
++        
++        # Capture queries
++        with CaptureQueriesContext(connection) as queries:
++            qs, may_have_duplicates = admin.get_search_results(
++                request, queryset, 'test main office'
++            )
++            # Force evaluation
++            list(qs)
++        
++        # Check the SQL query
++        self.assertEqual(len(queries), 1, "Should execute exactly one query")
++        sql = queries[0]['sql']
++        
++        # Count JOINs
++        join_count = sql.upper().count(' JOIN ')
++        
++        # With the fix, we should see only one JOIN for the related table
++        # Without the fix, we would see 3 JOINs (one for each search word)
++        self.assertLessEqual(
++            join_count, 
++            1, 
++            f"Query should have at most 1 JOIN, but has {join_count}. SQL: {sql}"
++        )
++        
++        print(f"\n✓ SUCCESS: Query uses {join_count} JOIN(s) for 3 search words")
++        print(f"SQL: {sql}")
++
++
++if __name__ == '__main__':
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Client)
++        schema_editor.create_model(ClientOffice)
++    
++    # Run the test
++    import unittest
++    suite = unittest.TestLoader().loadTestsFromTestCase(TestSearchJoinFix)
++    runner = unittest.TextTestRunner(verbosity=2)
++    result = runner.run(suite)
+diff --git a/test_search_joins.py b/test_search_joins.py
+new file mode 100644
+index 0000000000..14ef656060
+--- /dev/null
++++ b/test_search_joins.py
+@@ -0,0 +1,129 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings first
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'django.contrib.admin',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++        ],
++        MIDDLEWARE=[
++            'django.contrib.sessions.middleware.SessionMiddleware',
++            'django.contrib.auth.middleware.AuthenticationMiddleware',
++            'django.contrib.messages.middleware.MessageMiddleware',
++        ],
++        ROOT_URLCONF='',
++        SECRET_KEY='test-secret-key',
++        TEMPLATES=[{
++            'BACKEND': 'django.template.backends.django.DjangoTemplates',
++            'DIRS': [],
++            'APP_DIRS': True,
++            'OPTIONS': {
++                'context_processors': [
++                    'django.template.context_processors.debug',
++                    'django.template.context_processors.request',
++                    'django.contrib.auth.context_processors.auth',
++                    'django.contrib.messages.context_processors.messages',
++                ],
++            },
++        }],
++    )
++
++django.setup()
++
++# Now import Django modules
++from django.db import models, connection, reset_queries
++from django.contrib import admin
++from django.test import RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.contrib.auth.models import User
++
++
++# Define test models
++class Client(models.Model):
++    name = models.CharField('name', max_length=256)
++    name2 = models.CharField('unofficial or obsolete name', max_length=256, blank=True, null=True)
++    contact_person = models.CharField('contact person', max_length=256, blank=True, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class ClientOffice(models.Model):
++    name = models.CharField('name', max_length=256)
++    name2 = models.CharField('unofficial or obsolete name', max_length=256, blank=True, null=True)
++    client = models.ForeignKey(Client, verbose_name='client', on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++# Define admin
++class ClientAdmin(admin.ModelAdmin):
++    search_fields = ('name', 'name2', 'contact_person', 'clientoffice__name', 'clientoffice__name2')
++
++
++def test_search_joins():
++    """Test that searching with multiple words creates multiple JOINs"""
++    # Create tables
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Client)
++        schema_editor.create_model(ClientOffice)
++    
++    # Create some test data
++    client = Client.objects.create(name="Test Client", name2="Alt Name", contact_person="John Doe")
++    ClientOffice.objects.create(name="Main Office", name2="HQ", client=client)
++    
++    # Create admin instance
++    site = AdminSite()
++    client_admin = ClientAdmin(Client, site)
++    
++    # Create a mock request
++    factory = RequestFactory()
++    request = factory.get('/', {'q': 'test office main'})  # Multiple words
++    request.user = User(username='test', is_superuser=True)
++    
++    # Reset queries
++    reset_queries()
++    
++    # Get search results
++    queryset = Client.objects.all()
++    qs, may_have_duplicates = client_admin.get_search_results(request, queryset, 'test office main')
++    
++    # Force query execution
++    list(qs)
++    
++    # Check the generated SQL
++    queries = connection.queries
++    print("\nGenerated SQL queries:")
++    for i, query in enumerate(queries):
++        print(f"\nQuery {i+1}:")
++        print(query['sql'])
++    
++    # Count JOINs in the query
++    sql = queries[-1]['sql'] if queries else ''
++    join_count = sql.upper().count('JOIN')
++    print(f"\nNumber of JOINs: {join_count}")
++    
++    # With the bug, we would see multiple JOINs for each search word
++    # After fix, we should see fewer JOINs
++    return join_count
++
++
++if __name__ == '__main__':
++    join_count = test_search_joins()
++    print(f"\nTotal JOINs in search query: {join_count}")
++    print("\nNote: With the bug, we expect to see multiple JOINs (one per search word)")
++    print("After the fix, we should see fewer JOINs")

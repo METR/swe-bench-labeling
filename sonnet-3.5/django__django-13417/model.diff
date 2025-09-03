@@ -1,0 +1,26 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 85cd8311a7..7eb8c7f9ec 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1076,7 +1076,11 @@ class QuerySet:
+         with extra data or aggregations.
+         """
+         self._not_support_combined_queries('annotate')
+-        return self._annotate(args, kwargs, select=True)
++        clone = self._annotate(args, kwargs, select=True)
++        if clone.query.group_by:
++            # If a GROUP BY clause is added, update the ordered property
++            clone.query.order_by = None
++        return clone
+ 
+     def alias(self, *args, **kwargs):
+         """
+@@ -1224,7 +1228,7 @@ class QuerySet:
+             return True
+         if self.query.extra_order_by or self.query.order_by:
+             return True
+-        elif self.query.default_ordering and self.query.get_meta().ordering:
++        elif self.query.default_ordering and self.query.get_meta().ordering and not self.query.group_by:
+             return True
+         else:
+             return False

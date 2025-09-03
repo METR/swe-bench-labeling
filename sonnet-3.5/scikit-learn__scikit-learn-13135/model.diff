@@ -1,0 +1,26 @@
+diff --git a/sklearn/preprocessing/tests/test_discretization.py b/sklearn/preprocessing/tests/test_discretization.py
+index c2e307e85..958c8ae46 100644
+--- a/sklearn/preprocessing/tests/test_discretization.py
++++ b/sklearn/preprocessing/tests/test_discretization.py
+@@ -97,6 +97,21 @@ def test_fit_transform_n_bins_array(strategy, expected):
+     assert est.bin_edges_.shape == (n_features, )
+     for bin_edges, n_bins in zip(est.bin_edges_, est.n_bins_):
+         assert bin_edges.shape == (n_bins + 1, )
++def test_nonuniform_strategies_with_5_bins():
++    X = np.array([0, 0.5, 2, 3, 9, 10]).reshape(-1, 1)
++
++    for strategy in ('uniform', 'quantile', 'kmeans'):
++        est = KBinsDiscretizer(n_bins=5, encode='ordinal', strategy=strategy)
++        Xt = est.fit_transform(X)
++        assert Xt.shape == X.shape
++        assert Xt.max() == 4  # 5 bins, so maximum bin index is 4
++        assert Xt.min() == 0  # minimum bin index is 0
++
++        # Check that bin edges are sorted
++        assert np.all(np.diff(est.bin_edges_[0]) > 0)
++
++        # Check that transform doesn't raise any errors
++        est.transform(X)
+ 
+ 
+ def test_invalid_n_features():

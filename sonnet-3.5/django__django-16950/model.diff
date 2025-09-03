@@ -1,0 +1,26 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 3fa04b821f..03f667958e 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -10,6 +10,7 @@ from django.core.exceptions import (
+     ImproperlyConfigured,
+     ValidationError,
+ )
++from django.db import models
+ from django.db.models.utils import AltersData
+ from django.forms.fields import ChoiceField, Field
+ from django.forms.forms import BaseForm, DeclarativeFieldsMetaclass
+@@ -1136,6 +1137,13 @@ class BaseInlineFormSet(BaseModelFormSet):
+             fk_value = getattr(self.instance, self.fk.remote_field.field_name)
+             fk_value = getattr(fk_value, "pk", fk_value)
+         setattr(form.instance, self.fk.get_attname(), fk_value)
++
++        # Set default values for UUIDFields
++        for field_name, field in form.fields.items():
++            if isinstance(field, models.UUIDField) and field.default:
++                if not form.data.get(form.add_prefix(field_name)):
++                    form.data[form.add_prefix(field_name)] = field.default()
++
+         return form
+ 
+     @classmethod

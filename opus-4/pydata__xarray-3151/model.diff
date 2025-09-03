@@ -1,0 +1,260 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 00000000..6e99a0ae
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,32 @@
++import xarray as xr
++import numpy as np
++from xarray.core.combine import _infer_concat_order_from_coords
++
++#yCoord = ['a', 'b', 'c']  # works without error
++yCoord = ['a', 'c', 'b']  # raises ValueError on combine
++
++ds1 = xr.Dataset(
++    data_vars=dict(
++        data=(['x', 'y'], np.random.rand(3, 3))
++    ),
++    coords=dict(
++        x=[1, 2, 3],
++        y=yCoord
++    )
++)
++
++ds2 = xr.Dataset(
++    data_vars=dict(
++        data=(['x', 'y'], np.random.rand(4, 3))
++    ),
++    coords = dict(
++        x=[4, 5, 6, 7],
++        y=yCoord
++    )
++)
++
++datasets = [ds1, ds2]
++combined_ids, concat_dims = _infer_concat_order_from_coords(datasets)
++
++print("concat_dims:", concat_dims)
++print("combined_ids:", combined_ids)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 00000000..ae35035b
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,86 @@
++import xarray as xr
++import numpy as np
++
++# Test 1: Non-monotonic identical coordinates (the original issue)
++print("Test 1: Non-monotonic identical coordinates")
++yCoord = ['a', 'c', 'b']  
++ds1 = xr.Dataset(
++    data_vars=dict(data=(['x', 'y'], np.random.rand(3, 3))),
++    coords=dict(x=[1, 2, 3], y=yCoord)
++)
++ds2 = xr.Dataset(
++    data_vars=dict(data=(['x', 'y'], np.random.rand(4, 3))),
++    coords=dict(x=[4, 5, 6, 7], y=yCoord)
++)
++try:
++    ds3 = xr.combine_by_coords((ds1, ds2))
++    print("✓ Success! Non-monotonic identical coordinates work")
++except ValueError as e:
++    print(f"✗ Failed: {e}")
++
++# Test 2: Monotonic identical coordinates (should still work)
++print("\nTest 2: Monotonic identical coordinates")
++yCoord = ['a', 'b', 'c']
++ds1 = xr.Dataset(
++    data_vars=dict(data=(['x', 'y'], np.random.rand(3, 3))),
++    coords=dict(x=[1, 2, 3], y=yCoord)
++)
++ds2 = xr.Dataset(
++    data_vars=dict(data=(['x', 'y'], np.random.rand(4, 3))),
++    coords=dict(x=[4, 5, 6, 7], y=yCoord)
++)
++try:
++    ds3 = xr.combine_by_coords((ds1, ds2))
++    print("✓ Success! Monotonic identical coordinates work")
++except ValueError as e:
++    print(f"✗ Failed: {e}")
++
++# Test 3: Non-monotonic varying coordinates (should fail)
++print("\nTest 3: Non-monotonic varying coordinates (should fail)")
++ds1 = xr.Dataset(
++    data_vars=dict(data=(['x'], np.random.rand(3))),
++    coords=dict(x=[3, 1, 2])
++)
++ds2 = xr.Dataset(
++    data_vars=dict(data=(['x'], np.random.rand(3))),
++    coords=dict(x=[6, 4, 5])
++)
++try:
++    ds3 = xr.combine_by_coords((ds1, ds2))
++    print("✗ Failed: Non-monotonic varying coordinates should fail!")
++except ValueError as e:
++    print(f"✓ Success! Correctly failed with: {e}")
++
++# Test 4: Monotonic varying coordinates (should work)
++print("\nTest 4: Monotonic varying coordinates")
++ds1 = xr.Dataset(
++    data_vars=dict(data=(['x'], np.random.rand(3))),
++    coords=dict(x=[1, 2, 3])
++)
++ds2 = xr.Dataset(
++    data_vars=dict(data=(['x'], np.random.rand(3))),
++    coords=dict(x=[4, 5, 6])
++)
++try:
++    ds3 = xr.combine_by_coords((ds1, ds2))
++    print("✓ Success! Monotonic varying coordinates work")
++except ValueError as e:
++    print(f"✗ Failed: {e}")
++
++# Test 5: Multiple dimensions with mix of identical and varying
++print("\nTest 5: Multiple dimensions with mix of identical and varying")
++# y is identical and non-monotonic, x varies and is monotonic
++yCoord = ['a', 'c', 'b']
++ds1 = xr.Dataset(
++    data_vars=dict(data=(['x', 'y', 'z'], np.random.rand(3, 3, 2))),
++    coords=dict(x=[1, 2, 3], y=yCoord, z=[10, 20])
++)
++ds2 = xr.Dataset(
++    data_vars=dict(data=(['x', 'y', 'z'], np.random.rand(4, 3, 2))),
++    coords=dict(x=[4, 5, 6, 7], y=yCoord, z=[10, 20])
++)
++try:
++    ds3 = xr.combine_by_coords((ds1, ds2))
++    print("✓ Success! Multiple dimensions with mix of identical and varying work")
++except ValueError as e:
++    print(f"✗ Failed: {e}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 00000000..4f0d5116
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,34 @@
++import xarray as xr
++import numpy as np
++
++# Edge case: Multiple groups with different data variables
++print("Edge case: Multiple groups with different data variables")
++y_coord = ['a', 'c', 'b']  # Non-monotonic
++
++# Group 1: data1 variable
++ds1 = xr.Dataset(
++    data_vars=dict(data1=(['x', 'y'], np.random.rand(3, 3))),
++    coords=dict(x=[1, 2, 3], y=y_coord)
++)
++ds2 = xr.Dataset(
++    data_vars=dict(data1=(['x', 'y'], np.random.rand(4, 3))),
++    coords=dict(x=[4, 5, 6, 7], y=y_coord)
++)
++
++# Group 2: data2 variable  
++ds3 = xr.Dataset(
++    data_vars=dict(data2=(['x', 'y'], np.random.rand(3, 3))),
++    coords=dict(x=[1, 2, 3], y=y_coord)
++)
++ds4 = xr.Dataset(
++    data_vars=dict(data2=(['x', 'y'], np.random.rand(4, 3))),
++    coords=dict(x=[4, 5, 6, 7], y=y_coord)
++)
++
++try:
++    # combine_by_coords should handle groups separately
++    ds_combined = xr.combine_by_coords([ds1, ds2, ds3, ds4])
++    print("✓ Success! Combined dataset with multiple variable groups:")
++    print(ds_combined)
++except ValueError as e:
++    print(f"✗ Failed: {e}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..35a2237f
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,38 @@
++import xarray as xr
++import numpy as np
++
++#yCoord = ['a', 'b', 'c']  # works without error
++yCoord = ['a', 'c', 'b']  # raises ValueError on combine
++
++ds1 = xr.Dataset(
++    data_vars=dict(
++        data=(['x', 'y'], np.random.rand(3, 3))
++    ),
++    coords=dict(
++        x=[1, 2, 3],
++        y=yCoord
++    )
++)
++
++ds2 = xr.Dataset(
++    data_vars=dict(
++        data=(['x', 'y'], np.random.rand(4, 3))
++    ),
++    coords = dict(
++        x=[4, 5, 6, 7],
++        y=yCoord
++    )
++)
++
++print("Dataset 1:")
++print(ds1)
++print("\nDataset 2:")
++print(ds2)
++
++print("\nTrying to combine datasets...")
++try:
++    ds3 = xr.combine_by_coords((ds1, ds2))
++    print("Success! Combined dataset:")
++    print(ds3)
++except ValueError as e:
++    print(f"Error: {e}")
+diff --git a/xarray/core/combine.py b/xarray/core/combine.py
+index 37ae903b..3a41c38e 100644
+--- a/xarray/core/combine.py
++++ b/xarray/core/combine.py
+@@ -501,7 +501,8 @@ def combine_by_coords(datasets, compat='no_conflicts', data_vars='all',
+                                    fill_value=fill_value)
+ 
+         # Check the overall coordinates are monotonically increasing
+-        for dim in concatenated.dims:
++        # Only check dimensions that were actually concatenated
++        for dim in concat_dims:
+             if dim in concatenated:
+                 indexes = concatenated.indexes.get(dim)
+                 if not (indexes.is_monotonic_increasing
+diff --git a/xarray/tests/test_combine.py b/xarray/tests/test_combine.py
+index 77e2993b..9bc122d2 100644
+--- a/xarray/tests/test_combine.py
++++ b/xarray/tests/test_combine.py
+@@ -617,6 +617,27 @@ class TestCombineAuto:
+         with raises_regex(ValueError, "does not have monotonic global indexes"
+                                       " along dimension x"):
+             combine_by_coords([ds1, ds0])
++    
++    def test_combine_by_coords_non_monotonic_identical(self):
++        # Test for issue where identical non-monotonic coordinates raise error
++        # https://github.com/pydata/xarray/issues/3150
++        y_coord = ['a', 'c', 'b']
++        ds1 = Dataset(
++            data_vars=dict(data=(['x', 'y'], [[1, 2, 3], [4, 5, 6], [7, 8, 9]])),
++            coords=dict(x=[1, 2, 3], y=y_coord)
++        )
++        ds2 = Dataset(
++            data_vars=dict(data=(['x', 'y'], [[10, 11, 12], [13, 14, 15], [16, 17, 18], [19, 20, 21]])),
++            coords=dict(x=[4, 5, 6, 7], y=y_coord)
++        )
++        # Should not raise an error since y coordinates are identical
++        actual = combine_by_coords([ds1, ds2])
++        expected = Dataset(
++            data_vars=dict(data=(['x', 'y'], [[1, 2, 3], [4, 5, 6], [7, 8, 9], 
++                                             [10, 11, 12], [13, 14, 15], [16, 17, 18], [19, 20, 21]])),
++            coords=dict(x=[1, 2, 3, 4, 5, 6, 7], y=y_coord)
++        )
++        assert_identical(expected, actual)
+ 
+ 
+ @pytest.mark.filterwarnings("ignore:In xarray version 0.13 `auto_combine` "

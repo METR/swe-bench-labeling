@@ -1,0 +1,17 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 192d9fad94..42921ee760 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -630,6 +630,12 @@ def modelform_factory(
+     # creating needs to inherit from the parent's inner meta.
+     bases = (form.Meta,) if hasattr(form, "Meta") else ()
+     Meta = type("Meta", bases, attrs)
++    
++    # Check if formfield_callback is specified in the form's Meta
++    meta_formfield_callback = getattr(getattr(form, 'Meta', None), 'formfield_callback', None)
++    if meta_formfield_callback:
++        formfield_callback = meta_formfield_callback
++    
+     if formfield_callback:
+         Meta.formfield_callback = staticmethod(formfield_callback)
+     # Give this new form class a reasonable name.

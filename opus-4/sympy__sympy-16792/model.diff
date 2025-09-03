@@ -1,0 +1,264 @@
+diff --git a/sympy/utilities/codegen.py b/sympy/utilities/codegen.py
+index f0befb2bd7..c36305fa53 100644
+--- a/sympy/utilities/codegen.py
++++ b/sympy/utilities/codegen.py
+@@ -708,6 +708,12 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
+                 for dim in array.shape:
+                     dims.append((S.Zero, dim - 1))
+                 metadata = {'dimensions': dims}
++            elif isinstance(symbol, MatrixSymbol):
++                # Handle MatrixSymbol arguments that don't appear in expressions
++                dims = []
++                for dim in symbol.shape:
++                    dims.append((S.Zero, dim - 1))
++                metadata = {'dimensions': dims}
+             else:
+                 metadata = {}
+ 
+@@ -739,7 +745,14 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
+                 try:
+                     new_args.append(name_arg_dict[symbol])
+                 except KeyError:
+-                    new_args.append(InputArgument(symbol))
++                    # When creating a new InputArgument, check if it's a MatrixSymbol
++                    if isinstance(symbol, MatrixSymbol):
++                        dims = []
++                        for dim in symbol.shape:
++                            dims.append((S.Zero, dim - 1))
++                        new_args.append(InputArgument(symbol, dimensions=dims))
++                    else:
++                        new_args.append(InputArgument(symbol))
+             arg_list = new_args
+ 
+         return Routine(name, arg_list, return_val, local_vars, global_vars)
+diff --git a/sympy/utilities/tests/test_codegen.py b/sympy/utilities/tests/test_codegen.py
+index 1cd56e12d1..a8735fc296 100644
+--- a/sympy/utilities/tests/test_codegen.py
++++ b/sympy/utilities/tests/test_codegen.py
+@@ -582,6 +582,25 @@ def test_ccode_cse():
+     )
+     assert source == expected
+ 
++def test_matrixsymbol_no_expression():
++    # Test for issue where MatrixSymbol argument that doesn't appear
++    # in expression is treated as scalar instead of pointer
++    x = MatrixSymbol('x', 2, 1)
++    expr = 1.0
++    routine = make_routine('test', expr, argument_sequence=[x])
++    code_gen = C99CodeGen()
++    source = get_string(code_gen.dump_c, [routine])
++    expected = (
++        '#include "file.h"\n'
++        '#include <math.h>\n' 
++        'double test(double *x) {\n'
++        '   double test_result;\n'
++        '   test_result = 1.0;\n'
++        '   return test_result;\n'
++        '}\n'
++    )
++    assert source == expected
++
+ def test_empty_f_code():
+     code_gen = FCodeGen()
+     source = get_string(code_gen.dump_f95, [])
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..70e826814b
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,50 @@
++from sympy.utilities.codegen import make_routine
++from sympy import MatrixSymbol, IndexedBase, Idx, symbols
++from sympy.utilities.codegen import CCodeGen
++
++# Test case 1: MatrixSymbol that doesn't appear in expression
++print("Test 1: MatrixSymbol not in expression")
++x = MatrixSymbol('x', 2, 1)
++expr = 1.0
++routine = make_routine('test_func', expr, argument_sequence=[x], language='C')
++code_gen = CCodeGen()
++prototype = code_gen.get_prototype(routine)
++print(f"  Prototype: {prototype}")
++assert "double *x" in prototype, f"Expected 'double *x' in prototype, got: {prototype}"
++print("  ✓ PASS")
++
++# Test case 2: MatrixSymbol that appears in expression 
++print("\nTest 2: MatrixSymbol in expression")
++x = MatrixSymbol('x', 2, 1)
++expr = x[0,0]
++routine = make_routine('test_func2', expr, argument_sequence=[x], language='C')
++prototype = code_gen.get_prototype(routine)
++print(f"  Prototype: {prototype}")
++assert "double *x" in prototype, f"Expected 'double *x' in prototype, got: {prototype}"
++print("  ✓ PASS")
++
++# Test case 3: IndexedBase that doesn't appear in expression
++print("\nTest 3: IndexedBase not in expression")
++n = symbols('n', integer=True)
++A = IndexedBase('A', shape=(n,))
++expr = 1.0
++routine = make_routine('test_func3', expr, argument_sequence=[A, n], language='C')
++prototype = code_gen.get_prototype(routine)
++print(f"  Prototype: {prototype}")
++# Note: IndexedBase without explicit dimensions in argument_sequence won't have dimensions
++# This is expected behavior, so we don't assert on pointer type
++print("  ✓ PASS")
++
++# Test case 4: Multiple MatrixSymbols, some used some not
++print("\nTest 4: Multiple MatrixSymbols")
++x = MatrixSymbol('x', 3, 1)
++y = MatrixSymbol('y', 2, 2)
++expr = x[0, 0] + 1.0  # Only x is used
++routine = make_routine('test_func4', expr, argument_sequence=[x, y], language='C')
++prototype = code_gen.get_prototype(routine)
++print(f"  Prototype: {prototype}")
++assert "double *x" in prototype, f"Expected 'double *x' in prototype"
++assert "double *y" in prototype, f"Expected 'double *y' in prototype"
++print("  ✓ PASS")
++
++print("\nAll tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..d2131e8e1f
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,15 @@
++from sympy.utilities.autowrap import autowrap
++from sympy import MatrixSymbol
++import numpy as np
++
++# Test case from the issue
++x = MatrixSymbol('x', 2, 1)
++expr = 1.0
++f = autowrap(expr, args=(x,), backend='cython')
++
++try:
++    result = f(np.array([[1.0, 2.0]]))
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {e}")
++    print(f"Error type: {type(e)}")
+diff --git a/test_issue_codegen.py b/test_issue_codegen.py
+new file mode 100644
+index 0000000000..d8aa2af127
+--- /dev/null
++++ b/test_issue_codegen.py
+@@ -0,0 +1,31 @@
++from sympy.utilities.codegen import make_routine
++from sympy import MatrixSymbol
++from sympy.utilities.codegen import CCodeGen
++
++# Test case from the issue
++x = MatrixSymbol('x', 2, 1)
++expr = 1.0
++
++# Create a routine
++routine = make_routine('test_func', expr, argument_sequence=[x], language='C')
++
++# Print the arguments
++print("Arguments:")
++for arg in routine.arguments:
++    print(f"  {arg.name}: type={type(arg).__name__}, dimensions={getattr(arg, 'dimensions', None)}")
++
++# Generate the C code
++code_gen = CCodeGen()
++prototype = code_gen.get_prototype(routine)
++print(f"\nPrototype: {prototype}")
++
++# Let's also check what happens with the working case
++expr2 = x[0,0]
++routine2 = make_routine('test_func2', expr2, argument_sequence=[x], language='C')
++
++print("\n\nWorking case arguments:")
++for arg in routine2.arguments:
++    print(f"  {arg.name}: type={type(arg).__name__}, dimensions={getattr(arg, 'dimensions', None)}")
++
++prototype2 = code_gen.get_prototype(routine2)
++print(f"\nPrototype: {prototype2}")
+diff --git a/test_regression.py b/test_regression.py
+new file mode 100644
+index 0000000000..99dd8e7605
+--- /dev/null
++++ b/test_regression.py
+@@ -0,0 +1,40 @@
++# Test regression for existing functionality
++from sympy.utilities.codegen import make_routine, CCodeGen, codegen
++from sympy import symbols, Eq, sin, cos, Matrix, Equality
++from sympy.matrices import MatrixSymbol
++from sympy.tensor import IndexedBase, Idx
++
++print("Test 1: Basic scalar function")
++x, y, z = symbols('x,y,z')
++expr = (x + y)*z
++routine = make_routine("test", expr)
++code_gen = CCodeGen()
++prototype = code_gen.get_prototype(routine)
++print(f"  Prototype: {prototype}")
++assert prototype == "double test(double x, double y, double z)"
++print("  ✓ PASS")
++
++print("\nTest 2: MatrixSymbol in expression")
++A = MatrixSymbol('A', 1, 3)
++expr1 = Equality(A, Matrix([[1, 2, x]]))
++name_expr = ("test", [expr1])
++result = codegen(name_expr, "c", "test", header=False, empty=False)
++print("  Generated code snippet:")
++# Just check that it generates without error
++assert "void test" in result[0][1]
++assert "double *A" in result[0][1]
++print("  ✓ PASS")
++
++print("\nTest 3: IndexedBase")
++A, B = map(IndexedBase, ['A', 'B'])
++m = symbols('m', integer=True)
++i = Idx('i', m)
++routine = make_routine('test', Eq(A[i], B[i]), argument_sequence=[B, A, m])
++prototype = code_gen.get_prototype(routine)
++print(f"  Prototype: {prototype}")
++assert "double *A" in prototype
++assert "double *B" in prototype
++assert "int m" in prototype
++print("  ✓ PASS")
++
++print("\nAll regression tests passed!")
+diff --git a/test_single.py b/test_single.py
+new file mode 100644
+index 0000000000..1ceb0bb8ef
+--- /dev/null
++++ b/test_single.py
+@@ -0,0 +1,35 @@
++from sympy.utilities.codegen import make_routine, C99CodeGen
++from sympy.matrices import MatrixSymbol
++from sympy.core.compatibility import StringIO
++
++def get_string(dump_fn, routines, prefix="file", header=False, empty=False):
++    """Wrapper for dump_fn. dump_fn writes its results to a stream object and
++       this wrapper returns the contents of that stream as a string."""
++    output = StringIO()
++    dump_fn(routines, output, prefix, header, empty)
++    source = output.getvalue()
++    output.close()
++    return source
++
++# Test for issue where MatrixSymbol argument that doesn't appear
++# in expression is treated as scalar instead of pointer
++x = MatrixSymbol('x', 2, 1)
++expr = 1.0
++routine = make_routine('test', expr, argument_sequence=[x])
++code_gen = C99CodeGen()
++source = get_string(code_gen.dump_c, [routine])
++expected = (
++    '#include "file.h"\n'
++    '#include <math.h>\n' 
++    'double test(double *x) {\n'
++    '   double test_result;\n'
++    '   test_result = 1.0;\n'
++    '   return test_result;\n'
++    '}\n'
++)
++print("Generated:")
++print(source)
++print("\nExpected:")
++print(expected)
++assert source == expected
++print("\nTest passed!")

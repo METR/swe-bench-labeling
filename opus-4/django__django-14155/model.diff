@@ -1,0 +1,342 @@
+diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
+index 9b00e24509..f313869575 100644
+--- a/django/urls/resolvers.py
++++ b/django/urls/resolvers.py
+@@ -45,7 +45,12 @@ class ResolverMatch:
+         self.namespaces = [x for x in namespaces if x] if namespaces else []
+         self.namespace = ':'.join(self.namespaces)
+ 
+-        if not hasattr(func, '__name__'):
++        # Handle functools.partial objects
++        if isinstance(func, functools.partial):
++            # Use the underlying function for path generation
++            actual_func = func.func
++            self._func_path = actual_func.__module__ + '.' + actual_func.__name__
++        elif not hasattr(func, '__name__'):
+             # A class-based view
+             self._func_path = func.__class__.__module__ + '.' + func.__class__.__name__
+         else:
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..b708f6ec4a
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,52 @@
++import functools
++from django.urls import ResolverMatch
++
++
++class TestView:
++    """Test class-based view"""
++    def __init__(self, arg1=None):
++        self.arg1 = arg1
++    
++    def __call__(self, request):
++        return None
++
++
++def test_func(request, arg1, arg2):
++    """Test function"""
++    return None
++
++
++# Edge case 1: Partial with a class (not instance)
++partial_class = functools.partial(TestView, arg1="default1")
++instance = partial_class()  # Create instance
++
++match1 = ResolverMatch(
++    func=instance,
++    args=(),
++    kwargs={},
++    url_name='test-partial-cbv',
++    app_names=[],
++    namespaces=[],
++    route='test/'
++)
++
++print("Partial class instance:")
++print(repr(match1))
++
++# Edge case 2: Partial with __qualname__
++test_func.__qualname__ = "Module.test_func"
++
++partial_func = functools.partial(test_func, arg1="default1")
++
++match2 = ResolverMatch(
++    func=partial_func,
++    args=(),
++    kwargs={'arg2': 'value2'},
++    url_name='test-partial-func',
++    app_names=[],
++    namespaces=[],
++    route='test/'
++)
++
++print("\nPartial function with __qualname__:")
++print(repr(match2))
+diff --git a/test_nested_partial.py b/test_nested_partial.py
+new file mode 100644
+index 0000000000..321276f37c
+--- /dev/null
++++ b/test_nested_partial.py
+@@ -0,0 +1,30 @@
++import functools
++from django.urls import ResolverMatch
++
++
++def test_view(request, arg1, arg2, arg3):
++    """Test view function"""
++    return None
++
++
++# Create nested partial functions
++partial_view1 = functools.partial(test_view, arg1="default1")
++partial_view2 = functools.partial(partial_view1, arg2="default2")
++
++# Create ResolverMatch with nested partial function
++match_nested = ResolverMatch(
++    func=partial_view2,
++    args=(),
++    kwargs={'arg3': 'value3'},
++    url_name='test-nested-partial',
++    app_names=['myapp'],
++    namespaces=['ns1'],
++    route='test-nested/'
++)
++
++print("Nested partial ResolverMatch:")
++print(repr(match_nested))
++print(f"\npartial_view2.func: {partial_view2.func}")
++print(f"isinstance(partial_view2.func, functools.partial): {isinstance(partial_view2.func, functools.partial)}")
++print(f"partial_view1: {partial_view1}")
++print(f"partial_view2.func is partial_view1: {partial_view2.func is partial_view1}")
+diff --git a/test_partial_attributes.py b/test_partial_attributes.py
+new file mode 100644
+index 0000000000..e02eb7a848
+--- /dev/null
++++ b/test_partial_attributes.py
+@@ -0,0 +1,28 @@
++import functools
++
++
++def test_view(request, arg1, arg2):
++    """Test view function"""
++    return None
++
++
++# Create a partial function
++partial_view = functools.partial(test_view, arg1="default1")
++
++print("Partial attributes:")
++print(f"partial_view.func: {partial_view.func}")
++print(f"partial_view.args: {partial_view.args}")
++print(f"partial_view.keywords: {partial_view.keywords}")
++print(f"hasattr __name__: {hasattr(partial_view, '__name__')}")
++try:
++    print(f"partial_view.__name__: {partial_view.__name__}")
++except AttributeError as e:
++    print(f"partial_view.__name__: AttributeError - {e}")
++try:
++    print(f"partial_view.__module__: {partial_view.__module__}")
++except AttributeError as e:
++    print(f"partial_view.__module__: AttributeError - {e}")
++print(f"partial_view.func.__name__: {partial_view.func.__name__}")
++print(f"partial_view.func.__module__: {partial_view.func.__module__}")
++print(f"partial_view.__class__.__module__: {partial_view.__class__.__module__}")
++print(f"partial_view.__class__.__name__: {partial_view.__class__.__name__}")
+diff --git a/test_partial_cbv.py b/test_partial_cbv.py
+new file mode 100644
+index 0000000000..e695cb53f2
+--- /dev/null
++++ b/test_partial_cbv.py
+@@ -0,0 +1,29 @@
++import functools
++from django.urls import ResolverMatch
++
++
++class TestView:
++    """Test class-based view"""
++    def __init__(self, arg1=None):
++        self.arg1 = arg1
++    
++    def __call__(self, request):
++        return None
++
++
++# Create a partial with class instantiation
++partial_view = functools.partial(TestView, arg1="default1")
++
++# Create ResolverMatch with partial class-based view
++match_partial_cbv = ResolverMatch(
++    func=partial_view(),  # instantiate the class
++    args=(),
++    kwargs={},
++    url_name='test-partial-cbv',
++    app_names=['myapp'],
++    namespaces=['ns1'],
++    route='test-partial-cbv/'
++)
++
++print("Partial CBV ResolverMatch:")
++print(repr(match_partial_cbv))
+diff --git a/test_partial_repr.py b/test_partial_repr.py
+new file mode 100644
+index 0000000000..f42e043eb0
+--- /dev/null
++++ b/test_partial_repr.py
+@@ -0,0 +1,38 @@
++import functools
++from django.urls import ResolverMatch
++
++
++def test_view(request, arg1, arg2):
++    """Test view function"""
++    return None
++
++
++# Create a partial function
++partial_view = functools.partial(test_view, arg1="default1")
++
++# Create ResolverMatch with regular function
++match_regular = ResolverMatch(
++    func=test_view,
++    args=(),
++    kwargs={'arg1': 'value1', 'arg2': 'value2'},
++    url_name='test-view',
++    app_names=['myapp'],
++    namespaces=['ns1'],
++    route='test/'
++)
++
++# Create ResolverMatch with partial function
++match_partial = ResolverMatch(
++    func=partial_view,
++    args=(),
++    kwargs={'arg2': 'value2'},
++    url_name='test-partial-view',
++    app_names=['myapp'],
++    namespaces=['ns1'],
++    route='test-partial/'
++)
++
++print("Regular function ResolverMatch:")
++print(repr(match_regular))
++print("\nPartial function ResolverMatch:")
++print(repr(match_partial))
+diff --git a/test_partial_resolver_match.py b/test_partial_resolver_match.py
+new file mode 100644
+index 0000000000..516e3551fe
+--- /dev/null
++++ b/test_partial_resolver_match.py
+@@ -0,0 +1,52 @@
++import functools
++from django.test import SimpleTestCase
++from django.urls import ResolverMatch
++
++
++def sample_view(request, arg1, arg2=None):
++    pass
++
++
++class PartialResolverMatchTests(SimpleTestCase):
++    
++    def test_partial_func_repr(self):
++        """Test that ResolverMatch handles functools.partial correctly in __repr__"""
++        partial_view = functools.partial(sample_view, arg1="default")
++        
++        match = ResolverMatch(
++            func=partial_view,
++            args=(),
++            kwargs={'arg2': 'value'},
++            url_name='partial-view',
++            app_names=['myapp'],
++            namespaces=['ns1'],
++            route='partial/'
++        )
++        
++        # The repr should show the underlying function, not functools.partial
++        self.assertIn('test_partial_resolver_match.sample_view', repr(match))
++        self.assertNotIn('functools.partial', repr(match))
++        
++    def test_nested_partial_func_repr(self):
++        """Test that ResolverMatch handles nested functools.partial correctly"""
++        partial_view1 = functools.partial(sample_view, arg1="default1")
++        partial_view2 = functools.partial(partial_view1, arg2="default2")
++        
++        match = ResolverMatch(
++            func=partial_view2,
++            args=(),
++            kwargs={},
++            url_name='nested-partial-view',
++            app_names=['myapp'],
++            namespaces=['ns1'],
++            route='nested-partial/'
++        )
++        
++        # The repr should show the underlying function
++        self.assertIn('test_partial_resolver_match.sample_view', repr(match))
++        self.assertNotIn('functools.partial', repr(match))
++        
++
++if __name__ == '__main__':
++    import unittest
++    unittest.main()
+diff --git a/test_partial_unwrap.py b/test_partial_unwrap.py
+new file mode 100644
+index 0000000000..7ea1aa6477
+--- /dev/null
++++ b/test_partial_unwrap.py
+@@ -0,0 +1,19 @@
++import functools
++
++
++def test_view(request, arg1, arg2, arg3):
++    """Test view function"""
++    return None
++
++
++# Create nested partial functions
++partial_view1 = functools.partial(test_view, arg1="default1")
++partial_view2 = functools.partial(partial_view1, arg2="default2")
++
++print(f"partial_view1.func: {partial_view1.func}")
++print(f"partial_view2.func: {partial_view2.func}")
++print(f"partial_view1.func is test_view: {partial_view1.func is test_view}")
++print(f"partial_view2.func is partial_view1: {partial_view2.func is partial_view1}")
++print(f"type(partial_view2.func): {type(partial_view2.func)}")
++
++# It seems functools.partial automatically flattens nested partials!
+diff --git a/tests/urlpatterns_reverse/tests.py b/tests/urlpatterns_reverse/tests.py
+index 09028be795..ff93fbdde0 100644
+--- a/tests/urlpatterns_reverse/tests.py
++++ b/tests/urlpatterns_reverse/tests.py
+@@ -1144,6 +1144,29 @@ class ResolverMatchTests(SimpleTestCase):
+             "args=('42', '37'), kwargs={}, url_name=no-kwargs, app_names=[], "
+             "namespaces=[], route=^no_kwargs/([0-9]+)/([0-9]+)/$)",
+         )
++    
++    def test_partial_func_repr(self):
++        """Test that ResolverMatch handles functools.partial correctly in __repr__"""
++        import functools
++        
++        def sample_view(request, arg1, arg2=None):
++            pass
++        
++        partial_view = functools.partial(sample_view, arg1="default")
++        
++        match = ResolverMatch(
++            func=partial_view,
++            args=(),
++            kwargs={'arg2': 'value'},
++            url_name='partial-view',
++            app_names=['myapp'],
++            namespaces=['ns1'],
++            route='partial/'
++        )
++        
++        # The repr should show the underlying function, not functools.partial
++        self.assertIn('urlpatterns_reverse.tests.sample_view', repr(match))
++        self.assertNotIn('functools.partial', repr(match))
+ 
+ 
+ @override_settings(ROOT_URLCONF='urlpatterns_reverse.erroneous_urls')

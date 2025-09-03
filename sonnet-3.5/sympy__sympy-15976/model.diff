@@ -1,0 +1,26 @@
+diff --git a/sympy/printing/mathml.py b/sympy/printing/mathml.py
+index 3f8b8d49e0..3b51ae23d5 100644
+--- a/sympy/printing/mathml.py
++++ b/sympy/printing/mathml.py
+@@ -4,6 +4,7 @@
+ 
+ from __future__ import print_function, division
+ 
++import re
+ from sympy import sympify, S, Mul
+ from sympy.core.function import _coeff_isneg
+ from sympy.core.compatibility import range
+@@ -772,7 +773,12 @@ def translate(s):
+             else:
+                 return s
+ 
+-        name, supers, subs = split_super_sub(sym.name)
++        if re.match(r'^[a-zA-Z]+\d+$', sym.name):
++            # If the symbol name ends with a number, don't split it
++            name, supers, subs = sym.name, [], []
++        else:
++            name, supers, subs = split_super_sub(sym.name)
++        
+         name = translate(name)
+         supers = [translate(sup) for sup in supers]
+         subs = [translate(sub) for sub in subs]

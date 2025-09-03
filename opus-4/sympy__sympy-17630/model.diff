@@ -1,0 +1,226 @@
+diff --git a/check_result.py b/check_result.py
+new file mode 100644
+index 0000000000..5685b0e5e2
+--- /dev/null
++++ b/check_result.py
+@@ -0,0 +1,15 @@
++from sympy import MatrixSymbol, ZeroMatrix, BlockMatrix, block_collapse
++
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++result1 = block_collapse(b * b)
++print("Type of result1:", type(result1))
++print("result1:", result1)
++print("Has blocks?", hasattr(result1, 'blocks'))
++
++if hasattr(result1, 'blocks'):
++    print("result1.blocks:", result1.blocks)
++else:
++    print("result1 as Matrix:", result1.as_explicit())
+diff --git a/sympy/matrices/expressions/blockmatrix.py b/sympy/matrices/expressions/blockmatrix.py
+index 95302a05ca..979b0f546d 100644
+--- a/sympy/matrices/expressions/blockmatrix.py
++++ b/sympy/matrices/expressions/blockmatrix.py
+@@ -164,7 +164,25 @@ def structurally_equal(self, other):
+     def _blockmul(self, other):
+         if (isinstance(other, BlockMatrix) and
+                 self.colblocksizes == other.rowblocksizes):
+-            return BlockMatrix(self.blocks*other.blocks)
++            # Perform matrix multiplication of blocks
++            result_blocks = self.blocks*other.blocks
++            
++            # Convert any Zero objects to ZeroMatrix objects with appropriate dimensions
++            from sympy.core.numbers import Zero
++            converted = []
++            for i in range(result_blocks.rows):
++                row = []
++                for j in range(result_blocks.cols):
++                    elem = result_blocks[i, j]
++                    if isinstance(elem, Zero):
++                        # Determine the shape based on the row/col block sizes
++                        rows = self.rowblocksizes[i]
++                        cols = other.colblocksizes[j]
++                        elem = ZeroMatrix(rows, cols)
++                    row.append(elem)
++                converted.append(row)
++            
++            return BlockMatrix(converted)
+ 
+         return self * other
+ 
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..93f9384855
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,49 @@
++from sympy import *
++
++# Test various block matrix multiplication scenarios
++a = MatrixSymbol("a", 2, 2)
++b = MatrixSymbol("b", 2, 2)
++c = MatrixSymbol("c", 3, 3)
++z22 = ZeroMatrix(2, 2)
++z23 = ZeroMatrix(2, 3)
++z32 = ZeroMatrix(3, 2)
++z33 = ZeroMatrix(3, 3)
++I2 = Identity(2)
++I3 = Identity(3)
++
++# Test 1: Basic multiplication with zeros
++B1 = BlockMatrix([[a, z22], [z22, b]])
++print("Test 1 - Basic multiplication with zeros:")
++print("B1 * B1 =", block_collapse(B1 * B1))
++
++# Test 2: Mixed size blocks with zeros (skip incompatible test)
++# B2 = BlockMatrix([[a, z23], [z32, c]])
++# B3 = BlockMatrix([[b, z22], [z33, c]])
++print("\nTest 2 - Mixed size blocks: (skipped due to dimension mismatch)")
++
++# Test 3: Identity and zeros
++B4 = BlockMatrix([[I2, z22], [z22, I2]])
++print("\nTest 3 - Identity and zeros:")
++print("B4 * B1 =", block_collapse(B4 * B1))
++
++# Test 4: More than 2x2 blocks
++B5 = BlockMatrix([[a, z22, z22], [z22, b, z22], [z22, z22, a]])
++print("\nTest 4 - 3x3 block matrix:")
++print("B5 * B5 =", block_collapse(B5 * B5))
++
++# Test 5: The problematic triple multiplication
++B6 = BlockMatrix([[a, z22], [z22, z22]])
++print("\nTest 5 - Triple multiplication (original issue):")
++try:
++    result = block_collapse(B6 * B6 * B6)
++    print("B6 * B6 * B6 =", result)
++    print("SUCCESS!")
++except Exception as e:
++    print("ERROR:", e)
++
++# Test 6: Check block properties are preserved
++print("\nTest 6 - Block properties:")
++result = B1._blockmul(B1)
++print("Result blockshape:", result.blockshape)
++print("Result rowblocksizes:", result.rowblocksizes)
++print("Result colblocksizes:", result.colblocksizes)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e8c212b4a9
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,24 @@
++from sympy import *
++
++# Test case from the issue
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++print("Testing b * b:")
++result1 = block_collapse(b * b)
++print("Result:", result1)
++
++print("\nTesting b * b * b:")
++result2 = block_collapse(b * b * b)
++print("Result:", result2)
++
++print("\nTesting b._blockmul(b):")
++result3 = b._blockmul(b)
++print("Result:", result3)
++print("Block (0,1) type:", type(result3.blocks[0, 1]))
++print("Block (0,1) value:", result3.blocks[0, 1])
++
++print("\nTesting b._blockmul(b)._blockmul(b):")
++result4 = b._blockmul(b)._blockmul(b) 
++print("Result:", result4)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..aff0cf8a5d
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,32 @@
++from sympy import *
++from sympy.matrices import Matrix as SympyMatrix
++from sympy.core.numbers import Zero
++
++# Reproduce the issue
++a = MatrixSymbol("a", 2, 2)
++z = ZeroMatrix(2, 2)
++b = BlockMatrix([[a, z], [z, z]])
++
++print("b.blocks:")
++print(b.blocks)
++print("\nb.blocks type:", type(b.blocks))
++
++# Direct matrix multiplication to see what happens
++print("\nDirect matrix mult of blocks:")
++mult_result = b.blocks * b.blocks
++print("b.blocks * b.blocks =")
++print(mult_result)
++print("\nChecking elements in multiplication result:")
++for i in range(mult_result.rows):
++    for j in range(mult_result.cols):
++        elem = mult_result[i, j]
++        print(f"Element ({i},{j}): {elem}, type: {type(elem)}")
++
++# Check what ZeroMatrix * ZeroMatrix gives
++print("\nChecking ZeroMatrix multiplication:")
++print("z * z =", z * z)
++print("Type:", type(z * z))
++
++# Check if Zero is an instance of sympy.core.numbers.Zero
++print("\nIs mult_result[0,1] a Zero?", isinstance(mult_result[0, 1], Zero))
++print("Does it have 'cols' attribute?", hasattr(mult_result[0, 1], 'cols'))
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..1ee698813b
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,45 @@
++"""
++Test for the fix to the issue with BlockMatrix containing ZeroMatrix blocks
++"""
++from sympy import MatrixSymbol, ZeroMatrix, BlockMatrix, block_collapse
++
++def test_blockmatrix_zero_blocks_multiplication():
++    """Test that BlockMatrix multiplication with ZeroMatrix blocks works correctly"""
++    a = MatrixSymbol("a", 2, 2)
++    z = ZeroMatrix(2, 2)
++    b = BlockMatrix([[a, z], [z, z]])
++    
++    # Test single multiplication
++    result1 = block_collapse(b * b)
++    # block_collapse returns a matrix expression, need to check blocks
++    assert result1.blocks[0, 0] == a**2
++    from sympy import Zero
++    assert isinstance(result1.blocks[0, 1], (Zero, ZeroMatrix)) or result1.blocks[0, 1] == 0
++    assert isinstance(result1.blocks[1, 0], (Zero, ZeroMatrix)) or result1.blocks[1, 0] == 0
++    assert isinstance(result1.blocks[1, 1], (Zero, ZeroMatrix)) or result1.blocks[1, 1] == 0
++    
++    # Test double multiplication (the problematic case)
++    result2 = block_collapse(b * b * b)
++    assert result2.blocks[0, 0] == a**3
++    assert isinstance(result2.blocks[0, 1], (Zero, ZeroMatrix)) or result2.blocks[0, 1] == 0
++    assert isinstance(result2.blocks[1, 0], (Zero, ZeroMatrix)) or result2.blocks[1, 0] == 0
++    assert isinstance(result2.blocks[1, 1], (Zero, ZeroMatrix)) or result2.blocks[1, 1] == 0
++    
++    # Test _blockmul directly
++    result3 = b._blockmul(b)
++    assert result3.blocks[0, 0] == a**2
++    assert result3.blocks[0, 1].is_ZeroMatrix
++    assert result3.blocks[1, 0].is_ZeroMatrix
++    assert result3.blocks[1, 1].is_ZeroMatrix
++    
++    # Test double _blockmul
++    result4 = b._blockmul(b)._blockmul(b)
++    assert result4.blocks[0, 0] == a**3
++    assert result4.blocks[0, 1].is_ZeroMatrix
++    assert result4.blocks[1, 0].is_ZeroMatrix
++    assert result4.blocks[1, 1].is_ZeroMatrix
++    
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_blockmatrix_zero_blocks_multiplication()

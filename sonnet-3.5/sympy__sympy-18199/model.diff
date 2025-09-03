@@ -1,0 +1,37 @@
+diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
+index 9a3052d4c3..4cd9177099 100644
+--- a/sympy/ntheory/residue_ntheory.py
++++ b/sympy/ntheory/residue_ntheory.py
+@@ -765,9 +765,15 @@ def nthroot_mod(a, n, p, all_roots=False):
+     [8, 11]
+     >>> nthroot_mod(68, 3, 109)
+     23
++    >>> nthroot_mod(0, 5, 17)
++    0
++    >>> nthroot_mod(0, 5, 17, True)
++    [0]
+     """
+     from sympy.core.numbers import igcdex
+     a, n, p = as_int(a), as_int(n), as_int(p)
++    if a % p == 0:
++        return [0] if all_roots else 0
+     if n == 2:
+         return sqrt_mod(a, p, all_roots)
+     # see Hackman "Elementary Number Theory" (2009), page 76
+diff --git a/sympy/ntheory/tests/test_residue.py b/sympy/ntheory/tests/test_residue.py
+index d4854547be..34f8573582 100644
+--- a/sympy/ntheory/tests/test_residue.py
++++ b/sympy/ntheory/tests/test_residue.py
+@@ -244,3 +244,11 @@ def test_residue():
+     args = 5779, 3528, 6215
+     assert discrete_log(*args) == 687
+     assert discrete_log(*Tuple(*args)) == 687
++# Test for the new functionality in nthroot_mod
++from sympy.ntheory.residue_ntheory import nthroot_mod
++assert nthroot_mod(0, 5, 17) == 0
++assert nthroot_mod(0, 5, 17, all_roots=True) == [0]
++assert nthroot_mod(17*17, 5, 17) == 0
++assert nthroot_mod(17*17, 5, 17, all_roots=True) == [0]
++
++print("All tests passed successfully!")
+\ No newline at end of file

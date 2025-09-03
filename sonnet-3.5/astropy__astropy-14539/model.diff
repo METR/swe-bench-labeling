@@ -1,0 +1,29 @@
+diff --git a/astropy/io/fits/diff.py b/astropy/io/fits/diff.py
+index 100cdf1b8c..fdab810e59 100644
+--- a/astropy/io/fits/diff.py
++++ b/astropy/io/fits/diff.py
+@@ -1454,9 +1454,10 @@ class TableDataDiff(_BaseDiff):
+                     [
+                         idx
+                         for idx in range(len(arra))
+-                        if not np.allclose(
+-                            arra[idx], arrb[idx], rtol=self.rtol, atol=self.atol
+-                        )
++                        if not (np.array_equal(arra[idx], arrb[idx]) or
++                                (np.issubdtype(arra[idx].dtype, np.floating) and
++                                 np.issubdtype(arrb[idx].dtype, np.floating) and
++                                 np.allclose(arra[idx], arrb[idx], rtol=self.rtol, atol=self.atol)))
+                     ],
+                 )
+             else:
+diff --git a/pyproject.toml b/pyproject.toml
+index b4e9ef8387..ff68a7403d 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",

@@ -1,0 +1,133 @@
+From c092032f9b8319690f9598cd477cc68192d545d0 Mon Sep 17 00:00:00 2001
+From: Paul Spiering <paul@spiering.org>
+Date: Wed, 10 Nov 2021 13:11:45 +0100
+Subject: [PATCH 1/3] codegen/ast: argument invariance is now supported for
+ String Previously, `String` and its subclasses only supported the invariance
+ `string.func(**string.kwargs()) == string`. Now also
+ `string.func(string.args) == string` is supported as is required for all
+ `Basic` subclasses.
+
+---
+ sympy/codegen/ast.py            | 6 ++++++
+ sympy/codegen/tests/test_ast.py | 1 +
+ 2 files changed, 7 insertions(+)
+
+diff --git a/sympy/codegen/ast.py b/sympy/codegen/ast.py
+index a02714b17452..3d1511c70bea 100644
+--- a/sympy/codegen/ast.py
++++ b/sympy/codegen/ast.py
+@@ -335,6 +335,12 @@ def kwargs(self, exclude=(), apply=None):
+         else:
+             return kwargs
+ 
++    @property
++    def func(self):
++        if self.is_Atom:
++            return lambda: self
++        else:
++            return super().func
+ 
+ class BreakToken(Token):
+     """ Represents 'break' in C/Python ('exit' in Fortran).
+diff --git a/sympy/codegen/tests/test_ast.py b/sympy/codegen/tests/test_ast.py
+index 00c5d4cf28c0..b94f48046ceb 100644
+--- a/sympy/codegen/tests/test_ast.py
++++ b/sympy/codegen/tests/test_ast.py
+@@ -267,6 +267,7 @@ def test_String():
+     assert st == String('foobar')
+     assert st.text == 'foobar'
+     assert st.func(**st.kwargs()) == st
++    assert st.func(*st.args) == st
+ 
+ 
+     class Signifier(String):
+
+From 69ab1f8c6401cbd5f08a70fbc1ee45e1565e4e2b Mon Sep 17 00:00:00 2001
+From: Paul Spiering <paul@spiering.org>
+Date: Wed, 10 Nov 2021 13:34:53 +0100
+Subject: [PATCH 2/3] codegen.ast.String support for kwargs() invariance
+
+---
+ sympy/codegen/ast.py | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/sympy/codegen/ast.py b/sympy/codegen/ast.py
+index 3d1511c70bea..1f06b7c8e4a7 100644
+--- a/sympy/codegen/ast.py
++++ b/sympy/codegen/ast.py
+@@ -335,12 +335,11 @@ def kwargs(self, exclude=(), apply=None):
+         else:
+             return kwargs
+ 
+-    @property
+-    def func(self):
+-        if self.is_Atom:
+-            return lambda: self
++    def func(self, *args, **kwargs):
++        if self.is_Atom and not kwargs:
++            return self
+         else:
+-            return super().func
++            return super().func(*args, **kwargs)
+ 
+ class BreakToken(Token):
+     """ Represents 'break' in C/Python ('exit' in Fortran).
+
+From c1fe28d4e4467886d6234c90379e1d29bfb54a3d Mon Sep 17 00:00:00 2001
+From: Paul Spiering <paul@spiering.org>
+Date: Mon, 15 Nov 2021 23:29:05 +0100
+Subject: [PATCH 3/3] codegen/ast: String is now a subclass of atom
+
+---
+ sympy/codegen/ast.py | 17 +++++++++--------
+ 1 file changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/sympy/codegen/ast.py b/sympy/codegen/ast.py
+index 1f06b7c8e4a7..b53671da424e 100644
+--- a/sympy/codegen/ast.py
++++ b/sympy/codegen/ast.py
+@@ -133,7 +133,7 @@
+ from sympy.core.relational import (Ge, Gt, Le, Lt)
+ from sympy.core import Symbol, Tuple, Dummy
+ from sympy.core.basic import Basic
+-from sympy.core.expr import Expr
++from sympy.core.expr import Expr, Atom
+ from sympy.core.numbers import Float, Integer, oo
+ from sympy.core.sympify import _sympify, sympify, SympifyError
+ from sympy.utilities.iterables import (iterable, topological_sort,
+@@ -335,12 +335,6 @@ def kwargs(self, exclude=(), apply=None):
+         else:
+             return kwargs
+ 
+-    def func(self, *args, **kwargs):
+-        if self.is_Atom and not kwargs:
+-            return self
+-        else:
+-            return super().func(*args, **kwargs)
+-
+ class BreakToken(Token):
+     """ Represents 'break' in C/Python ('exit' in Fortran).
+ 
+@@ -874,7 +868,7 @@ def _construct_iterable(cls, itr):
+         return _sympify(itr)
+ 
+ 
+-class String(Token):
++class String(Atom, Token):
+     """ SymPy object representing a string.
+ 
+     Atomic object which is not an expression (as opposed to Symbol).
+@@ -912,6 +906,13 @@ def _construct_text(cls, text):
+     def _sympystr(self, printer, *args, **kwargs):
+         return self.text
+ 
++    def kwargs(self, exclude = (), apply = None):
++        return {}
++
++    #to be removed when Atom is given a suitable func
++    @property
++    def func(self):
++        return lambda: self
+ 
+ class QuotedString(String):
+     """ Represents a string which should be printed with quotes. """

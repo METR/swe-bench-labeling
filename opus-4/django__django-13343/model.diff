@@ -1,0 +1,362 @@
+diff --git a/django/db/models/fields/files.py b/django/db/models/fields/files.py
+index e10a5bb6d9..e1fe727450 100644
+--- a/django/db/models/fields/files.py
++++ b/django/db/models/fields/files.py
+@@ -227,10 +227,12 @@ class FileField(Field):
+     def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
+         self._primary_key_set_explicitly = 'primary_key' in kwargs
+ 
+-        self.storage = storage or default_storage
+-        if callable(self.storage):
+-            self.storage = self.storage()
+-            if not isinstance(self.storage, Storage):
++        self._storage = storage or default_storage
++        self._storage_callable = callable(self._storage)
++        if self._storage_callable:
++            # Evaluate the callable to check if it returns a valid Storage
++            storage_instance = self._storage()
++            if not isinstance(storage_instance, Storage):
+                 raise TypeError(
+                     "%s.storage must be a subclass/instance of %s.%s"
+                     % (self.__class__.__qualname__, Storage.__module__, Storage.__qualname__)
+@@ -240,6 +242,12 @@ class FileField(Field):
+         kwargs.setdefault('max_length', 100)
+         super().__init__(verbose_name, name, **kwargs)
+ 
++    @property
++    def storage(self):
++        if self._storage_callable:
++            return self._storage()
++        return self._storage
++
+     def check(self, **kwargs):
+         return [
+             *super().check(**kwargs),
+@@ -278,8 +286,9 @@ class FileField(Field):
+         if kwargs.get("max_length") == 100:
+             del kwargs["max_length"]
+         kwargs['upload_to'] = self.upload_to
+-        if self.storage is not default_storage:
+-            kwargs['storage'] = self.storage
++        # Use the original storage value (callable or instance) for deconstruction
++        if self._storage is not default_storage:
++            kwargs['storage'] = self._storage
+         return name, path, args, kwargs
+ 
+     def get_internal_type(self):
+diff --git a/test_callable_storage.py b/test_callable_storage.py
+new file mode 100644
+index 0000000000..57b1fa7646
+--- /dev/null
++++ b/test_callable_storage.py
+@@ -0,0 +1,69 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++django.setup()
++
++from django.db import models
++from django.core.files.storage import default_storage
++
++
++def get_custom_storage():
++    """A callable that returns a storage instance."""
++    return default_storage
++
++
++class TestModel(models.Model):
++    # Test with callable storage
++    file_field = models.FileField(storage=get_custom_storage)
++    # Test with callable upload_to for comparison
++    file_field_upload = models.FileField(upload_to=lambda instance, filename: f"test/{filename}")
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++# Test the deconstruction
++field = TestModel._meta.get_field('file_field')
++name, path, args, kwargs = field.deconstruct()
++
++print("Deconstructed FileField with callable storage:")
++print(f"  name: {name}")
++print(f"  path: {path}")
++print(f"  args: {args}")
++print(f"  kwargs: {kwargs}")
++print(f"  storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"  storage value: {kwargs['storage']}")
++    print(f"  storage is callable: {callable(kwargs['storage'])}")
++    print(f"  storage is the original function: {kwargs['storage'] is get_custom_storage}")
++
++print("\n" + "="*50 + "\n")
++
++# Compare with upload_to
++field_upload = TestModel._meta.get_field('file_field_upload')
++name, path, args, kwargs = field_upload.deconstruct()
++
++print("Deconstructed FileField with callable upload_to:")
++print(f"  name: {name}")
++print(f"  path: {path}")
++print(f"  args: {args}")
++print(f"  kwargs: {kwargs}")
++print(f"  upload_to in kwargs: {'upload_to' in kwargs}")
++if 'upload_to' in kwargs:
++    print(f"  upload_to value: {kwargs['upload_to']}")
++    print(f"  upload_to is callable: {callable(kwargs['upload_to'])}")
+diff --git a/test_callable_storage_deconstruct.py b/test_callable_storage_deconstruct.py
+new file mode 100644
+index 0000000000..fc0d9deaff
+--- /dev/null
++++ b/test_callable_storage_deconstruct.py
+@@ -0,0 +1,122 @@
++import django
++from django.conf import settings
++from django.test import TestCase
++from django.db import models
++from django.core.files.storage import default_storage, Storage
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++django.setup()
++
++
++def get_test_storage():
++    """A callable that returns a storage instance."""
++    return default_storage
++
++
++def get_test_storage_2():
++    """Another callable that returns a different storage instance."""
++    from django.core.files.storage import FileSystemStorage
++    return FileSystemStorage(location='/tmp/test')
++
++
++class FileFieldCallableStorageTests(TestCase):
++    """Test that FileField correctly handles callable storage during deconstruction."""
++    
++    def test_callable_storage_deconstruct(self):
++        """Test that a callable storage is preserved in deconstruction."""
++        # Create a field with callable storage
++        field = models.FileField(storage=get_test_storage)
++        
++        # Deconstruct it
++        name, path, args, kwargs = field.deconstruct()
++        
++        # The storage should be in kwargs and should be the original callable
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], get_test_storage)
++        self.assertTrue(callable(kwargs['storage']))
++        
++    def test_callable_storage_different_than_default(self):
++        """Test that a callable storage different from default is preserved."""
++        # Create a field with a different callable storage
++        field = models.FileField(storage=get_test_storage_2)
++        
++        # Deconstruct it
++        name, path, args, kwargs = field.deconstruct()
++        
++        # The storage should be in kwargs
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], get_test_storage_2)
++        self.assertTrue(callable(kwargs['storage']))
++        
++    def test_non_callable_storage_deconstruct(self):
++        """Test that a non-callable storage is also handled correctly."""
++        from django.core.files.storage import FileSystemStorage
++        custom_storage = FileSystemStorage(location='/tmp/custom')
++        
++        # Create a field with non-callable storage
++        field = models.FileField(storage=custom_storage)
++        
++        # Deconstruct it
++        name, path, args, kwargs = field.deconstruct()
++        
++        # The storage should be in kwargs and should be the instance
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], custom_storage)
++        self.assertFalse(callable(kwargs['storage']))
++        
++    def test_callable_storage_evaluated_on_access(self):
++        """Test that callable storage is evaluated when accessed."""
++        # Create a field with callable storage
++        field = models.FileField(storage=get_test_storage)
++        
++        # Access the storage property
++        storage = field.storage
++        
++        # It should be a Storage instance
++        self.assertIsInstance(storage, Storage)
++        
++        # But the original should still be callable
++        self.assertTrue(callable(field._storage))
++        
++    def test_default_storage_omitted_from_deconstruct(self):
++        """Test that default_storage is omitted from deconstruction."""
++        # Create a field with default storage  
++        field = models.FileField()
++        
++        # Deconstruct it
++        name, path, args, kwargs = field.deconstruct()
++        
++        # Storage should not be in kwargs
++        self.assertNotIn('storage', kwargs)
++
++
++# Run the tests
++if __name__ == '__main__':
++    import unittest
++    
++    # Create test suite
++    suite = unittest.TestLoader().loadTestsFromTestCase(FileFieldCallableStorageTests)
++    
++    # Run tests
++    runner = unittest.TextTestRunner(verbosity=2)
++    result = runner.run(suite)
++    
++    # Print summary
++    if result.wasSuccessful():
++        print("\nAll tests passed!")
++    else:
++        print(f"\n{len(result.failures)} failures, {len(result.errors)} errors")
+diff --git a/test_field_deconstruction.py b/test_field_deconstruction.py
+new file mode 100644
+index 0000000000..14b7ff668c
+--- /dev/null
++++ b/test_field_deconstruction.py
+@@ -0,0 +1,104 @@
++"""
++Test for FileField deconstruction with callable storage.
++This test should be added to Django's test suite.
++"""
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++django.setup()
++
++from django.test import TestCase
++from django.db import models
++from django.core.files.storage import default_storage, FileSystemStorage
++
++
++def callable_storage():
++    return default_storage
++
++
++def custom_callable_storage():
++    return FileSystemStorage(location='/tmp/custom')
++
++
++class FileFieldCallableStorageDeconstructionTests(TestCase):
++    """
++    Test that FileField with callable storage deconstructs properly.
++    Regression test for https://code.djangoproject.com/ticket/XXXXX
++    """
++
++    def test_callable_storage_preserved_in_deconstruct(self):
++        """A callable storage should be preserved as-is during deconstruction."""
++        field = models.FileField(storage=callable_storage)
++        name, path, args, kwargs = field.deconstruct()
++        
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], callable_storage)
++        self.assertTrue(callable(kwargs['storage']))
++
++    def test_different_callable_storage_in_deconstruct(self):
++        """A different callable storage should be included in deconstruction."""
++        field = models.FileField(storage=custom_callable_storage)
++        name, path, args, kwargs = field.deconstruct()
++        
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], custom_callable_storage)
++        self.assertTrue(callable(kwargs['storage']))
++
++    def test_non_callable_storage_in_deconstruct(self):
++        """A non-callable storage instance should also work correctly."""
++        storage_instance = FileSystemStorage(location='/tmp/test')
++        field = models.FileField(storage=storage_instance)
++        name, path, args, kwargs = field.deconstruct()
++        
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], storage_instance)
++        self.assertIsInstance(kwargs['storage'], FileSystemStorage)
++
++    def test_default_storage_omitted_from_deconstruct(self):
++        """Fields with default storage should not include storage in deconstruction."""
++        field = models.FileField()
++        name, path, args, kwargs = field.deconstruct()
++        
++        self.assertNotIn('storage', kwargs)
++
++    def test_callable_storage_evaluated_on_property_access(self):
++        """Callable storage should be evaluated when the storage property is accessed."""
++        field = models.FileField(storage=callable_storage)
++        
++        # The storage property should return the evaluated storage
++        self.assertEqual(field.storage, default_storage)
++        # But the original callable should be preserved
++        self.assertEqual(field._storage, callable_storage)
++
++    def test_imagefield_inherits_callable_storage_behavior(self):
++        """ImageField should inherit the callable storage behavior from FileField."""
++        field = models.ImageField(storage=callable_storage)
++        name, path, args, kwargs = field.deconstruct()
++        
++        self.assertIn('storage', kwargs)
++        self.assertEqual(kwargs['storage'], callable_storage)
++        self.assertTrue(callable(kwargs['storage']))
++
++
++if __name__ == '__main__':
++    import unittest
++    suite = unittest.TestLoader().loadTestsFromTestCase(FileFieldCallableStorageDeconstructionTests)
++    runner = unittest.TextTestRunner(verbosity=2)
++    result = runner.run(suite)
++    print(f"\nTests run: {result.testsRun}")
++    print(f"Failures: {len(result.failures)}")
++    print(f"Errors: {len(result.errors)}")
+diff --git a/test_migration_writer.py b/test_migration_writer.py
+new file mode 100644
+index 0000000000..e69de29bb2

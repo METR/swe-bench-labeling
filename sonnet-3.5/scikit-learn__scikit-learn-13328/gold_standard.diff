@@ -1,0 +1,199 @@
+From cff2c4f9ea5e8802b054fb47b58dc8ab2b489f41 Mon Sep 17 00:00:00 2001
+From: Alexandre Gramfort <alexandre.gramfort@m4x.org>
+Date: Thu, 28 Feb 2019 13:44:40 +0100
+Subject: [PATCH 1/5] make sure huber works with boolean X
+
+---
+ sklearn/linear_model/huber.py            | 3 ++-
+ sklearn/linear_model/tests/test_huber.py | 7 +++++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/linear_model/huber.py b/sklearn/linear_model/huber.py
+index cd17b0fe33c00..676c5f02124dc 100644
+--- a/sklearn/linear_model/huber.py
++++ b/sklearn/linear_model/huber.py
+@@ -251,7 +251,8 @@ def fit(self, X, y, sample_weight=None):
+         self : object
+         """
+         X, y = check_X_y(
+-            X, y, copy=False, accept_sparse=['csr'], y_numeric=True)
++            X, y, copy=False, accept_sparse=['csr'], y_numeric=True,
++            dtype=[np.float64, np.float32])
+         if sample_weight is not None:
+             sample_weight = np.array(sample_weight)
+             check_consistent_length(y, sample_weight)
+diff --git a/sklearn/linear_model/tests/test_huber.py b/sklearn/linear_model/tests/test_huber.py
+index 6a8b26133d5ac..9d9955dd6153b 100644
+--- a/sklearn/linear_model/tests/test_huber.py
++++ b/sklearn/linear_model/tests/test_huber.py
+@@ -199,3 +199,10 @@ def test_huber_better_r2_score():
+ 
+     # The huber model should also fit poorly on the outliers.
+     assert_greater(ridge_outlier_score, huber_outlier_score)
++
++
++def test_huber_bool():
++    # Test that it does not crash with bool data
++    X, y = make_regression(n_samples=200, n_features=2, noise=4.0, random_state=0)
++    X_bool = X > 0
++    huber = HuberRegressor().fit(X_bool, y)
+
+From b4363abb9450943ce2a27ba1d37f994b4965c31c Mon Sep 17 00:00:00 2001
+From: Alexandre Gramfort <alexandre.gramfort@m4x.org>
+Date: Thu, 28 Feb 2019 13:46:48 +0100
+Subject: [PATCH 2/5] update what's new
+
+---
+ doc/whats_new/v0.21.rst | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index e3e3ec9f88816..9518baf8816ea 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -42,7 +42,7 @@ Support for Python 3.4 and below has been officially dropped.
+     See version doc/whats_new/v0.20.rst for structure. Entries should be
+     prefixed with one of the labels: |MajorFeature|, |Feature|, |Efficiency|,
+     |Enhancement|, |Fix| or |API|. They should be under a heading for the
+-    relevant module (or *Multiple Modules* or *Miscellaneous*), and within each
++    relevant module (or *Mufltiple Modules* or *Miscellaneous*), and within each
+     section should be ordered according to the label ordering above. Entries
+     should end with: :issue:`123456` by :user:`Joe Bloggs <joeongithub>`.
+ 
+@@ -234,6 +234,11 @@ Support for Python 3.4 and below has been officially dropped.
+   now supports fitting the intercept (i.e. ``fit_intercept=True``) when
+   inputs are sparse . :issue:`13336` by :user:`Bartosz Telenczuk <btel>`
+ 
++- |Fix| Fixed a bug in :class:`linear_model.HuberRegressor` that was
++  broken when X was of dtype bool.
++  :issue:`13314` by `Alexandre Gramfort`_.
++
++
+ :mod:`sklearn.manifold`
+ ............................
+ 
+
+From 48a7ccae3b477d036ab605e983d4a5efa71c3c6c Mon Sep 17 00:00:00 2001
+From: Alexandre Gramfort <alexandre.gramfort@m4x.org>
+Date: Thu, 28 Feb 2019 21:22:37 +0100
+Subject: [PATCH 3/5] lint
+
+---
+ sklearn/linear_model/tests/test_huber.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sklearn/linear_model/tests/test_huber.py b/sklearn/linear_model/tests/test_huber.py
+index 9d9955dd6153b..58f983cf75b3a 100644
+--- a/sklearn/linear_model/tests/test_huber.py
++++ b/sklearn/linear_model/tests/test_huber.py
+@@ -205,4 +205,4 @@ def test_huber_bool():
+     # Test that it does not crash with bool data
+     X, y = make_regression(n_samples=200, n_features=2, noise=4.0, random_state=0)
+     X_bool = X > 0
+-    huber = HuberRegressor().fit(X_bool, y)
++    HuberRegressor().fit(X_bool, y)
+
+From 83e134f4f776dc8ad1ad099c84f6ffa4e95fbe93 Mon Sep 17 00:00:00 2001
+From: Alexandre Gramfort <alexandre.gramfort@m4x.org>
+Date: Fri, 1 Mar 2019 16:35:17 +0100
+Subject: [PATCH 4/5] review
+
+---
+ doc/whats_new/v0.21.rst | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 9518baf8816ea..ed5f270d441b8 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -42,7 +42,7 @@ Support for Python 3.4 and below has been officially dropped.
+     See version doc/whats_new/v0.20.rst for structure. Entries should be
+     prefixed with one of the labels: |MajorFeature|, |Feature|, |Efficiency|,
+     |Enhancement|, |Fix| or |API|. They should be under a heading for the
+-    relevant module (or *Mufltiple Modules* or *Miscellaneous*), and within each
++    relevant module (or *Multiple Modules* or *Miscellaneous*), and within each
+     section should be ordered according to the label ordering above. Entries
+     should end with: :issue:`123456` by :user:`Joe Bloggs <joeongithub>`.
+ 
+@@ -236,7 +236,7 @@ Support for Python 3.4 and below has been officially dropped.
+ 
+ - |Fix| Fixed a bug in :class:`linear_model.HuberRegressor` that was
+   broken when X was of dtype bool.
+-  :issue:`13314` by `Alexandre Gramfort`_.
++  :issue:`13328` by `Alexandre Gramfort`_.
+ 
+ 
+ :mod:`sklearn.manifold`
+
+From 07d1ac5798faa720cccba6c1fe84620d4115b0c3 Mon Sep 17 00:00:00 2001
+From: Alexandre Gramfort <alexandre.gramfort@m4x.org>
+Date: Sat, 2 Mar 2019 08:52:46 +0100
+Subject: [PATCH 5/5] pep8
+
+---
+ sklearn/linear_model/tests/test_huber.py | 25 +++++++++++++++---------
+ 1 file changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/sklearn/linear_model/tests/test_huber.py b/sklearn/linear_model/tests/test_huber.py
+index 58f983cf75b3a..156ac72958d01 100644
+--- a/sklearn/linear_model/tests/test_huber.py
++++ b/sklearn/linear_model/tests/test_huber.py
+@@ -53,8 +53,12 @@ def test_huber_gradient():
+     rng = np.random.RandomState(1)
+     X, y = make_regression_with_outliers()
+     sample_weight = rng.randint(1, 3, (y.shape[0]))
+-    loss_func = lambda x, *args: _huber_loss_and_gradient(x, *args)[0]
+-    grad_func = lambda x, *args: _huber_loss_and_gradient(x, *args)[1]
++
++    def loss_func(x, *args):
++        return _huber_loss_and_gradient(x, *args)[0]
++
++    def grad_func(x, *args):
++        return _huber_loss_and_gradient(x, *args)[1]
+ 
+     # Check using optimize.check_grad that the gradients are equal.
+     for _ in range(5):
+@@ -76,10 +80,10 @@ def test_huber_sample_weights():
+     huber_coef = huber.coef_
+     huber_intercept = huber.intercept_
+ 
+-    # Rescale coefs before comparing with assert_array_almost_equal to make sure
+-    # that the number of decimal places used is somewhat insensitive to the
+-    # amplitude of the coefficients and therefore to the scale of the data
+-    # and the regularization parameter
++    # Rescale coefs before comparing with assert_array_almost_equal to make
++    # sure that the number of decimal places used is somewhat insensitive to
++    # the amplitude of the coefficients and therefore to the scale of the
++    # data and the regularization parameter
+     scale = max(np.mean(np.abs(huber.coef_)),
+                 np.mean(np.abs(huber.intercept_)))
+ 
+@@ -167,7 +171,8 @@ def test_huber_and_sgd_same_results():
+ def test_huber_warm_start():
+     X, y = make_regression_with_outliers()
+     huber_warm = HuberRegressor(
+-        fit_intercept=True, alpha=1.0, max_iter=10000, warm_start=True, tol=1e-1)
++        fit_intercept=True, alpha=1.0, max_iter=10000, warm_start=True,
++        tol=1e-1)
+     huber_warm.fit(X, y)
+     huber_warm_coef = huber_warm.coef_.copy()
+     huber_warm.fit(X, y)
+@@ -190,7 +195,8 @@ def test_huber_better_r2_score():
+     huber_outlier_score = huber.score(X[~mask], y[~mask])
+ 
+     # The Ridge regressor should be influenced by the outliers and hence
+-    # give a worse score on the non-outliers as compared to the huber regressor.
++    # give a worse score on the non-outliers as compared to the huber
++    # regressor.
+     ridge = Ridge(fit_intercept=True, alpha=0.01)
+     ridge.fit(X, y)
+     ridge_score = ridge.score(X[mask], y[mask])
+@@ -203,6 +209,7 @@ def test_huber_better_r2_score():
+ 
+ def test_huber_bool():
+     # Test that it does not crash with bool data
+-    X, y = make_regression(n_samples=200, n_features=2, noise=4.0, random_state=0)
++    X, y = make_regression(n_samples=200, n_features=2, noise=4.0,
++                           random_state=0)
+     X_bool = X > 0
+     HuberRegressor().fit(X_bool, y)

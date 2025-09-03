@@ -1,0 +1,46 @@
+diff --git a/django/core/management/commands/makemigrations.py b/django/core/management/commands/makemigrations.py
+index 2e97d9064b..5f677590c5 100644
+--- a/django/core/management/commands/makemigrations.py
++++ b/django/core/management/commands/makemigrations.py
+@@ -98,6 +98,30 @@ class Command(BaseCommand):
+     def log(self, msg):
+         self.log_output.write(msg)
+ 
++    def handle_check(self, app_labels):
++        changes = self.detect_changes(app_labels)
++        if changes:
++            self.log("Model changes detected.")
++            sys.exit(1)
++        else:
++            self.log("No changes detected")
++            sys.exit(0)
++
++    def detect_changes(self, app_labels):
++        loader = MigrationLoader(None, ignore_no_migrations=True)
++        autodetector = MigrationAutodetector(
++            loader.project_state(),
++            ProjectState.from_apps(apps),
++            None,
++        )
++        changes = autodetector.changes(
++            graph=loader.graph,
++            trim_to_apps=app_labels or None,
++            convert_apps=app_labels or None,
++            migration_name=self.migration_name,
++        )
++        return changes
++
+     @no_translations
+     def handle(self, *app_labels, **options):
+         self.written_files = []
+@@ -117,6 +141,10 @@ class Command(BaseCommand):
+         if self.scriptable:
+             self.stderr.style_func = None
+ 
++        # Exit early if --check is used
++        if check_changes:
++            return self.handle_check(app_labels)
++
+         # Make sure the app they asked for exists
+         app_labels = set(app_labels)
+         has_bad_labels = False

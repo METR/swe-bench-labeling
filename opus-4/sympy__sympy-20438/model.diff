@@ -1,0 +1,160 @@
+diff --git a/sympy/core/relational.py b/sympy/core/relational.py
+index e2e0b7fbcc..eddb480c87 100644
+--- a/sympy/core/relational.py
++++ b/sympy/core/relational.py
+@@ -311,7 +311,7 @@ def _eval_simplify(self, **kwargs):
+             v = None
+             if dif.is_comparable:
+                 v = dif.n(2)
+-            elif dif.equals(0):  # XXX this is expensive
++            elif hasattr(dif, 'equals') and dif.equals(0):  # XXX this is expensive
+                 v = S.Zero
+             if v is not None:
+                 r = r.func._eval_relation(v, S.Zero)
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index 3c4aa86e36..1d09e8d4c3 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -865,6 +865,22 @@ def __len__(self):
+     def __bool__(self):
+         return all([bool(s) for s in self.sets])
+ 
++    def _eval_is_subset(self, other):
++        """
++        Returns True/False/None if self is a subset of other.
++
++        For ProductSet to be a subset of another set, all its elements
++        must be contained in the other set.
++        """
++        # If both are ProductSets with the same structure, check component-wise
++        if isinstance(other, ProductSet) and len(self.sets) == len(other.sets):
++            return fuzzy_and(s.is_subset(o) for s, o in zip(self.sets, other.sets))
++        
++        # If we can iterate through self, check if all elements are in other
++        if self.is_finite_set:
++            # Use fuzzy_and to handle None values properly
++            return fuzzy_and(other.contains(elem) for elem in self)
++
+ 
+ class Interval(Set, EvalfMixin):
+     """
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..3c6f69cacf
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python3
++from sympy import FiniteSet, ProductSet, Interval, Union, S
++
++print("Test 1: ProductSet with different types of sets")
++a = FiniteSet(1, 2)
++b = Interval(0, 3)
++p1 = ProductSet(a, b)
++print("ProductSet(FiniteSet(1, 2), Interval(0, 3)).is_subset(ProductSet(FiniteSet(1, 2, 3), Interval(0, 4))):", 
++      p1.is_subset(ProductSet(FiniteSet(1, 2, 3), Interval(0, 4))))
++
++print("\nTest 2: Empty ProductSet")
++empty = ProductSet(S.EmptySet, a)
++print("ProductSet(EmptySet, FiniteSet(1, 2)).is_subset(FiniteSet()):", 
++      empty.is_subset(FiniteSet()))
++
++print("\nTest 3: ProductSet is subset of Union")
++p2 = ProductSet(FiniteSet(1), FiniteSet(1, 2))
++u = Union(FiniteSet((1, 1)), FiniteSet((1, 2)))
++print("ProductSet(FiniteSet(1), FiniteSet(1, 2)).is_subset(Union(...)):", p2.is_subset(u))
++
++print("\nTest 4: Non-finite ProductSet")
++p3 = ProductSet(Interval(0, 1), Interval(0, 1))
++print("ProductSet(Interval(0, 1), Interval(0, 1)).is_finite_set:", p3.is_finite_set)
++print("ProductSet(Interval(0, 1), Interval(0, 1)).is_subset(Interval(0, 1)**2):", 
++      p3.is_subset(ProductSet(Interval(0, 1), Interval(0, 1))))
++
++print("\nTest 5: Multiple ProductSets") 
++p4 = ProductSet(FiniteSet(1, 2), FiniteSet(3, 4), FiniteSet(5, 6))
++p5 = ProductSet(FiniteSet(1, 2, 3), FiniteSet(3, 4, 5), FiniteSet(5, 6, 7))
++print("3D ProductSet subset check:", p4.is_subset(p5))
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..bdbc884c01
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,41 @@
++#!/usr/bin/env python3
++from sympy import FiniteSet, ProductSet, Eq, simplify
++from sympy.core.relational import Equality
++
++# Test case from the issue
++a = FiniteSet(1, 2)
++b = ProductSet(a, a)
++c = FiniteSet((1, 1), (1, 2), (2, 1), (2, 2))
++
++print("a =", a)
++print("b =", b)
++print("c =", c)
++
++print("\nTesting intersection:")
++print("b.intersection(c) =", b.intersection(c))
++print("c.intersection(b) =", c.intersection(b))
++print("b.intersection(c) == c.intersection(b):", b.intersection(c) == c.intersection(b))
++
++print("\nTesting is_subset:")
++print("b.is_subset(c) =", b.is_subset(c))
++print("c.is_subset(b) =", c.is_subset(b))
++
++print("\nEquality test:")
++print("b == c:", b == c)
++
++print("\nTesting contains:")
++for elem in c:
++    print(f"{elem} in b: {elem in b}")
++
++print("\nTesting rewrite:")
++print("b.rewrite(FiniteSet) =", b.rewrite(FiniteSet))
++
++# Let's try to see what should happen with simplify
++try:
++    print("\nEq(b, c).simplify():")
++    result = Eq(b, c).simplify()
++    print(result)
++except Exception as e:
++    print("Error:", e)
++    import traceback
++    traceback.print_exc()
+diff --git a/test_specific_issue.py b/test_specific_issue.py
+new file mode 100644
+index 0000000000..8c77a3a0e8
+--- /dev/null
++++ b/test_specific_issue.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++from sympy import FiniteSet, ProductSet, Eq, simplify
++
++print("Testing the specific issue reported...")
++print()
++
++# Create the sets from the issue
++a = FiniteSet(1, 2)
++b = ProductSet(a, a)
++c = FiniteSet((1, 1), (1, 2), (2, 1), (2, 2))
++
++# Test 1: is_subset should return True, not None
++result1 = b.is_subset(c)
++print(f"b.is_subset(c) = {result1}")
++assert result1 is True, f"Expected True, got {result1}"
++print("✓ is_subset returns True (not None)")
++
++# Test 2: simplify should not raise AttributeError
++try:
++    result2 = Eq(b, c).simplify()
++    print(f"\nEq(b, c).simplify() = {result2}")
++    print("✓ simplify doesn't raise AttributeError")
++except AttributeError as e:
++    print(f"\n✗ simplify raised AttributeError: {e}")
++    raise
++
++# Additional checks
++print(f"\nc.is_subset(b) = {c.is_subset(b)}")
++assert c.is_subset(b) is True
++
++print("\nAll tests passed! The issue has been fixed.")

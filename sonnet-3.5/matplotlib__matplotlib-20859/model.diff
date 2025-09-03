@@ -1,0 +1,26 @@
+diff --git a/lib/matplotlib/legend.py b/lib/matplotlib/legend.py
+index 44ab024698..9b1e63c21d 100644
+--- a/lib/matplotlib/legend.py
++++ b/lib/matplotlib/legend.py
+@@ -3,6 +3,7 @@ The legend module defines the Legend class, which is responsible for
+ drawing legends associated with axes and/or figures.
+ 
+ .. important::
++from matplotlib.figure import FigureBase
+ 
+     It is unlikely that you would ever create a Legend instance manually.
+     Most users would normally create a legend via the `~.Axes.legend`
+@@ -434,11 +435,11 @@ class Legend(Artist):
+             self.isaxes = True
+             self.axes = parent
+             self.set_figure(parent.figure)
+-        elif isinstance(parent, Figure):
++        elif isinstance(parent, FigureBase):
+             self.isaxes = False
+             self.set_figure(parent)
+         else:
+-            raise TypeError("Legend needs either Axes or Figure as parent")
++            raise TypeError("Legend needs either Axes or FigureBase as parent")
+         self.parent = parent
+ 
+         self._loc_used_default = loc is None

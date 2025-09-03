@@ -1,0 +1,154 @@
+From 44b1e7ebeabdf28ad1abccca1ef06eefe84d334c Mon Sep 17 00:00:00 2001
+From: Johnny Goodnow <j.goodnow29@gmail.com>
+Date: Thu, 24 Jan 2013 21:10:12 -0800
+Subject: [PATCH 1/5] Remove default Content-Length from GET requests.
+
+Fix #1051.
+---
+ requests/models.py | 3 ++-
+ test_requests.py   | 5 +++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/requests/models.py b/requests/models.py
+index 9926045363..b05ef25181 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -386,13 +386,14 @@ def prepare_body(self, data, files):
+         self.body = body
+ 
+     def prepare_content_length(self, body):
+-        self.headers['Content-Length'] = '0'
+         if hasattr(body, 'seek') and hasattr(body, 'tell'):
+             body.seek(0, 2)
+             self.headers['Content-Length'] = str(body.tell())
+             body.seek(0, 0)
+         elif body is not None:
+             self.headers['Content-Length'] = str(len(body))
++        elif self.method in ('POST', 'PUT'):
++            self.headers['Content-Length'] = '0'
+ 
+     def prepare_auth(self, auth):
+         """Prepares the given HTTP auth data."""
+diff --git a/test_requests.py b/test_requests.py
+index c974e980de..24cbc13743 100644
+--- a/test_requests.py
++++ b/test_requests.py
+@@ -58,6 +58,11 @@ def test_basic_building(self):
+         assert pr.body == 'life=42'
+ 
+ 
++    def test_no_content_length(self):
++        req = requests.Request('GET', httpbin('get')).prepare()
++        self.assertNotIn('Content-Length', req.headers)
++
++
+     def test_path_is_not_double_encoded(self):
+         request = requests.Request('GET', "http://0.0.0.0/get/test case").prepare()
+ 
+
+From f453892960dded53add21f3132a22f992ba6e6a3 Mon Sep 17 00:00:00 2001
+From: Johnny Goodnow <j.goodnow29@gmail.com>
+Date: Thu, 24 Jan 2013 21:25:14 -0800
+Subject: [PATCH 2/5] Fix python 2.6 unittest compatability issue.
+
+---
+ test_requests.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test_requests.py b/test_requests.py
+index 24cbc13743..99e245f221 100644
+--- a/test_requests.py
++++ b/test_requests.py
+@@ -60,7 +60,7 @@ def test_basic_building(self):
+ 
+     def test_no_content_length(self):
+         req = requests.Request('GET', httpbin('get')).prepare()
+-        self.assertNotIn('Content-Length', req.headers)
++        self.assertTrue('Content-Length' not in req.headers)
+ 
+ 
+     def test_path_is_not_double_encoded(self):
+
+From 4cac9f07c45692942a17a2adeacbb64ebeed95de Mon Sep 17 00:00:00 2001
+From: Johnny Goodnow <j.goodnow29@gmail.com>
+Date: Fri, 25 Jan 2013 00:19:09 -0800
+Subject: [PATCH 3/5] Add myself to AUTHORS.
+
+---
+ AUTHORS.rst | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/AUTHORS.rst b/AUTHORS.rst
+index 124458818d..078ed993be 100644
+--- a/AUTHORS.rst
++++ b/AUTHORS.rst
+@@ -119,3 +119,4 @@ Patches and Suggestions
+ - Jonatan Heyman
+ - David Bonner <dbonner@gmail.com> @rascalking
+ - Vinod Chandru
++- Johnny Goodnow <j.goodnow29@gmail.com>
+
+From f7c10ca74d0230ad4ece986a9cc4a2ebcb9136bf Mon Sep 17 00:00:00 2001
+From: Johnny Goodnow <j.goodnow29@gmail.com>
+Date: Fri, 25 Jan 2013 12:07:24 -0800
+Subject: [PATCH 4/5] Always add Content-Length to HTTP PATCH.
+
+---
+ requests/models.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/requests/models.py b/requests/models.py
+index b05ef25181..691f049a11 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -392,7 +392,7 @@ def prepare_content_length(self, body):
+             body.seek(0, 0)
+         elif body is not None:
+             self.headers['Content-Length'] = str(len(body))
+-        elif self.method in ('POST', 'PUT'):
++        elif self.method in ('POST', 'PUT', 'PATCH'):
+             self.headers['Content-Length'] = '0'
+ 
+     def prepare_auth(self, auth):
+
+From 8d8865aadb9c76863820c87431229d20e5c23a70 Mon Sep 17 00:00:00 2001
+From: Johnny Goodnow <j.goodnow29@gmail.com>
+Date: Fri, 25 Jan 2013 20:50:58 -0800
+Subject: [PATCH 5/5] Remove Content-Length from GET/HEAD by default.
+
+Now, Content-Length is only auto-added for non-GET/HEAD requests.
+---
+ requests/models.py | 2 +-
+ test_requests.py   | 6 ++++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/requests/models.py b/requests/models.py
+index 691f049a11..4235141716 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -392,7 +392,7 @@ def prepare_content_length(self, body):
+             body.seek(0, 0)
+         elif body is not None:
+             self.headers['Content-Length'] = str(len(body))
+-        elif self.method in ('POST', 'PUT', 'PATCH'):
++        elif self.method not in ('GET', 'HEAD'):
+             self.headers['Content-Length'] = '0'
+ 
+     def prepare_auth(self, auth):
+diff --git a/test_requests.py b/test_requests.py
+index 99e245f221..312c955df9 100644
+--- a/test_requests.py
++++ b/test_requests.py
+@@ -59,8 +59,10 @@ def test_basic_building(self):
+ 
+ 
+     def test_no_content_length(self):
+-        req = requests.Request('GET', httpbin('get')).prepare()
+-        self.assertTrue('Content-Length' not in req.headers)
++        get_req = requests.Request('GET', httpbin('get')).prepare()
++        self.assertTrue('Content-Length' not in get_req.headers)
++        head_req = requests.Request('HEAD', httpbin('head')).prepare()
++        self.assertTrue('Content-Length' not in head_req.headers)
+ 
+ 
+     def test_path_is_not_double_encoded(self):

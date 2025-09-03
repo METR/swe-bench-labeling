@@ -1,0 +1,191 @@
+diff --git a/debug_issue_deeper.py b/debug_issue_deeper.py
+new file mode 100644
+index 000000000..85afb99d4
+--- /dev/null
++++ b/debug_issue_deeper.py
+@@ -0,0 +1,46 @@
++import numpy as np
++from sklearn.linear_model import LogisticRegressionCV
++from sklearn.linear_model.logistic import _check_multi_class
++import traceback
++
++# Reproduce the issue
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Check what multi_class resolves to  
++print("For binary classification with saga solver:")
++print("multi_class='auto' resolves to:", _check_multi_class('auto', 'saga', 2))
++
++# Let's manually check the flow by inspecting the fitted object
++print("\nTesting with explicit multi_class='ovr'...")
++try:
++    clf = LogisticRegressionCV(
++        cv=5,
++        solver='saga',
++        tol=1e-2,
++        refit=False,
++        multi_class='ovr'
++    )
++    clf.fit(X, y)
++    print("SUCCESS with ovr!")
++except Exception as e:
++    print("ERROR with ovr:", type(e).__name__, str(e))
++    traceback.print_exc()
++
++print("\nTesting with explicit multi_class='multinomial'...")
++try:
++    clf = LogisticRegressionCV(
++        cv=5,
++        solver='saga',
++        tol=1e-2,
++        refit=False,
++        multi_class='multinomial'  # This should trigger the error
++    )
++    clf.fit(X, y)
++    print("SUCCESS with multinomial!")
++except Exception as e:
++    print("ERROR with multinomial:", type(e).__name__, str(e))
++    traceback.print_exc()
+diff --git a/debug_shapes.py b/debug_shapes.py
+new file mode 100644
+index 000000000..daf4f49b7
+--- /dev/null
++++ b/debug_shapes.py
+@@ -0,0 +1,54 @@
++import numpy as np
++from sklearn.linear_model import LogisticRegressionCV
++from sklearn.model_selection import StratifiedKFold
++
++# Reproduce the issue
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Check binary vs multiclass
++print("Binary classification test:")
++print("Unique classes:", np.unique(y))
++
++# Reproduce the path taken internally
++from sklearn.preprocessing import LabelEncoder
++label_encoder = LabelEncoder().fit(y)
++y_encoded = label_encoder.transform(y)
++classes = label_encoder.classes_
++encoded_labels = label_encoder.transform(label_encoder.classes_)
++n_classes = len(encoded_labels)
++
++print("n_classes before adjustment:", n_classes)
++
++# This is what happens internally for binary case
++if n_classes == 2:
++    n_classes = 1
++    encoded_labels = encoded_labels[1:]
++    classes = classes[1:]
++    
++print("n_classes after adjustment:", n_classes)
++print("encoded_labels:", encoded_labels)
++
++# Test multinomial case with 3 classes
++print("\n\nMulticlass test:")
++y_multi = np.random.choice([0, 1, 2], size=1000)
++print("Unique classes:", np.unique(y_multi))
++
++print("\nTesting multiclass LogisticRegressionCV with refit=False...")
++try:
++    clf = LogisticRegressionCV(
++        cv=5,
++        solver='saga',
++        tol=1e-2,
++        refit=False,
++        multi_class='multinomial'
++    )
++    clf.fit(X, y_multi)
++    print("SUCCESS: No error thrown!")
++    print("Coefficients shape:", clf.coef_.shape)
++except Exception as e:
++    print("ERROR:", type(e).__name__)
++    print("Message:", str(e))
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..69619f321
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,35 @@
++import numpy as np
++
++# Check if Cs_ indexing works because it's an array
++Cs_ = np.array([0.1, 1.0, 10.0])
++best_indices = np.array([1, 2, 0, 1, 2])  # 5 folds, different best indices
++best_indices_C = best_indices % len(Cs_)
++
++print("Cs_:", Cs_)
++print("best_indices_C:", best_indices_C)
++print("Cs_[best_indices_C]:", Cs_[best_indices_C])
++print("np.mean(Cs_[best_indices_C]):", np.mean(Cs_[best_indices_C]))
++
++# Now check l1_ratios_ issue
++print("\n--- l1_ratios_ issue ---")
++l1_ratios_ = [None]
++best_indices_l1 = best_indices // len(Cs_)
++
++print("l1_ratios_:", l1_ratios_)
++print("best_indices_l1:", best_indices_l1)
++
++# This is what causes the error
++try:
++    result = np.mean(l1_ratios_[best_indices_l1])
++    print("Direct indexing result:", result)
++except Exception as e:
++    print("ERROR with direct indexing:", type(e).__name__, str(e))
++
++# Fix for when l1_ratios_ = [None]
++if l1_ratios_ == [None]:
++    print("Fix: Since no l1_ratio is used, using None")
++    result = None
++else:
++    l1_ratios_array = np.asarray(l1_ratios_)
++    result = np.mean(l1_ratios_array[best_indices_l1])
++print("Fixed result:", result)
+diff --git a/test_logistic_cv_refit_false.py b/test_logistic_cv_refit_false.py
+new file mode 100644
+index 000000000..303fc6e02
+--- /dev/null
++++ b/test_logistic_cv_refit_false.py
+@@ -0,0 +1,32 @@
++import numpy as np
++from sklearn.linear_model import LogisticRegressionCV
++
++# Reproduce the issue
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# First let's check what multi_class is being used
++clf_test = LogisticRegressionCV()
++print("Default multi_class:", clf_test.multi_class)
++print("Number of unique classes:", len(np.unique(y)))
++
++print("\nTesting LogisticRegressionCV with refit=False...")
++try:
++    clf = LogisticRegressionCV(
++        cv=5,
++        solver='saga',
++        tol=1e-2,
++        refit=False
++    )
++    clf.fit(X, y)
++    print("SUCCESS: No error thrown!")
++    print("Coefficients shape:", clf.coef_.shape)
++    print("Intercept shape:", clf.intercept_.shape)
++except Exception as e:
++    print("ERROR:", type(e).__name__)
++    print("Message:", str(e))
++    import traceback
++    traceback.print_exc()

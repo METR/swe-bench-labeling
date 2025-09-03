@@ -1,0 +1,43 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 4038859cfa..70a3bea91c 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1302,6 +1302,17 @@ class Model(metaclass=ModelBase):
+             not settings.is_overridden('DEFAULT_AUTO_FIELD') and
+             not cls._meta.app_config._is_default_auto_field_overridden
+         ):
++            # Skip the warning if the primary key is inherited from a parent model
++            if cls._meta.parents:
++                # Check if the primary key is inherited from a parent
++                for parent, field in cls._meta.parents.items():
++                    if field and field.primary_key:
++                        # The primary key is inherited from a parent
++                        return []
++                    # Check if parent has explicit pk that this model inherits
++                    if parent._meta.pk and not parent._meta.pk.auto_created:
++                        return []
++                        
+             return [
+                 checks.Warning(
+                     f"Auto-created primary key used when not defining a "
+diff --git a/tests/check_framework/test_model_checks.py b/tests/check_framework/test_model_checks.py
+index d4342ada07..e5f96b61eb 100644
+--- a/tests/check_framework/test_model_checks.py
++++ b/tests/check_framework/test_model_checks.py
+@@ -408,6 +408,16 @@ class ModelDefaultAutoFieldTests(SimpleTestCase):
+ 
+         self.assertEqual(checks.run_checks(app_configs=self.apps.get_app_configs()), [])
+ 
++    def test_inherited_pk(self):
++        """Test that models inheriting from a parent with explicit PK should not raise W042"""
++        class Entity(models.Model):
++            id = models.BigAutoField(primary_key=True)
++
++        class User(Entity):
++            name = models.CharField(max_length=100)
++
++        self.assertEqual(checks.run_checks(app_configs=self.apps.get_app_configs()), [])
++
+     @isolate_apps('check_framework.apps.CheckPKConfig', kwarg_name='apps')
+     def test_app_default_auto_field(self, apps):
+         class ModelWithPkViaAppConfig(models.Model):

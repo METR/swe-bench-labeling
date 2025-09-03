@@ -1,0 +1,500 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..ea6e510cf6
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,104 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add testbed to Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=['testapp2'],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [],
++        },
++    }]
++)
++
++# Setup Django
++django.setup()
++
++from django.template import Context, Template
++
++print("Running comprehensive template tag tests...")
++print("=" * 50)
++
++def test_template(template_str, context=None, expected_error=None):
++    """Helper function to test templates"""
++    if context is None:
++        context = Context({})
++    
++    try:
++        t = Template(template_str)
++        result = t.render(context)
++        if expected_error:
++            print(f"FAIL: Expected error '{expected_error}' but got result: {result}")
++        else:
++            print(f"PASS: {result}")
++    except Exception as e:
++        if expected_error and expected_error in str(e):
++            print(f"PASS: Got expected error: {e}")
++        else:
++            print(f"FAIL: Unexpected error: {e}")
++
++# Test 1: Regular positional args
++print("\nTest 1: Regular positional args")
++test_template("{% load comprehensive_tags %}{% tag1 'a' 'b' %}")
++test_template("{% load comprehensive_tags %}{% tag1 arg1='a' arg2='b' %}")
++
++# Test 2: Positional args with defaults
++print("\nTest 2: Positional args with defaults")
++test_template("{% load comprehensive_tags %}{% tag2 'a' %}")
++test_template("{% load comprehensive_tags %}{% tag2 'a' 'b' %}")
++test_template("{% load comprehensive_tags %}{% tag2 arg1='a' %}")
++test_template("{% load comprehensive_tags %}{% tag2 arg1='a' arg2='b' %}")
++
++# Test 3: *args
++print("\nTest 3: *args")
++test_template("{% load comprehensive_tags %}{% tag3 'a' %}")
++test_template("{% load comprehensive_tags %}{% tag3 'a' 'b' 'c' %}")
++
++# Test 4: **kwargs
++print("\nTest 4: **kwargs")
++test_template("{% load comprehensive_tags %}{% tag4 'a' %}")
++test_template("{% load comprehensive_tags %}{% tag4 'a' foo='bar' baz='qux' %}")
++
++# Test 5: Keyword-only without default
++print("\nTest 5: Keyword-only without default")
++test_template("{% load comprehensive_tags %}{% tag5 kwonly='value' %}")
++test_template("{% load comprehensive_tags %}{% tag5 %}", expected_error="did not receive value")
++
++# Test 6: Keyword-only with default (the bug case)
++print("\nTest 6: Keyword-only with default (BUG CASE)")
++test_template("{% load comprehensive_tags %}{% tag6 %}")
++test_template("{% load comprehensive_tags %}{% tag6 kwonly='custom' %}")
++
++# Test 7: Mix of positional and keyword-only
++print("\nTest 7: Mix of positional and keyword-only")
++test_template("{% load comprehensive_tags %}{% tag7 'p1' kw1='k1' %}")
++test_template("{% load comprehensive_tags %}{% tag7 'p1' 'p2' kw1='k1' %}")
++test_template("{% load comprehensive_tags %}{% tag7 'p1' kw1='k1' kw2='k2' %}")
++test_template("{% load comprehensive_tags %}{% tag7 pos1='p1' pos2='p2' kw1='k1' kw2='k2' %}")
++
++# Test 8: takes_context
++print("\nTest 8: takes_context")
++test_template("{% load comprehensive_tags %}{% tag8 'arg' %}", Context({'foo': 'bar'}))
++
++# Test 9: inclusion_tag with keyword-only args with defaults
++print("\nTest 9: inclusion_tag with keyword-only args with defaults")
++test_template("{% load comprehensive_tags %}{% tag9 %}")
++test_template("{% load comprehensive_tags %}{% tag9 greeting='Hi' %}")
++
++# Test error cases
++print("\nTest error cases:")
++# Duplicate keyword argument
++test_template("{% load comprehensive_tags %}{% tag1 arg1='a' arg1='b' %}", 
++              expected_error="received multiple values")
++# Unexpected keyword argument
++test_template("{% load comprehensive_tags %}{% tag1 'a' 'b' unexpected='c' %}", 
++              expected_error="received unexpected keyword argument")
+diff --git a/django/template/library.py b/django/template/library.py
+index 20bc86dac8..2f74556268 100644
+--- a/django/template/library.py
++++ b/django/template/library.py
+@@ -261,7 +261,7 @@ def parse_bits(parser, bits, params, varargs, varkw, defaults,
+         if kwarg:
+             # The kwarg was successfully extracted
+             param, value = kwarg.popitem()
+-            if param not in params and param not in unhandled_kwargs and varkw is None:
++            if param not in params and param not in kwonly and varkw is None:
+                 # An unexpected keyword argument was supplied
+                 raise TemplateSyntaxError(
+                     "'%s' received unexpected keyword argument '%s'" %
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..096d203aae
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,76 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add testbed to Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=['testissue'],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [],
++        },
++    }]
++)
++
++# Setup Django
++django.setup()
++
++from django.template import Context, Template, TemplateSyntaxError
++
++print("Testing the exact examples from the issue...")
++print("=" * 50)
++
++# Create test tags directory
++os.makedirs('testissue/templatetags', exist_ok=True)
++open('testissue/__init__.py', 'w').close()
++open('testissue/templatetags/__init__.py', 'w').close()
++
++# Write the tags file with the examples from the issue
++with open('testissue/templatetags/issue_tags.py', 'w') as f:
++    f.write("""from django import template
++
++register = template.Library()
++
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return '{} world'.format(greeting)
++
++@register.simple_tag
++def hi(*, greeting):
++    return '{} world'.format(greeting)
++""")
++
++# Test 1: The main bug - keyword-only argument with default value
++print("\nTest 1: Keyword-only argument with default value")
++print("Template: {% hello greeting='hi' %}")
++try:
++    t = Template("{% load issue_tags %}{% hello greeting='hi' %}")
++    result = t.render(Context({}))
++    print("✓ SUCCESS: {}".format(result))
++except TemplateSyntaxError as e:
++    print("✗ FAILED: {}".format(e))
++
++# Test 2: Duplicate keyword argument error message
++print("\nTest 2: Duplicate keyword argument error message")
++print("Template: {% hi greeting='hi' greeting='hello' %}")
++try:
++    t = Template("{% load issue_tags %}{% hi greeting='hi' greeting='hello' %}")
++    result = t.render(Context({}))
++    print("✗ FAILED: Should have raised error but got: {}".format(result))
++except TemplateSyntaxError as e:
++    expected = "'hi' received multiple values for keyword argument 'greeting'"
++    if expected in str(e):
++        print("✓ SUCCESS: Got correct error message: {}".format(e))
++    else:
++        print("✗ FAILED: Wrong error message: {}".format(e))
++
++print("\n" + "=" * 50)
++print("All tests completed!")
+diff --git a/test_issue_simple.py b/test_issue_simple.py
+new file mode 100644
+index 0000000000..e3f36b8c7e
+--- /dev/null
++++ b/test_issue_simple.py
+@@ -0,0 +1,56 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add testbed to Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=['testissue'],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [],
++        },
++    }]
++)
++
++# Setup Django
++django.setup()
++
++from django.template import Context, Template, TemplateSyntaxError
++
++print("Testing the exact examples from the issue...")
++print("=" * 50)
++
++# Test 1: The main bug - keyword-only argument with default value
++print("\nTest 1: Keyword-only argument with default value")
++print("Template: {% hello greeting='hi' %}")
++try:
++    t = Template("{% load issue_tags %}{% hello greeting='hi' %}")
++    result = t.render(Context({}))
++    print("✓ SUCCESS: {}".format(result))
++except TemplateSyntaxError as e:
++    print("✗ FAILED: {}".format(e))
++
++# Test 2: Duplicate keyword argument error message
++print("\nTest 2: Duplicate keyword argument error message")
++print("Template: {% hi greeting='hi' greeting='hello' %}")
++try:
++    t = Template("{% load issue_tags %}{% hi greeting='hi' greeting='hello' %}")
++    result = t.render(Context({}))
++    print("✗ FAILED: Should have raised error but got: {}".format(result))
++except TemplateSyntaxError as e:
++    expected = "'hi' received multiple values for keyword argument 'greeting'"
++    if expected in str(e):
++        print("✓ SUCCESS: Got correct error message: {}".format(e))
++    else:
++        print("✗ FAILED: Wrong error message: {}".format(e))
++
++print("\n" + "=" * 50)
++print("All tests completed!")
+diff --git a/test_kwonly_bug.py b/test_kwonly_bug.py
+new file mode 100644
+index 0000000000..46b510b23a
+--- /dev/null
++++ b/test_kwonly_bug.py
+@@ -0,0 +1,33 @@
++from django import template
++from django.template import Context, Template
++
++# Create a template library
++register = template.Library()
++
++# Test case 1: keyword-only argument with default value
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return f'{greeting} world'
++
++# Test case 2: keyword-only argument without default
++@register.simple_tag  
++def hi(*, greeting):
++    return f'{greeting} world'
++
++# Test the tags
++if __name__ == '__main__':
++    # Test case 1: Should work but currently raises error
++    try:
++        t1 = Template("{% load test_kwonly_bug %}{% hello greeting='hi' %}")
++        result1 = t1.render(Context({}))
++        print(f"Test 1 result: {result1}")
++    except Exception as e:
++        print(f"Test 1 error: {e}")
++    
++    # Test case 2: Multiple same keyword arguments
++    try:
++        t2 = Template("{% load test_kwonly_bug %}{% hi greeting='hi' greeting='hello' %}")
++        result2 = t2.render(Context({}))
++        print(f"Test 2 result: {result2}")
++    except Exception as e:
++        print(f"Test 2 error: {e}")
+diff --git a/test_script.py b/test_script.py
+new file mode 100644
+index 0000000000..00ec6afedd
+--- /dev/null
++++ b/test_script.py
+@@ -0,0 +1,53 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add testbed to Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=['testapp'],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [],
++        },
++    }]
++)
++
++# Setup Django
++django.setup()
++
++from django.template import Context, Template
++
++# Test case 1: keyword-only argument with default value
++print("Test 1: keyword-only argument with default value")
++try:
++    t1 = Template("{% load test_kwonly_bug %}{% hello greeting='hi' %}")
++    result1 = t1.render(Context({}))
++    print(f"Result: {result1}")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Test case 2: Multiple same keyword arguments  
++print("\nTest 2: Multiple same keyword arguments")
++try:
++    t2 = Template("{% load test_kwonly_bug %}{% hi greeting='hi' greeting='hello' %}")
++    result2 = t2.render(Context({}))
++    print(f"Result: {result2}")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Test case 3: Using default value
++print("\nTest 3: Using default value")
++try:
++    t3 = Template("{% load test_kwonly_bug %}{% hello %}")
++    result3 = t3.render(Context({}))
++    print(f"Result: {result3}")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/testapp/__init__.py b/testapp/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testapp/templatetags/__init__.py b/testapp/templatetags/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testapp/templatetags/test_kwonly_bug.py b/testapp/templatetags/test_kwonly_bug.py
+new file mode 100644
+index 0000000000..46b510b23a
+--- /dev/null
++++ b/testapp/templatetags/test_kwonly_bug.py
+@@ -0,0 +1,33 @@
++from django import template
++from django.template import Context, Template
++
++# Create a template library
++register = template.Library()
++
++# Test case 1: keyword-only argument with default value
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return f'{greeting} world'
++
++# Test case 2: keyword-only argument without default
++@register.simple_tag  
++def hi(*, greeting):
++    return f'{greeting} world'
++
++# Test the tags
++if __name__ == '__main__':
++    # Test case 1: Should work but currently raises error
++    try:
++        t1 = Template("{% load test_kwonly_bug %}{% hello greeting='hi' %}")
++        result1 = t1.render(Context({}))
++        print(f"Test 1 result: {result1}")
++    except Exception as e:
++        print(f"Test 1 error: {e}")
++    
++    # Test case 2: Multiple same keyword arguments
++    try:
++        t2 = Template("{% load test_kwonly_bug %}{% hi greeting='hi' greeting='hello' %}")
++        result2 = t2.render(Context({}))
++        print(f"Test 2 result: {result2}")
++    except Exception as e:
++        print(f"Test 2 error: {e}")
+diff --git a/testapp2/__init__.py b/testapp2/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testapp2/templates/test_template.html b/testapp2/templates/test_template.html
+new file mode 100644
+index 0000000000..b29ff90cdd
+--- /dev/null
++++ b/testapp2/templates/test_template.html
+@@ -0,0 +1 @@
++{{ greeting }} from inclusion tag!
+diff --git a/testapp2/templatetags/__init__.py b/testapp2/templatetags/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testapp2/templatetags/comprehensive_tags.py b/testapp2/templatetags/comprehensive_tags.py
+new file mode 100644
+index 0000000000..d281a834ee
+--- /dev/null
++++ b/testapp2/templatetags/comprehensive_tags.py
+@@ -0,0 +1,48 @@
++from django import template
++
++register = template.Library()
++
++# Test 1: Regular positional args
++@register.simple_tag
++def tag1(arg1, arg2):
++    return f"tag1: {arg1}, {arg2}"
++
++# Test 2: Positional args with defaults
++@register.simple_tag
++def tag2(arg1, arg2="default2"):
++    return f"tag2: {arg1}, {arg2}"
++
++# Test 3: *args
++@register.simple_tag
++def tag3(arg1, *args):
++    return f"tag3: {arg1}, args={args}"
++
++# Test 4: **kwargs
++@register.simple_tag
++def tag4(arg1, **kwargs):
++    return f"tag4: {arg1}, kwargs={kwargs}"
++
++# Test 5: Keyword-only without default
++@register.simple_tag
++def tag5(*, kwonly):
++    return f"tag5: {kwonly}"
++
++# Test 6: Keyword-only with default (the bug case)
++@register.simple_tag
++def tag6(*, kwonly="default"):
++    return f"tag6: {kwonly}"
++
++# Test 7: Mix of positional, keyword-only without default, and keyword-only with default
++@register.simple_tag
++def tag7(pos1, pos2="pos2default", *, kw1, kw2="kw2default"):
++    return f"tag7: {pos1}, {pos2}, {kw1}, {kw2}"
++
++# Test 8: takes_context
++@register.simple_tag(takes_context=True)
++def tag8(context, arg1):
++    return f"tag8: context_keys={list(context.keys())}, {arg1}"
++
++# Test 9: inclusion_tag with keyword-only args with defaults
++@register.inclusion_tag('test_template.html')
++def tag9(*, greeting="Hello"):
++    return {'greeting': greeting}
+diff --git a/testissue/__init__.py b/testissue/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testissue/templatetags/__init__.py b/testissue/templatetags/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/testissue/templatetags/issue_tags.py b/testissue/templatetags/issue_tags.py
+new file mode 100644
+index 0000000000..79e846daf1
+--- /dev/null
++++ b/testissue/templatetags/issue_tags.py
+@@ -0,0 +1,11 @@
++from django import template
++
++register = template.Library()
++
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return '{} world'.format(greeting)
++
++@register.simple_tag
++def hi(*, greeting):
++    return '{} world'.format(greeting)

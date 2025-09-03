@@ -1,0 +1,148 @@
+From c7a826e501d3f8803aa16cb93f1f7a908b629714 Mon Sep 17 00:00:00 2001
+From: DrGFreeman <DrGFreeman@users.noreply.github.com>
+Date: Fri, 13 Sep 2019 22:14:18 -0400
+Subject: [PATCH 1/5] Added __repr__ method to _RepeatedSplit class (#14970)
+
+---
+ sklearn/model_selection/_split.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index c49a3ce6aea4e..bfd30dae5a34f 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -1163,6 +1163,9 @@ def get_n_splits(self, X=None, y=None, groups=None):
+                      **self.cvargs)
+         return cv.get_n_splits(X, y, groups) * self.n_repeats
+ 
++    def __repr__(self):
++        return _build_repr(self)
++
+ 
+ class RepeatedKFold(_RepeatedSplits):
+     """Repeated K-Fold cross validator.
+
+From f03b56ab58f664ede33e277c039492e87be4f981 Mon Sep 17 00:00:00 2001
+From: DrGFreeman <DrGFreeman@users.noreply.github.com>
+Date: Sat, 14 Sep 2019 10:47:05 -0400
+Subject: [PATCH 2/5] Get values of parameters in cvargs attribute (#14970)
+
+Modified _build_repr to include values of parameters stored in _RepeatedSplit class attributes.
+---
+ sklearn/model_selection/_split.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index bfd30dae5a34f..ceee1a08146ab 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -2161,6 +2161,8 @@ def _build_repr(self):
+         try:
+             with warnings.catch_warnings(record=True) as w:
+                 value = getattr(self, key, None)
++                if value is None and hasattr(self, 'cvargs'):
++                    value = self.cvargs.get(key, None)
+             if len(w) and w[0].category == DeprecationWarning:
+                 # if the parameter is deprecated, don't show it
+                 continue
+
+From f2e2208d1afb8b20f4f669f91d2bf6c15f6b412e Mon Sep 17 00:00:00 2001
+From: DrGFreeman <DrGFreeman@users.noreply.github.com>
+Date: Sat, 14 Sep 2019 11:10:59 -0400
+Subject: [PATCH 3/5] Added test of repeated cv classes __repr__ (#14970)
+
+---
+ sklearn/model_selection/tests/test_split.py | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/sklearn/model_selection/tests/test_split.py b/sklearn/model_selection/tests/test_split.py
+index a38fb435c9db4..e5ab939c64729 100644
+--- a/sklearn/model_selection/tests/test_split.py
++++ b/sklearn/model_selection/tests/test_split.py
+@@ -979,6 +979,16 @@ def test_repeated_cv_value_errors():
+         assert_raises(ValueError, cv, n_repeats=0)
+         assert_raises(ValueError, cv, n_repeats=1.5)
+ 
++def test_repeated_cv_repr():
++    n_splits = 2
++    n_repeats = 6
++    rkf = RepeatedKFold(n_splits, n_repeats)
++    rskf = RepeatedStratifiedKFold(n_splits, n_repeats)
++    rkf_repr = 'RepeatedKFold(n_repeats=6, n_splits=2, random_state=None)'
++    rskf_repr = \
++        'RepeatedStratifiedKFold(n_repeats=6, n_splits=2, random_state=None)'
++    for cv, cv_repr in zip([rkf, rskf], [rkf_repr, rskf_repr]):
++        assert cv_repr == repr(cv)
+ 
+ def test_repeated_kfold_determinstic_split():
+     X = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
+
+From f23a42f2950d213ae6dcb2eb9778b75c7f2baa88 Mon Sep 17 00:00:00 2001
+From: DrGFreeman <DrGFreeman@users.noreply.github.com>
+Date: Sat, 14 Sep 2019 11:47:54 -0400
+Subject: [PATCH 4/5] Added blank lines around new test function
+
+---
+ sklearn/model_selection/tests/test_split.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/sklearn/model_selection/tests/test_split.py b/sklearn/model_selection/tests/test_split.py
+index e5ab939c64729..aa456d36b66a4 100644
+--- a/sklearn/model_selection/tests/test_split.py
++++ b/sklearn/model_selection/tests/test_split.py
+@@ -979,6 +979,7 @@ def test_repeated_cv_value_errors():
+         assert_raises(ValueError, cv, n_repeats=0)
+         assert_raises(ValueError, cv, n_repeats=1.5)
+ 
++
+ def test_repeated_cv_repr():
+     n_splits = 2
+     n_repeats = 6
+@@ -990,6 +991,7 @@ def test_repeated_cv_repr():
+     for cv, cv_repr in zip([rkf, rskf], [rkf_repr, rskf_repr]):
+         assert cv_repr == repr(cv)
+ 
++
+ def test_repeated_kfold_determinstic_split():
+     X = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
+     random_state = 258173307
+
+From 0d9fd1cc8ad05d967129c37aaad7c8c77c5217ef Mon Sep 17 00:00:00 2001
+From: DrGFreeman <DrGFreeman@users.noreply.github.com>
+Date: Sun, 15 Sep 2019 17:09:25 -0400
+Subject: [PATCH 5/5] Use pytest.mark.parmetrize instead of for loop
+
+---
+ sklearn/model_selection/tests/test_split.py | 19 +++++++++----------
+ 1 file changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/sklearn/model_selection/tests/test_split.py b/sklearn/model_selection/tests/test_split.py
+index aa456d36b66a4..4aa47a753bb1d 100644
+--- a/sklearn/model_selection/tests/test_split.py
++++ b/sklearn/model_selection/tests/test_split.py
+@@ -980,16 +980,15 @@ def test_repeated_cv_value_errors():
+         assert_raises(ValueError, cv, n_repeats=1.5)
+ 
+ 
+-def test_repeated_cv_repr():
+-    n_splits = 2
+-    n_repeats = 6
+-    rkf = RepeatedKFold(n_splits, n_repeats)
+-    rskf = RepeatedStratifiedKFold(n_splits, n_repeats)
+-    rkf_repr = 'RepeatedKFold(n_repeats=6, n_splits=2, random_state=None)'
+-    rskf_repr = \
+-        'RepeatedStratifiedKFold(n_repeats=6, n_splits=2, random_state=None)'
+-    for cv, cv_repr in zip([rkf, rskf], [rkf_repr, rskf_repr]):
+-        assert cv_repr == repr(cv)
++@pytest.mark.parametrize(
++    "RepeatedCV", [RepeatedKFold, RepeatedStratifiedKFold]
++)
++def test_repeated_cv_repr(RepeatedCV):
++    n_splits, n_repeats = 2, 6
++    repeated_cv = RepeatedCV(n_splits=n_splits, n_repeats=n_repeats)
++    repeated_cv_repr = ('{}(n_repeats=6, n_splits=2, random_state=None)'
++                        .format(repeated_cv.__class__.__name__))
++    assert repeated_cv_repr == repr(repeated_cv)
+ 
+ 
+ def test_repeated_kfold_determinstic_split():

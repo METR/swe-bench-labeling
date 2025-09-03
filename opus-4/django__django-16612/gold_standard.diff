@@ -1,0 +1,148 @@
+From 4338b6526d3604b371ac37134371946baa1ed0ce Mon Sep 17 00:00:00 2001
+From: Dominique Bischof <dbischof@gmail.com>
+Date: Fri, 3 Mar 2023 08:03:27 +0100
+Subject: [PATCH 1/2] Refs #31747 -- Added more tests for preserving query
+ strings when redirect with APPEND_SLASH in admin.
+
+---
+ tests/admin_views/tests.py | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/tests/admin_views/tests.py b/tests/admin_views/tests.py
+index 5f7aafe4301f..f1d098eb40ce 100644
+--- a/tests/admin_views/tests.py
++++ b/tests/admin_views/tests.py
+@@ -8515,6 +8515,23 @@ def test_missing_slash_append_slash_true_non_staff_user(self):
+             "/test_admin/admin/login/?next=/test_admin/admin/admin_views/article",
+         )
+ 
++    @override_settings(APPEND_SLASH=True)
++    def test_missing_slash_append_slash_true_non_staff_user_query_string(self):
++        user = User.objects.create_user(
++            username="user",
++            password="secret",
++            email="user@example.com",
++            is_staff=False,
++        )
++        self.client.force_login(user)
++        known_url = reverse("admin:admin_views_article_changelist")
++        response = self.client.get("%s?id=1" % known_url[:-1])
++        self.assertRedirects(
++            response,
++            "/test_admin/admin/login/?next=/test_admin/admin/admin_views/article"
++            "%3Fid%3D1",
++        )
++
+     @override_settings(APPEND_SLASH=False)
+     def test_missing_slash_append_slash_false(self):
+         superuser = User.objects.create_user(
+@@ -8629,6 +8646,24 @@ def test_missing_slash_append_slash_true_without_final_catch_all_view(self):
+             response, known_url, status_code=301, target_status_code=403
+         )
+ 
++    @override_settings(APPEND_SLASH=True)
++    def test_missing_slash_append_slash_true_query_without_final_catch_all_view(self):
++        superuser = User.objects.create_user(
++            username="staff",
++            password="secret",
++            email="staff@example.com",
++            is_staff=True,
++        )
++        self.client.force_login(superuser)
++        known_url = reverse("admin10:admin_views_article_changelist")
++        response = self.client.get("%s?id=1" % known_url[:-1])
++        self.assertRedirects(
++            response,
++            f"{known_url}?id=1",
++            status_code=301,
++            fetch_redirect_response=False,
++        )
++
+     @override_settings(APPEND_SLASH=False)
+     def test_missing_slash_append_slash_false_without_final_catch_all_view(self):
+         superuser = User.objects.create_user(
+
+From 17e08b2177928b02158997ee1c44d8322a2e6eb8 Mon Sep 17 00:00:00 2001
+From: Dominique Bischof <dbischof@gmail.com>
+Date: Thu, 2 Mar 2023 14:03:50 -0500
+Subject: [PATCH 2/2] Fixed #34377 -- Fixed preserving query strings in
+ AdminSite.catch_all_view().
+
+Included full path when redirecting with append slash to include query
+strings.
+
+Regression in ba31b0103442ac891fb3cb98f316781254e366c3.
+---
+ django/contrib/admin/sites.py |  4 +++-
+ tests/admin_views/tests.py    | 36 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/django/contrib/admin/sites.py b/django/contrib/admin/sites.py
+index 61be31d890dd..3ff7088506ce 100644
+--- a/django/contrib/admin/sites.py
++++ b/django/contrib/admin/sites.py
+@@ -453,7 +453,9 @@ def catch_all_view(self, request, url):
+                 pass
+             else:
+                 if getattr(match.func, "should_append_slash", True):
+-                    return HttpResponsePermanentRedirect("%s/" % request.path)
++                    return HttpResponsePermanentRedirect(
++                        request.get_full_path(force_append_slash=True)
++                    )
+         raise Http404
+ 
+     def _build_app_dict(self, request, label=None):
+diff --git a/tests/admin_views/tests.py b/tests/admin_views/tests.py
+index f1d098eb40ce..f440b85b6ede 100644
+--- a/tests/admin_views/tests.py
++++ b/tests/admin_views/tests.py
+@@ -8463,6 +8463,24 @@ def test_missing_slash_append_slash_true(self):
+             response, known_url, status_code=301, target_status_code=403
+         )
+ 
++    @override_settings(APPEND_SLASH=True)
++    def test_missing_slash_append_slash_true_query_string(self):
++        superuser = User.objects.create_user(
++            username="staff",
++            password="secret",
++            email="staff@example.com",
++            is_staff=True,
++        )
++        self.client.force_login(superuser)
++        known_url = reverse("admin:admin_views_article_changelist")
++        response = self.client.get("%s?id=1" % known_url[:-1])
++        self.assertRedirects(
++            response,
++            f"{known_url}?id=1",
++            status_code=301,
++            fetch_redirect_response=False,
++        )
++
+     @override_settings(APPEND_SLASH=True)
+     def test_missing_slash_append_slash_true_script_name(self):
+         superuser = User.objects.create_user(
+@@ -8481,6 +8499,24 @@ def test_missing_slash_append_slash_true_script_name(self):
+             fetch_redirect_response=False,
+         )
+ 
++    @override_settings(APPEND_SLASH=True)
++    def test_missing_slash_append_slash_true_script_name_query_string(self):
++        superuser = User.objects.create_user(
++            username="staff",
++            password="secret",
++            email="staff@example.com",
++            is_staff=True,
++        )
++        self.client.force_login(superuser)
++        known_url = reverse("admin:admin_views_article_changelist")
++        response = self.client.get("%s?id=1" % known_url[:-1], SCRIPT_NAME="/prefix/")
++        self.assertRedirects(
++            response,
++            f"/prefix{known_url}?id=1",
++            status_code=301,
++            fetch_redirect_response=False,
++        )
++
+     @override_settings(APPEND_SLASH=True, FORCE_SCRIPT_NAME="/prefix/")
+     def test_missing_slash_append_slash_true_force_script_name(self):
+         superuser = User.objects.create_user(

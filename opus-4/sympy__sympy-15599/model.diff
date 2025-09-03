@@ -1,0 +1,266 @@
+diff --git a/check_test_expectation.py b/check_test_expectation.py
+new file mode 100644
+index 0000000000..8f157ac152
+--- /dev/null
++++ b/check_test_expectation.py
+@@ -0,0 +1,30 @@
++from sympy import Symbol, Mod, Float
++
++x = Symbol('x')
++point3 = Float(3.3) % 1
++
++print(f"point3 = {point3}")
++print(f"1 - point3 = {1 - point3}")
++
++# Test assertion says:
++# assert (x - 3.3) % 1 == Mod(1.*x + 1 - point3, 1)
++
++left = (x - 3.3) % 1
++right = Mod(1.*x + 1 - point3, 1)
++
++print(f"\nLeft side: (x - 3.3) % 1 = {left}")
++print(f"Right side: Mod(1.*x + 1 - point3, 1) = {right}")
++
++# But 1 - point3 = 1 - 0.3 = 0.7
++print(f"\nSo right side is: Mod(1.0*x + 0.7, 1)")
++
++# Are they equal?
++print(f"\nAre they equal? {left == right}")
++print(f"Left expanded: {left}")
++print(f"Right expanded: {right}")
++
++# Let's check the case without float
++y = Symbol('y')
++print(f"\n(y - 3) % 1 = {(y - 3) % 1}")
++print(f"Mod(y + 1 - 3, 1) = {Mod(y + 1 - 3, 1)}")
++print(f"Mod(y - 2, 1) = {Mod(y - 2, 1)}")
+diff --git a/debug_float_mod.py b/debug_float_mod.py
+new file mode 100644
+index 0000000000..6fb488105e
+--- /dev/null
++++ b/debug_float_mod.py
+@@ -0,0 +1,27 @@
++from sympy import Symbol, Mod, Float
++
++x = Symbol('x')
++point3 = Float(3.3) % 1
++print(f"point3 = {point3}")
++
++# The original expression
++left = (x - 3.3) % 1
++print(f"(x - 3.3) % 1 = {left}")
++
++# The expected expression
++right = Mod(1.*x + 1 - point3, 1)
++print(f"Mod(1.*x + 1 - point3, 1) = {right}")
++
++# Let's see what happens with our fix
++print(f"\nDetailed analysis:")
++print(f"x - 3.3 = {x - 3.3}")
++print(f"Type: {type(x - 3.3)}")
++
++# Test with concrete value
++test_val = 5
++left_val = left.subs(x, test_val)
++right_val = right.subs(x, test_val)
++print(f"\nWith x = {test_val}:")
++print(f"Left: {left_val}")
++print(f"Right: {right_val}")
++print(f"Float values: {float(left_val)} vs {float(right_val)}")
+diff --git a/debug_mod_change.py b/debug_mod_change.py
+new file mode 100644
+index 0000000000..026b65dd5c
+--- /dev/null
++++ b/debug_mod_change.py
+@@ -0,0 +1,31 @@
++from sympy import Symbol, Mod, Float, Add
++
++x = Symbol('x')
++
++# Test case from failing test
++expr = x - 3.3
++print(f"expr = {expr}")
++print(f"type = {type(expr)}")
++print(f"is_Add = {isinstance(expr, Add)}")
++
++# Apply mod operation
++result = expr % 1
++print(f"\nexpr % 1 = {result}")
++print(f"type = {type(result)}")
++
++# Let's trace what happens step by step
++print("\n--- Tracing evaluation ---")
++
++# expr is an Add: x + (-3.3)
++# When we do % 1, it goes through simplify terms section
++# Each term is evaluated: Mod(x, 1) and Mod(-3.3, 1)
++
++print(f"Mod(x, 1) = {Mod(x, 1)}")
++print(f"Mod(-3.3, 1) = {Mod(-3.3, 1)}")
++print(f"Mod(Float(3.3), 1) = {Mod(Float(3.3), 1)}")
++
++# Test with integer symbol
++i = Symbol('i', integer=True)
++print(f"\nWith integer symbol:")
++print(f"Mod(3*i, 2) = {Mod(3*i, 2)}")
++print(f"Mod(1.0*i, 2) = {Mod(1.0*i, 2)}")
+diff --git a/minimal_test.py b/minimal_test.py
+new file mode 100644
+index 0000000000..26a00de6a4
+--- /dev/null
++++ b/minimal_test.py
+@@ -0,0 +1,24 @@
++from sympy import Symbol, Mod
++
++# Simple case to understand the issue
++x = Symbol('x')
++
++# This is what the test expects to remain unchanged
++expr = Mod(1.0*x + 0.7, 1)
++print(f"Mod(1.0*x + 0.7, 1) = {expr}")
++
++# But let's see what happens when we build it differently
++result = (x - 3.3) % 1
++print(f"(x - 3.3) % 1 = {result}")
++
++# The issue is that the test expects these to be equal:
++# (x - 3.3) % 1 == Mod(1.0*x + 0.7, 1)
++# But our change makes the right side simplify to 0.7
++
++# Let's test the integer case
++i = Symbol('i', integer=True)
++print(f"\nMod(3*i, 2) = {Mod(3*i, 2)}")
++
++# And with float coefficient
++print(f"Mod(1.0*i, 1) = {Mod(1.0*i, 1)}")
++print(f"Mod(1.0*x, 1) = {Mod(1.0*x, 1)}")
+diff --git a/sympy/core/mod.py b/sympy/core/mod.py
+index eae25630cc..0ef017ed6e 100644
+--- a/sympy/core/mod.py
++++ b/sympy/core/mod.py
+@@ -123,9 +123,16 @@ def doit(p, q):
+             for arg in p.args:
+                 both_l[isinstance(arg, cls)].append(arg)
+ 
+-            if mod_l and all(inner.args[1] == q for inner in mod_l):
++            # Check if we should apply the simplification
++            # We need to be careful with float coefficients
++            was = non_mod_l[:]
++            non_mod_l_eval = [cls(x, q) for x in non_mod_l]
++            changed = was != non_mod_l_eval
++            
++            # Only apply if we have integer terms or if mod_l has terms
++            if changed or (mod_l and all(inner.args[1] == q for inner in mod_l)):
+                 # finding distributive term
+-                non_mod_l = [cls(x, q) for x in non_mod_l]
++                non_mod_l = non_mod_l_eval
+                 mod = []
+                 non_mod = []
+                 for j in non_mod_l:
+diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
+index 04d3b1ab9f..05e2d1979b 100644
+--- a/sympy/core/tests/test_arit.py
++++ b/sympy/core/tests/test_arit.py
+@@ -1624,6 +1624,7 @@ def test_Mod():
+     i = Symbol('i', integer=True)
+     assert (3*i*x) % (2*i*y) == i*Mod(3*x, 2*y)
+     assert Mod(4*i, 4) == 0
++    assert Mod(3*i, 2) == Mod(i, 2)
+ 
+     # issue 8677
+     n = Symbol('n', integer=True, positive=True)
+diff --git a/test_mod_issue.py b/test_mod_issue.py
+new file mode 100644
+index 0000000000..45801c70a0
+--- /dev/null
++++ b/test_mod_issue.py
+@@ -0,0 +1,20 @@
++from sympy import Symbol, Mod
++
++# Create an integer symbol
++i = Symbol('i', integer=True)
++
++# Test the current behavior
++print("Current behavior:")
++print(f"Mod(3*i, 2) = {Mod(3*i, 2)}")
++print(f"Expected: Mod(i, 2)")
++
++# Also test with regular symbols
++k = Symbol('k')
++print(f"\nWith regular symbol k:")
++print(f"Mod(3*k, 2) = {Mod(3*k, 2)}")
++
++# Test some related cases
++print(f"\nRelated cases:")
++print(f"Mod(4*i, 4) = {Mod(4*i, 4)}")
++print(f"Mod(5*i, 3) = {Mod(5*i, 3)}")
++print(f"Mod(7*i, 2) = {Mod(7*i, 2)}")
+diff --git a/trace_add_handling.py b/trace_add_handling.py
+new file mode 100644
+index 0000000000..57394a494d
+--- /dev/null
++++ b/trace_add_handling.py
+@@ -0,0 +1,27 @@
++from sympy import Symbol, Mod, Float, Add
++
++x = Symbol('x')
++
++# The issue is with Add handling
++expr = 1.0*x + 0.7
++print(f"expr = {expr}")
++print(f"type = {type(expr)}")
++print(f"is Add? {isinstance(expr, Add)}")
++
++# When Mod(1.0*x + 0.7, 1) is evaluated, it goes through Add handling
++# The Add handling applies Mod to each term
++print(f"\nAdd handling would do:")
++print(f"  Mod(1.0*x, 1) = {Mod(1.0*x, 1)}")
++print(f"  Mod(0.7, 1) = {Mod(0.7, 1)}")
++print(f"  Sum = {Mod(1.0*x, 1) + Mod(0.7, 1)}")
++
++# But the test expects this to remain as Mod(1.0*x + 0.7, 1)
++# Let's see what the test is actually checking
++point3 = Float(3.3) % 1
++print(f"\nTest case:")
++print(f"  point3 = {point3}")
++print(f"  1 - point3 = {1 - point3}")
++print(f"  (x - 3.3) % 1 = {(x - 3.3) % 1}")
++print(f"  Mod(1.*x + 1 - point3, 1) = {Mod(1.*x + 1 - point3, 1)}")
++
++# The issue is that the right side simplifies because Mod(1.0*x, 1) = 0
+diff --git a/trace_mod_eval.py b/trace_mod_eval.py
+new file mode 100644
+index 0000000000..68a0af1fbc
+--- /dev/null
++++ b/trace_mod_eval.py
+@@ -0,0 +1,30 @@
++from sympy import Symbol, Mod, Float, Add, Mul
++
++x = Symbol('x')
++i = Symbol('i', integer=True)
++
++# Case 1: Mod(3*i, 2) - this should simplify
++print("Case 1: Mod(3*i, 2)")
++expr1 = 3*i
++print(f"  expr = {expr1}, type = {type(expr1)}")
++print(f"  isinstance(expr1, Mul) = {isinstance(expr1, Mul)}")
++print(f"  Result: {Mod(expr1, 2)}")
++
++# Case 2: Mod(1.0*x + 0.7, 1) - this should NOT simplify the 1.0*x part away
++print("\nCase 2: Mod(1.0*x + 0.7, 1)")
++expr2 = 1.0*x + 0.7
++print(f"  expr = {expr2}, type = {type(expr2)}")
++print(f"  isinstance(expr2, Add) = {isinstance(expr2, Add)}")
++print(f"  Result: {Mod(expr2, 1)}")
++
++# The problem is in the Add handling, not Mul
++# Let's see what happens with Add terms
++print("\nAdd term handling:")
++print(f"  Mod(1.0*x, 1) = {Mod(1.0*x, 1)}")
++print(f"  Mod(0.7, 1) = {Mod(0.7, 1)}")
++
++# Check the mul case specifically
++print("\nMul case with float:")
++print(f"  Mod(1.0*i, 2) = {Mod(1.0*i, 2)}")
++print(f"  1.0*i is Mul? {isinstance(1.0*i, Mul)}")
++print(f"  i has assumptions: {i.assumptions0}")

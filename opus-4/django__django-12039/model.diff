@@ -1,0 +1,61 @@
+diff --git a/django/db/backends/ddl_references.py b/django/db/backends/ddl_references.py
+index 44e49806f8..af903f9243 100644
+--- a/django/db/backends/ddl_references.py
++++ b/django/db/backends/ddl_references.py
+@@ -84,7 +84,12 @@ class Columns(TableColumns):
+     def __str__(self):
+         def col_str(column, idx):
+             try:
+-                return self.quote_name(column) + self.col_suffixes[idx]
++                suffix = self.col_suffixes[idx]
++                # Add space before suffix if it's not empty
++                if suffix:
++                    return self.quote_name(column) + ' ' + suffix
++                else:
++                    return self.quote_name(column)
+             except IndexError:
+                 return self.quote_name(column)
+ 
+@@ -114,7 +119,10 @@ class IndexColumns(Columns):
+             # length as self.columns.
+             col = '{} {}'.format(self.quote_name(column), self.opclasses[idx])
+             try:
+-                col = '{} {}'.format(col, self.col_suffixes[idx])
++                suffix = self.col_suffixes[idx]
++                # Only add space and suffix if suffix is not empty
++                if suffix:
++                    col = '{} {}'.format(col, suffix)
+             except IndexError:
+                 pass
+             return col
+diff --git a/tests/backends/test_ddl_references.py b/tests/backends/test_ddl_references.py
+index d96ebcb57f..3194ae6f3a 100644
+--- a/tests/backends/test_ddl_references.py
++++ b/tests/backends/test_ddl_references.py
+@@ -1,5 +1,5 @@
+ from django.db.backends.ddl_references import (
+-    Columns, ForeignKeyName, IndexName, Statement, Table,
++    Columns, ForeignKeyName, IndexColumns, IndexName, Statement, Table,
+ )
+ from django.test import SimpleTestCase
+ 
+@@ -56,6 +56,19 @@ class ColumnsTests(TableTests):
+     def test_str(self):
+         self.assertEqual(str(self.reference), 'FIRST_COLUMN, SECOND_COLUMN')
+ 
++    def test_col_suffixes(self):
++        # Test whitespace with column suffixes
++        reference = Columns('table', ['col1', 'col2'], lambda c: c, col_suffixes=('DESC', 'ASC'))
++        self.assertEqual(str(reference), 'col1 DESC, col2 ASC')
++        
++        # Test empty suffix doesn't add extra space
++        reference = Columns('table', ['col1', 'col2'], lambda c: c, col_suffixes=('', 'DESC'))
++        self.assertEqual(str(reference), 'col1, col2 DESC')
++        
++        # Test all empty suffixes
++        reference = Columns('table', ['col1', 'col2'], lambda c: c, col_suffixes=('', ''))
++        self.assertEqual(str(reference), 'col1, col2')
++
+ 
+ class IndexNameTests(ColumnsTests):
+     def setUp(self):

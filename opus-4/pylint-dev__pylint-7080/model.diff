@@ -1,0 +1,423 @@
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index e2bbf061e..1f93254b2 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -610,11 +610,16 @@ class PyLinter(
+                         skip_subtrees.append(root)
+                         yield root
+                     else:
+-                        yield from (
+-                            os.path.join(root, file)
+-                            for file in files
+-                            if file.endswith(".py")
+-                        )
++                        for file in files:
++                            if file.endswith(".py"):
++                                filepath = os.path.join(root, file)
++                                if not _is_ignored_file(
++                                    filepath,
++                                    self.config.ignore,
++                                    self.config.ignore_patterns,
++                                    self.config.ignore_paths,
++                                ):
++                                    yield filepath
+             else:
+                 yield something
+ 
+diff --git a/test_comprehensive_ignore_paths.py b/test_comprehensive_ignore_paths.py
+new file mode 100644
+index 000000000..04a735787
+--- /dev/null
++++ b/test_comprehensive_ignore_paths.py
+@@ -0,0 +1,150 @@
++#!/usr/bin/env python3
++"""Comprehensive test of ignore-paths functionality with recursive option"""
++
++import os
++import tempfile
++import re
++from pylint.lint.pylinter import PyLinter
++
++def test_ignore_paths():
++    """Test various ignore-paths scenarios"""
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create directory structure
++        # src/
++        #   regular.py
++        #   gen/
++        #     generated.py
++        #     subdir/
++        #       another.py
++        #   tests/
++        #     test_file.py
++        #   vendor/
++        #     external.py
++        
++        src_dir = os.path.join(tmpdir, "src")
++        os.makedirs(src_dir)
++        
++        # Regular files that should be checked
++        with open(os.path.join(src_dir, "regular.py"), "w") as f:
++            f.write("# regular file\n")
++        
++        # Files in gen/ that should be ignored
++        gen_dir = os.path.join(src_dir, "gen")
++        os.makedirs(gen_dir)
++        with open(os.path.join(gen_dir, "generated.py"), "w") as f:
++            f.write("# generated file\n")
++        
++        gen_subdir = os.path.join(gen_dir, "subdir")
++        os.makedirs(gen_subdir)
++        with open(os.path.join(gen_subdir, "another.py"), "w") as f:
++            f.write("# another generated file\n")
++        
++        # Files in tests/ that should be checked
++        tests_dir = os.path.join(src_dir, "tests")
++        os.makedirs(tests_dir)
++        with open(os.path.join(tests_dir, "test_file.py"), "w") as f:
++            f.write("# test file\n")
++        
++        # Files in vendor/ that should be ignored
++        vendor_dir = os.path.join(src_dir, "vendor")
++        os.makedirs(vendor_dir)
++        with open(os.path.join(vendor_dir, "external.py"), "w") as f:
++            f.write("# vendor file\n")
++        
++        # Change to temp directory
++        os.chdir(tmpdir)
++        
++        # Test 1: Basic ignore-paths
++        print("Test 1: Basic ignore-paths with gen directory")
++        linter = PyLinter()
++        linter.config.ignore_paths = [re.compile(r"^src/gen/.*$")]
++        linter.config.ignore = []
++        linter.config.ignore_patterns = []
++        
++        discovered = list(linter._discover_files(["src/"]))
++        print(f"  Discovered {len(discovered)} files:")
++        for f in sorted(discovered):
++            print(f"    {f}")
++        
++        assert "src/regular.py" in discovered
++        assert "src/tests/test_file.py" in discovered
++        assert "src/vendor/external.py" in discovered
++        assert not any("gen" in f for f in discovered), "gen files should be ignored"
++        print("  ✓ gen/ files correctly ignored")
++        
++        # Test 2: Multiple ignore patterns
++        print("\nTest 2: Multiple ignore patterns (gen and vendor)")
++        linter2 = PyLinter()
++        linter2.config.ignore_paths = [
++            re.compile(r"^src/gen/.*$"),
++            re.compile(r"^src/vendor/.*$")
++        ]
++        linter2.config.ignore = []
++        linter2.config.ignore_patterns = []
++        
++        discovered2 = list(linter2._discover_files(["src/"]))
++        print(f"  Discovered {len(discovered2)} files:")
++        for f in sorted(discovered2):
++            print(f"    {f}")
++        
++        assert "src/regular.py" in discovered2
++        assert "src/tests/test_file.py" in discovered2
++        assert not any("gen" in f for f in discovered2), "gen files should be ignored"
++        assert not any("vendor" in f for f in discovered2), "vendor files should be ignored"
++        print("  ✓ Both gen/ and vendor/ files correctly ignored")
++        
++        # Test 3: Test with packages (directories with __init__.py)
++        print("\nTest 3: Package directories (with __init__.py)")
++        
++        # Create a package
++        pkg_dir = os.path.join(src_dir, "mypackage")
++        os.makedirs(pkg_dir)
++        with open(os.path.join(pkg_dir, "__init__.py"), "w") as f:
++            f.write("# package init\n")
++        with open(os.path.join(pkg_dir, "module.py"), "w") as f:
++            f.write("# module in package\n")
++        
++        # Create an ignored package
++        ignored_pkg = os.path.join(src_dir, "gen_pkg")
++        os.makedirs(ignored_pkg)
++        with open(os.path.join(ignored_pkg, "__init__.py"), "w") as f:
++            f.write("# ignored package init\n")
++        with open(os.path.join(ignored_pkg, "module.py"), "w") as f:
++            f.write("# module in ignored package\n")
++        
++        linter3 = PyLinter()
++        linter3.config.ignore_paths = [re.compile(r"^src/gen_pkg.*$")]
++        linter3.config.ignore = []
++        linter3.config.ignore_patterns = []
++        
++        discovered3 = list(linter3._discover_files(["src/"]))
++        print(f"  Discovered {len(discovered3)} files/packages:")
++        for f in sorted(discovered3):
++            print(f"    {f}")
++        
++        assert any("mypackage" in f for f in discovered3), "mypackage should be discovered"
++        assert not any("gen_pkg" in f for f in discovered3), "gen_pkg should be ignored"
++        print("  ✓ Package handling works correctly with ignore-paths")
++        
++        # Test 4: Absolute paths
++        print("\nTest 4: Absolute path patterns")
++        abs_pattern = os.path.join(tmpdir, "src", "gen", ".*")
++        # Escape backslashes for Windows paths
++        abs_pattern = abs_pattern.replace("\\", "\\\\")
++        
++        linter4 = PyLinter()
++        linter4.config.ignore_paths = [re.compile(f"^{abs_pattern}$")]
++        linter4.config.ignore = []
++        linter4.config.ignore_patterns = []
++        
++        discovered4 = list(linter4._discover_files([os.path.join(tmpdir, "src")]))
++        has_gen = any("gen" in f for f in discovered4)
++        print(f"  Pattern: ^{abs_pattern}$")
++        print(f"  Has gen files: {has_gen}")
++        if has_gen:
++            print("  Note: Absolute path pattern may need adjustment for this platform")
++        
++        print("\nAll tests completed!")
++
++if __name__ == "__main__":
++    test_ignore_paths()
+diff --git a/test_discover_files.py b/test_discover_files.py
+new file mode 100644
+index 000000000..db60064c3
+--- /dev/null
++++ b/test_discover_files.py
+@@ -0,0 +1,59 @@
++#!/usr/bin/env python3
++"""Direct test of the _discover_files method to see the bug"""
++
++import os
++import tempfile
++import re
++from pylint.lint.pylinter import PyLinter
++
++# Create a temporary directory structure
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Create src directory
++    src_dir = os.path.join(tmpdir, "src")
++    os.makedirs(src_dir)
++    
++    # Create a regular Python file
++    regular_file = os.path.join(src_dir, "regular.py")
++    with open(regular_file, "w") as f:
++        f.write("x = 1\n")
++    
++    # Create gen directory
++    gen_dir = os.path.join(src_dir, "gen")
++    os.makedirs(gen_dir)
++    
++    # Create a generated file that should be ignored
++    gen_file = os.path.join(gen_dir, "generated.py")
++    with open(gen_file, "w") as f:
++        f.write("y = 2\n")
++    
++    # Create another test file in gen
++    gen_file2 = os.path.join(gen_dir, "another.py")
++    with open(gen_file2, "w") as f:
++        f.write("z = 3\n")
++    
++    # Change to temp directory
++    os.chdir(tmpdir)
++    
++    # Create a PyLinter instance with ignore-paths configuration
++    linter = PyLinter()
++    linter.config.ignore_paths = [re.compile(r"^src/gen/.*$")]
++    linter.config.ignore = []
++    linter.config.ignore_patterns = []
++    
++    # Test _discover_files
++    discovered = list(linter._discover_files(["src/"]))
++    
++    print("Discovered files:")
++    for f in discovered:
++        print(f"  {f}")
++    
++    # Check results
++    print("\nAnalysis:")
++    if any("gen" in f for f in discovered):
++        print("BUG CONFIRMED: Files in src/gen/ were discovered despite ignore-paths!")
++        print("Files in gen that should have been ignored:")
++        for f in discovered:
++            if "gen" in f:
++                print(f"  {f}")
++    else:
++        print("No bug: Files in src/gen/ were correctly ignored.")
+diff --git a/test_ignore_paths_recursive.py b/test_ignore_paths_recursive.py
+new file mode 100644
+index 000000000..fbc505f18
+--- /dev/null
++++ b/test_ignore_paths_recursive.py
+@@ -0,0 +1,63 @@
++#!/usr/bin/env python3
++"""Test script to reproduce the ignore-paths issue with --recursive=y"""
++
++import os
++import tempfile
++import subprocess
++
++# Create a temporary directory structure
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Create src directory
++    src_dir = os.path.join(tmpdir, "src")
++    os.makedirs(src_dir)
++    
++    # Create a regular Python file
++    regular_file = os.path.join(src_dir, "regular.py")
++    with open(regular_file, "w") as f:
++        f.write("# This file should be checked\nx = 1\n")
++    
++    # Create gen directory
++    gen_dir = os.path.join(src_dir, "gen")
++    os.makedirs(gen_dir)
++    
++    # Create a generated file that should be ignored
++    gen_file = os.path.join(gen_dir, "generated.py")
++    with open(gen_file, "w") as f:
++        f.write("# This file should be ignored\n")
++        f.write("#\n")  # Empty comment that would trigger R2044
++        f.write("# Bad indentation and long line" + "x" * 200 + "\n")
++        f.write("x = 1\n")
++    
++    # Create pyproject.toml with ignore-paths configuration
++    pyproject_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(pyproject_file, "w") as f:
++        f.write('''[tool.pylint.MASTER]
++ignore-paths = [
++  # Auto generated
++  "^src/gen/.*$",
++]
++
++[tool.pylint.'MESSAGES CONTROL']
++enable = ["empty-comment", "line-too-long"]
++''')
++    
++    # Change to temp directory
++    os.chdir(tmpdir)
++    
++    # Test 1: Run without recursive (should not check gen directory)
++    print("Test 1: Running pylint without --recursive")
++    result1 = subprocess.run(["pylint", "src/"], capture_output=True, text=True)
++    print("Output:", result1.stdout)
++    print("Errors:", result1.stderr)
++    
++    # Test 2: Run with recursive (should also ignore gen directory but currently doesn't)
++    print("\nTest 2: Running pylint with --recursive=y")
++    result2 = subprocess.run(["pylint", "--recursive=y", "src/"], capture_output=True, text=True)
++    print("Output:", result2.stdout)
++    print("Errors:", result2.stderr)
++    
++    # Check if gen/generated.py was checked (it shouldn't be)
++    if "generated.py" in result2.stdout:
++        print("\nBUG CONFIRMED: Files in src/gen/ were checked despite ignore-paths configuration!")
++    else:
++        print("\nNo bug: Files in src/gen/ were correctly ignored.")
+diff --git a/test_issue_reproduction.py b/test_issue_reproduction.py
+new file mode 100644
+index 000000000..2740c90e8
+--- /dev/null
++++ b/test_issue_reproduction.py
+@@ -0,0 +1,101 @@
++#!/usr/bin/env python3
++"""Reproduce the exact issue from the bug report"""
++
++import os
++import tempfile
++import subprocess
++
++# Create the exact directory structure from the issue
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Create src directory
++    src_dir = os.path.join(tmpdir, "src")
++    os.makedirs(src_dir)
++    
++    # Create region_selection.py (should be checked)
++    with open(os.path.join(src_dir, "region_selection.py"), "w") as f:
++        f.write("""# region_selection.py
++def my_function():
++    # This function has too many local variables (17)
++    var1 = 1
++    var2 = 2
++    var3 = 3
++    var4 = 4
++    var5 = 5
++    var6 = 6
++    var7 = 7
++    var8 = 8
++    var9 = 9
++    var10 = 10
++    var11 = 11
++    var12 = 12
++    var13 = 13
++    var14 = 14
++    var15 = 15
++    var16 = 16
++    var17 = 17
++    return var1 + var2
++""")
++    
++    # Create gen directory
++    gen_dir = os.path.join(src_dir, "gen")
++    os.makedirs(gen_dir)
++    
++    # Create about.py in gen (should be ignored)
++    with open(os.path.join(gen_dir, "about.py"), "w") as f:
++        f.write("""# about.py - auto-generated file
++#
++# Empty comment above should trigger R2044
++#
++class Ui_AboutAutoSplitWidget(object):  # Should trigger various warnings
++    def setupUi(self, AboutAutoSplitWidget):  # Bad naming
++        self.ok_button = None  # Should trigger W0201
++""")
++    
++    # Create pyproject.toml with ignore-paths configuration
++    pyproject_file = os.path.join(tmpdir, "pyproject.toml")
++    with open(pyproject_file, "w") as f:
++        f.write('''[tool.pylint.MASTER]
++ignore-paths = [
++  # Auto generated
++  "^src/gen/.*$",
++]
++''')
++    
++    # Change to temp directory
++    os.chdir(tmpdir)
++    
++    # Run pylint with --recursive=y
++    print("Running: pylint --recursive=y src/")
++    print("=" * 60)
++    result = subprocess.run(["pylint", "--recursive=y", "src/"], capture_output=True, text=True)
++    
++    # Check the output
++    output = result.stdout
++    print(output)
++    
++    # Analysis
++    print("\n" + "=" * 60)
++    print("ANALYSIS:")
++    
++    if "region_selection.py" in output:
++        print("✓ region_selection.py was checked (as expected)")
++    else:
++        print("✗ region_selection.py was NOT checked (unexpected)")
++    
++    if "about.py" in output or "gen/about.py" in output or "gen\\about.py" in output:
++        print("✗ about.py in gen/ was checked (BUG - it should be ignored!)")
++    else:
++        print("✓ about.py in gen/ was correctly ignored")
++    
++    # Count violations
++    region_violations = output.count("region_selection.py")
++    gen_violations = output.count("about.py") + output.count("gen/about.py") + output.count("gen\\about.py")
++    
++    print(f"\nViolations found:")
++    print(f"  - region_selection.py: {region_violations} (should be > 0)")
++    print(f"  - gen/*.py files: {gen_violations} (should be 0)")
++    
++    if gen_violations == 0:
++        print("\n✓ SUCCESS: The bug has been fixed!")
++    else:
++        print("\n✗ FAILURE: The bug still exists!")

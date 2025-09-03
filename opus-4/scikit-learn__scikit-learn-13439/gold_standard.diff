@@ -1,0 +1,351 @@
+From 597476c57cbcc7236761dee3f90711a27abbf2c3 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 01:53:01 +0530
+Subject: [PATCH 01/11] adding length function to pipeline.py
+
+---
+ sklearn/pipeline.py | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/sklearn/pipeline.py b/sklearn/pipeline.py
+index 7eaf9a46f09e9..89cb9a5b95912 100644
+--- a/sklearn/pipeline.py
++++ b/sklearn/pipeline.py
+@@ -199,6 +199,12 @@ def _iter(self, with_final=True):
+             if trans is not None and trans != 'passthrough':
+                 yield idx, name, trans
+ 
++    def len(self):
++        """
++        Returns the length of the Pipeline
++        """
++        return len(self.steps)
++
+     def __getitem__(self, ind):
+         """Returns a sub-pipeline or a single esimtator in the pipeline
+ 
+
+From f43b580240e0fef3be0503dd444d998898a01084 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 11:33:48 +0530
+Subject: [PATCH 02/11] modified length function name and added test
+
+---
+ sklearn/pipeline.py            |  2 +-
+ sklearn/tests/test_pipeline.py | 11 ++++++++++-
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/pipeline.py b/sklearn/pipeline.py
+index 89cb9a5b95912..d1d03656d2a62 100644
+--- a/sklearn/pipeline.py
++++ b/sklearn/pipeline.py
+@@ -199,7 +199,7 @@ def _iter(self, with_final=True):
+             if trans is not None and trans != 'passthrough':
+                 yield idx, name, trans
+ 
+-    def len(self):
++    def __len__(self):
+         """
+         Returns the length of the Pipeline
+         """
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index 8d6fe8f70374e..14e8f1c99d786 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -24,13 +24,14 @@
+ from sklearn.svm import SVC
+ from sklearn.linear_model import LogisticRegression, Lasso
+ from sklearn.linear_model import LinearRegression
++from sklearn.linear_model import SGDClassifier
+ from sklearn.cluster import KMeans
+ from sklearn.feature_selection import SelectKBest, f_classif
+ from sklearn.dummy import DummyRegressor
+ from sklearn.decomposition import PCA, TruncatedSVD
+ from sklearn.datasets import load_iris
+ from sklearn.preprocessing import StandardScaler
+-from sklearn.feature_extraction.text import CountVectorizer
++from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
+ from sklearn.utils._joblib import Memory
+ from sklearn.utils._joblib import __version__ as joblib_version
+ 
+@@ -1071,3 +1072,11 @@ def test_make_pipeline_memory():
+     assert pipeline.memory is None
+ 
+     shutil.rmtree(cachedir)
++
++def test__len__():
++    pipeline = Pipeline([
++        ('vect', CountVectorizer()),
++        ('tfidf', TfidfTransformer()),
++        ('clf', SGDClassifier()),
++    ])
++    assert_equal(pipeline.__len__(),3)
+
+From c961ae57891ee9cdcd8dbac8fe45a699dff17808 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 11:38:29 +0530
+Subject: [PATCH 03/11] added space in test__len__() function
+
+---
+ sklearn/tests/test_pipeline.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index 14e8f1c99d786..cba49885d01c4 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -1073,10 +1073,11 @@ def test_make_pipeline_memory():
+ 
+     shutil.rmtree(cachedir)
+ 
++
+ def test__len__():
+     pipeline = Pipeline([
+         ('vect', CountVectorizer()),
+         ('tfidf', TfidfTransformer()),
+         ('clf', SGDClassifier()),
+     ])
+-    assert_equal(pipeline.__len__(),3)
++    assert_equal(pipeline.__len__(), 3)
+
+From 86f9cfa74cee94c8fb1a26cc5db49423d38469d0 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 13:10:38 +0530
+Subject: [PATCH 04/11] modified test_pipeline.py
+
+---
+ sklearn/tests/test_pipeline.py | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index cba49885d01c4..ae25a46a9e5e0 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -24,14 +24,13 @@
+ from sklearn.svm import SVC
+ from sklearn.linear_model import LogisticRegression, Lasso
+ from sklearn.linear_model import LinearRegression
+-from sklearn.linear_model import SGDClassifier
+ from sklearn.cluster import KMeans
+ from sklearn.feature_selection import SelectKBest, f_classif
+ from sklearn.dummy import DummyRegressor
+ from sklearn.decomposition import PCA, TruncatedSVD
+ from sklearn.datasets import load_iris
+ from sklearn.preprocessing import StandardScaler
+-from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
++from sklearn.feature_extraction.text import CountVectorizer
+ from sklearn.utils._joblib import Memory
+ from sklearn.utils._joblib import __version__ as joblib_version
+ 
+@@ -1075,9 +1074,11 @@ def test_make_pipeline_memory():
+ 
+ 
+ def test__len__():
++    scaler_for_pipeline = StandardScaler()
++    km_for_pipeline = KMeans(random_state=0)
++    
+     pipeline = Pipeline([
+-        ('vect', CountVectorizer()),
+-        ('tfidf', TfidfTransformer()),
+-        ('clf', SGDClassifier()),
++        ('scaler', scaler_for_pipeline),
++        ('Kmeans', km_for_pipeline)
+     ])
+-    assert_equal(pipeline.__len__(), 3)
++    assert pipeline.__len__() == 2
+
+From 8fd3a432cb9dd45db7c8fe9db31a9c86d4ba4922 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 13:52:19 +0530
+Subject: [PATCH 05/11] removed extra space in test_pipeline.py
+
+---
+ sklearn/tests/test_pipeline.py | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index ae25a46a9e5e0..ed01c6a30e888 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -1076,7 +1076,6 @@ def test_make_pipeline_memory():
+ def test__len__():
+     scaler_for_pipeline = StandardScaler()
+     km_for_pipeline = KMeans(random_state=0)
+-    
+     pipeline = Pipeline([
+         ('scaler', scaler_for_pipeline),
+         ('Kmeans', km_for_pipeline)
+
+From 5ca56662358d7691fa39536e98f577dd17ba4526 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 16:49:16 +0530
+Subject: [PATCH 06/11] modified assert statement
+
+---
+ sklearn/tests/test_pipeline.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index ed01c6a30e888..bc2a34e2d5f4f 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -1080,4 +1080,4 @@ def test__len__():
+         ('scaler', scaler_for_pipeline),
+         ('Kmeans', km_for_pipeline)
+     ])
+-    assert pipeline.__len__() == 2
++    assert len(pipeline) == 2
+
+From 6616b508da92738117fe6d7d158a75477768cc5d Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 18:41:12 +0530
+Subject: [PATCH 07/11] added the enhancement label in changelog of v0.21.rst
+
+---
+ doc/whats_new/v0.21.rst | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 0525a40467e74..25575a3c38b5f 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -403,6 +403,11 @@ Support for Python 3.4 and below has been officially dropped.
+ - |API| :class:`pipeline.Pipeline` now supports using ``'passthrough'`` as a
+   transformer. :issue:`11144` by :user:`Thomas Fan <thomasjpfan>`.
+ 
++- |Enhancement| :class:`pipeline.Pipeline` now implements a func
++  :func:`__len__()`,
++  that will return the length of the pipeline :issue `13439`
++  by :user:`Lakshya KD <LakshKD>`
++
+ :mod:`sklearn.preprocessing`
+ ............................
+ 
+
+From c6c98285910f2b17653d2daa39883d9ca165323d Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Wed, 13 Mar 2019 18:43:08 +0530
+Subject: [PATCH 08/11] modified the enhancement label in changelog of
+ v0.21.rst
+
+---
+ doc/whats_new/v0.21.rst | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 25575a3c38b5f..0ddc8e69ad02c 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -405,8 +405,8 @@ Support for Python 3.4 and below has been officially dropped.
+ 
+ - |Enhancement| :class:`pipeline.Pipeline` now implements a func
+   :func:`__len__()`,
+-  that will return the length of the pipeline :issue `13439`
+-  by :user:`Lakshya KD <LakshKD>`
++  that will return the length of the pipeline :issue:`13439`
++  by :user:`Lakshya KD <LakshKD>`.
+ 
+ :mod:`sklearn.preprocessing`
+ ............................
+
+From 65b9a43d71d6146033e6d5b8d7f4dedc4ad0659b Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Fri, 15 Mar 2019 10:47:09 +0530
+Subject: [PATCH 09/11] modified message in changelog file
+
+---
+ doc/whats_new/v0.21.rst | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 0ddc8e69ad02c..e0439bcbda513 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -403,10 +403,9 @@ Support for Python 3.4 and below has been officially dropped.
+ - |API| :class:`pipeline.Pipeline` now supports using ``'passthrough'`` as a
+   transformer. :issue:`11144` by :user:`Thomas Fan <thomasjpfan>`.
+ 
+-- |Enhancement| :class:`pipeline.Pipeline` now implements a func
+-  :func:`__len__()`,
+-  that will return the length of the pipeline :issue:`13439`
+-  by :user:`Lakshya KD <LakshKD>`.
++- |Enhancement| :class:`pipeline.Pipeline` implements a func len,
++  that will now work and return the length of the pipeline when called with
++  Pipeline object. :issue:`13439` by :user:`Lakshya KD <LakshKD>`.
+ 
+ :mod:`sklearn.preprocessing`
+ ............................
+
+From 9fab7cc539b3ddaa3f5022892f353027c6182efb Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Sat, 16 Mar 2019 19:59:32 +0530
+Subject: [PATCH 10/11] modified test and changed enhancement message
+
+---
+ doc/whats_new/v0.21.rst        |  6 +++---
+ sklearn/tests/test_pipeline.py | 11 +----------
+ 2 files changed, 4 insertions(+), 13 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 2c9ccc5607a89..196ab92d0aa4a 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -413,9 +413,9 @@ Support for Python 3.4 and below has been officially dropped.
+ - |API| :class:`pipeline.Pipeline` now supports using ``'passthrough'`` as a
+   transformer. :issue:`11144` by :user:`Thomas Fan <thomasjpfan>`.
+ 
+-- |Enhancement| :class:`pipeline.Pipeline` implements a func len,
+-  that will now work and return the length of the pipeline when called with
+-  Pipeline object. :issue:`13439` by :user:`Lakshya KD <LakshKD>`.
++- |Enhancement| :class:`pipeline.Pipeline`  implements __len__ and
++  therefore len(pipeline) returns the number of steps in the pipeline.
++  :issue:`13439` by :user:`Lakshya KD <LakshKD>`.
+ 
+ :mod:`sklearn.preprocessing`
+ ............................
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index bc2a34e2d5f4f..ed81db747e20c 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -1069,15 +1069,6 @@ def test_make_pipeline_memory():
+     assert pipeline.memory is memory
+     pipeline = make_pipeline(DummyTransf(), SVC())
+     assert pipeline.memory is None
++    assert len(pipeline) == 2
+ 
+     shutil.rmtree(cachedir)
+-
+-
+-def test__len__():
+-    scaler_for_pipeline = StandardScaler()
+-    km_for_pipeline = KMeans(random_state=0)
+-    pipeline = Pipeline([
+-        ('scaler', scaler_for_pipeline),
+-        ('Kmeans', km_for_pipeline)
+-    ])
+-    assert len(pipeline) == 2
+
+From 959c80501ba32a802ade609d841082511c0b3085 Mon Sep 17 00:00:00 2001
+From: Lakshya Daksha <lakshyakri09@gmail.com>
+Date: Sat, 16 Mar 2019 20:42:18 +0530
+Subject: [PATCH 11/11] added backticks in message
+
+---
+ doc/whats_new/v0.21.rst | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 196ab92d0aa4a..cd4daebf9632b 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -413,8 +413,8 @@ Support for Python 3.4 and below has been officially dropped.
+ - |API| :class:`pipeline.Pipeline` now supports using ``'passthrough'`` as a
+   transformer. :issue:`11144` by :user:`Thomas Fan <thomasjpfan>`.
+ 
+-- |Enhancement| :class:`pipeline.Pipeline`  implements __len__ and
+-  therefore len(pipeline) returns the number of steps in the pipeline.
++- |Enhancement| :class:`pipeline.Pipeline`  implements ``__len__`` and
++  therefore ``len(pipeline)`` returns the number of steps in the pipeline.
+   :issue:`13439` by :user:`Lakshya KD <LakshKD>`.
+ 
+ :mod:`sklearn.preprocessing`

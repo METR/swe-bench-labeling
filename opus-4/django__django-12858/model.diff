@@ -1,0 +1,362 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 6c9e9d3707..124db6eed0 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1747,7 +1747,7 @@ class Model(metaclass=ModelBase):
+                     else:
+                         _cls = None
+                 except (FieldDoesNotExist, AttributeError):
+-                    if fld is None or fld.get_transform(part) is None:
++                    if fld is None or (fld.get_transform(part) is None and fld.get_lookup(part) is None):
+                         errors.append(
+                             checks.Error(
+                                 "'ordering' refers to the nonexistent field, "
+diff --git a/test_issue_simple.py b/test_issue_simple.py
+new file mode 100644
+index 0000000000..105a091aa8
+--- /dev/null
++++ b/test_issue_simple.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add the testbed directory to Python path
++sys.path.insert(0, '/testbed')
++
++# Configure minimal Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models.lookups import IsNull
++
++# Define test models matching the issue description
++class Product(models.Model):
++    name = models.CharField(max_length=100)
++    parent = models.ForeignKey('self', models.CASCADE, null=True)
++    
++    class Meta:
++        app_label = 'test'
++
++class Supply(models.Model):
++    product = models.ForeignKey(Product, models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++
++class Stock(models.Model):
++    supply = models.ForeignKey(Supply, models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++        ordering = ['supply__product__parent__isnull']
++
++# Run system check
++print("Running system check for Stock model...")
++errors = Stock.check()
++if errors:
++    print("ERRORS FOUND:")
++    for error in errors:
++        print(f"  {error.id}: {error.msg}")
++else:
++    print("No errors found - but we expected an E015 error!")
++
++# Let's trace through what happens in the check
++print("\nDebugging the ordering check logic...")
++from django.db.models.constants import LOOKUP_SEP
++
++# Get the ordering field
++ordering_field = 'supply__product__parent__isnull'
++print(f"Checking ordering field: {ordering_field}")
++
++# Split by LOOKUP_SEP
++parts = ordering_field.split(LOOKUP_SEP)
++print(f"Parts: {parts}")
++
++# Verify that 'isnull' is a valid lookup
++from django.db.models import Field
++print(f"\nIs 'isnull' a valid lookup for fields? {Field.class_lookups.get('isnull') is not None}")
++print(f"IsNull lookup class: {Field.class_lookups.get('isnull')}")
++
++# Check if the field path is valid
++try:
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Product)
++        schema_editor.create_model(Supply)
++        schema_editor.create_model(Stock)
++    
++    # Test the ordering
++    print("\nTesting if ordering actually works...")
++    # Create test data
++    p1 = Product.objects.create(name="P1", parent=None)
++    p2 = Product.objects.create(name="P2", parent=p1)
++    s1 = Supply.objects.create(product=p1)
++    s2 = Supply.objects.create(product=p2)
++    st1 = Stock.objects.create(supply=s1)
++    st2 = Stock.objects.create(supply=s2)
++    
++    # This should work
++    result = list(Stock.objects.order_by('supply__product__parent__isnull').values_list('pk', flat=True))
++    print(f"Order by result: {result}")
++    print("✓ Ordering works correctly in queries!")
++    
++except Exception as e:
++    print(f"Error during test: {e}")
+diff --git a/test_ordering_issue.py b/test_ordering_issue.py
+new file mode 100644
+index 0000000000..593b708bd7
+--- /dev/null
++++ b/test_ordering_issue.py
+@@ -0,0 +1,87 @@
++import os
++import django
++from django.conf import settings
++from django.db import models
++
++# Configure Django settings
++os.environ['DJANGO_SETTINGS_MODULE'] = 'test_settings'
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        USE_TZ=True,
++    )
++
++django.setup()
++
++# Define test models
++class Product(models.Model):
++    name = models.CharField(max_length=100)
++    parent = models.ForeignKey('self', models.CASCADE, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Supply(models.Model):
++    product = models.ForeignKey(Product, models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Stock(models.Model):
++    supply = models.ForeignKey(Supply, models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++        ordering = ['supply__product__parent__isnull']
++
++# Test the system check
++from django.core import checks
++
++print("Running system checks...")
++errors = Stock.check()
++if errors:
++    print("Errors found:")
++    for error in errors:
++        print(f"  - {error}")
++else:
++    print("No errors found!")
++
++# Test if the ordering actually works
++from django.db import connection
++from django.db.migrations.executor import MigrationExecutor
++from django.db.migrations.loader import MigrationLoader
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Product)
++    schema_editor.create_model(Supply) 
++    schema_editor.create_model(Stock)
++
++# Create some test data
++parent_product = Product.objects.create(name="Parent Product", parent=None)
++child_product = Product.objects.create(name="Child Product", parent=parent_product)
++supply1 = Supply.objects.create(product=parent_product)
++supply2 = Supply.objects.create(product=child_product)
++stock1 = Stock.objects.create(supply=supply1)
++stock2 = Stock.objects.create(supply=supply2)
++
++# Test ordering
++print("\nTesting ordering...")
++try:
++    result = list(Stock.objects.order_by('supply__product__parent__isnull').values_list('pk', flat=True))
++    print(f"order_by result: {result}")
++    print("Ordering works fine!")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/test_ordering_lookups.py b/test_ordering_lookups.py
+new file mode 100644
+index 0000000000..f68a0dcb95
+--- /dev/null
++++ b/test_ordering_lookups.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.test import TestCase
++from django.test.utils import isolate_apps
++
++# Add the testbed directory to Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_sqlite'
++
++django.setup()
++
++from django.db import models
++
++class OrderingLookupTests(TestCase):
++    """Test that ordering with lookups doesn't raise models.E015"""
++    
++    @isolate_apps('invalid_models_tests')
++    def test_ordering_with_isnull_lookup(self):
++        """Test that ordering by a field with __isnull lookup is allowed"""
++        class Product(models.Model):
++            name = models.CharField(max_length=100)
++            parent = models.ForeignKey('self', models.CASCADE, null=True)
++            
++            class Meta:
++                app_label = 'invalid_models_tests'
++
++        class Supply(models.Model):
++            product = models.ForeignKey(Product, models.CASCADE)
++            
++            class Meta:
++                app_label = 'invalid_models_tests'
++
++        class Stock(models.Model):
++            supply = models.ForeignKey(Supply, models.CASCADE)
++            
++            class Meta:
++                app_label = 'invalid_models_tests'
++                ordering = ['supply__product__parent__isnull']
++
++        # The model should pass checks without errors
++        errors = Stock.check()
++        self.assertEqual(errors, [])
++    
++    @isolate_apps('invalid_models_tests')
++    def test_ordering_with_invalid_lookup(self):
++        """Test that ordering by an invalid lookup still raises models.E015"""
++        class Product(models.Model):
++            name = models.CharField(max_length=100)
++            
++            class Meta:
++                app_label = 'invalid_models_tests'
++
++        class Stock(models.Model):
++            product = models.ForeignKey(Product, models.CASCADE)
++            
++            class Meta:
++                app_label = 'invalid_models_tests'
++                ordering = ['product__name__invalidlookup']
++
++        # This should still raise an error
++        errors = Stock.check()
++        self.assertEqual(len(errors), 1)
++        self.assertEqual(errors[0].id, 'models.E015')
++    
++    @isolate_apps('invalid_models_tests') 
++    def test_ordering_with_transform(self):
++        """Test that ordering by a field with a transform (like __lower) is allowed"""
++        from django.db.models.functions import Lower
++        from django.test.utils import register_lookup
++        
++        class Product(models.Model):
++            name = models.CharField(max_length=100)
++            
++            class Meta:
++                app_label = 'invalid_models_tests'
++                ordering = ['name__lower']
++
++        # Register the lookup temporarily
++        with register_lookup(models.CharField, Lower):
++            errors = Product.check()
++            self.assertEqual(errors, [])
++
++if __name__ == '__main__':
++    from django.test import TestCase
++    from django.test.runner import DiscoverRunner
++    runner = DiscoverRunner(verbosity=2, interactive=False)
++    runner.setup_test_environment()
++    runner.setup_databases()
++    
++    # Run the tests
++    suite = runner.test_loader.loadTestsFromTestCase(OrderingLookupTests)
++    runner.run_suite(suite)
++    
++    runner.teardown_databases()
++    runner.teardown_test_environment()
+diff --git a/tests/invalid_models_tests/test_models.py b/tests/invalid_models_tests/test_models.py
+index 6bfdf2e736..938909bf16 100644
+--- a/tests/invalid_models_tests/test_models.py
++++ b/tests/invalid_models_tests/test_models.py
+@@ -1339,6 +1339,36 @@ class OtherModelTests(SimpleTestCase):
+             ),
+         ])
+ 
++    def test_ordering_with_lookup_isnull(self):
++        """Test that ordering by a field with __isnull lookup is allowed."""
++        class Parent(models.Model):
++            name = models.CharField(max_length=100)
++
++        class Child(models.Model):
++            parent = models.ForeignKey(Parent, models.CASCADE, null=True)
++
++            class Meta:
++                ordering = ('parent__isnull',)
++
++        self.assertEqual(Child.check(), [])
++
++    def test_ordering_with_related_field_lookup_isnull(self):
++        """Test that ordering by a related field with __isnull lookup is allowed."""
++        class Product(models.Model):
++            name = models.CharField(max_length=100)
++            parent = models.ForeignKey('self', models.CASCADE, null=True)
++
++        class Supply(models.Model):
++            product = models.ForeignKey(Product, models.CASCADE)
++
++        class Stock(models.Model):
++            supply = models.ForeignKey(Supply, models.CASCADE)
++
++            class Meta:
++                ordering = ['supply__product__parent__isnull']
++
++        self.assertEqual(Stock.check(), [])
++
+ 
+ @isolate_apps('invalid_models_tests')
+ class ConstraintsTests(TestCase):

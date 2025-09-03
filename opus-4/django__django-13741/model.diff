@@ -1,0 +1,232 @@
+diff --git a/django/contrib/auth/forms.py b/django/contrib/auth/forms.py
+index b9eb33329f..9a6614a809 100644
+--- a/django/contrib/auth/forms.py
++++ b/django/contrib/auth/forms.py
+@@ -56,6 +56,7 @@ class ReadOnlyPasswordHashField(forms.Field):
+ 
+     def __init__(self, *args, **kwargs):
+         kwargs.setdefault("required", False)
++        kwargs.setdefault("disabled", True)
+         super().__init__(*args, **kwargs)
+ 
+     def bound_data(self, data, initial):
+diff --git a/fix_password_field.py b/fix_password_field.py
+new file mode 100644
+index 0000000000..3a6f6a4c01
+--- /dev/null
++++ b/fix_password_field.py
+@@ -0,0 +1,24 @@
++#!/usr/bin/env python3
++import re
++
++# Read the file
++with open('django/contrib/auth/forms.py', 'r', encoding='utf-8') as f:
++    content = f.read()
++
++# Find and replace the __init__ method of ReadOnlyPasswordHashField
++old_init = '''    def __init__(self, *args, **kwargs):
++        kwargs.setdefault("required", False)
++        super().__init__(*args, **kwargs)'''
++
++new_init = '''    def __init__(self, *args, **kwargs):
++        kwargs.setdefault("required", False)
++        kwargs.setdefault("disabled", True)
++        super().__init__(*args, **kwargs)'''
++
++content = content.replace(old_init, new_init)
++
++# Write the file back
++with open('django/contrib/auth/forms.py', 'w', encoding='utf-8') as f:
++    f.write(content)
++
++print("Updated ReadOnlyPasswordHashField to set disabled=True by default")
+diff --git a/test_disabled_password_field.py b/test_disabled_password_field.py
+new file mode 100644
+index 0000000000..b8e37b196e
+--- /dev/null
++++ b/test_disabled_password_field.py
+@@ -0,0 +1,64 @@
++#!/usr/bin/env python3
++import os
++import sys
++import django
++from django.conf import settings
++from django.contrib.auth.models import User
++from django.contrib.auth.forms import UserChangeForm, ReadOnlyPasswordHashField
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++# Create a user for testing
++try:
++    user = User.objects.create_user('testuser', 'test@example.com', 'testpass123')
++except:
++    user = User.objects.get(username='testuser')
++
++print("Testing ReadOnlyPasswordHashField with disabled=True...")
++
++# Test 1: Verify that ReadOnlyPasswordHashField has disabled=True by default
++field = ReadOnlyPasswordHashField()
++print(f"1. ReadOnlyPasswordHashField disabled property: {field.disabled}")
++assert field.disabled == True, "ReadOnlyPasswordHashField should have disabled=True by default"
++
++# Test 2: Test UserChangeForm without clean_password method
++# Remove the clean_password method temporarily to test if disabled field works
++original_clean_password = UserChangeForm.clean_password
++delattr(UserChangeForm, 'clean_password')
++
++try:
++    # Create form with initial data
++    form = UserChangeForm(instance=user)
++    initial_password = form.initial['password']
++    
++    # Submit form with changed password (should be ignored due to disabled=True)
++    post_data = form.initial.copy()
++    post_data['password'] = 'this_should_be_ignored'
++    
++    form = UserChangeForm(instance=user, data=post_data)
++    
++    # Validate form
++    is_valid = form.is_valid()
++    print(f"2. Form is valid without clean_password: {is_valid}")
++    assert is_valid, "Form should be valid even without clean_password method"
++    
++    # Check that password field returns initial value
++    cleaned_password = form.cleaned_data.get('password')
++    print(f"3. Initial password hash: {initial_password[:20]}...")
++    print(f"4. Cleaned password hash: {cleaned_password[:20]}...")
++    assert cleaned_password == initial_password, "Password field should return initial value when disabled"
++    
++finally:
++    # Restore the clean_password method
++    UserChangeForm.clean_password = original_clean_password
++
++# Test 3: Verify that the disabled field doesn't report changes
++field = ReadOnlyPasswordHashField(initial='initial_hash')
++field.disabled = True
++has_changed = field.has_changed('initial_hash', 'different_value')
++print(f"5. Disabled field has_changed: {has_changed}")
++assert not has_changed, "Disabled field should not report changes"
++
++print("\nAll tests passed! The ReadOnlyPasswordHashField now uses disabled=True by default.")
+diff --git a/test_password_field_disabled.py b/test_password_field_disabled.py
+new file mode 100644
+index 0000000000..4b00332913
+--- /dev/null
++++ b/test_password_field_disabled.py
+@@ -0,0 +1,54 @@
++from django.contrib.auth.forms import UserChangeForm, ReadOnlyPasswordHashField
++from django.contrib.auth.models import User
++from django.test import TestCase
++
++class TestPasswordFieldDisabled(TestCase):
++    def setUp(self):
++        self.user = User.objects.create_user('testuser', 'test@example.com', 'testpass123')
++    
++    def test_readonly_password_field_disabled_by_default(self):
++        """Test that ReadOnlyPasswordHashField has disabled=True by default"""
++        field = ReadOnlyPasswordHashField()
++        self.assertTrue(field.disabled)
++    
++    def test_userchangeform_without_clean_password(self):
++        """Test that UserChangeForm works correctly without clean_password due to disabled field"""
++        # Remove clean_password temporarily  
++        original_clean_password = getattr(UserChangeForm, 'clean_password', None)
++        if hasattr(UserChangeForm, 'clean_password'):
++            delattr(UserChangeForm, 'clean_password')
++        
++        try:
++            # Create form with initial data
++            form = UserChangeForm(instance=self.user)
++            initial_password = form.initial['password']
++            
++            # Submit form with changed password (should be ignored)
++            post_data = form.initial.copy()
++            post_data['password'] = 'this_should_be_ignored'
++            
++            form = UserChangeForm(instance=self.user, data=post_data)
++            
++            # Validate form
++            self.assertTrue(form.is_valid())
++            
++            # Check that password field returns initial value
++            self.assertEqual(form.cleaned_data['password'], initial_password)
++            
++        finally:
++            # Restore clean_password if it existed
++            if original_clean_password:
++                UserChangeForm.clean_password = original_clean_password
++    
++    def test_disabled_field_ignores_user_input(self):
++        """Test that a disabled ReadOnlyPasswordHashField ignores user input"""
++        field = ReadOnlyPasswordHashField(initial='initial_hash')
++        # Even though disabled is now True by default, let's be explicit
++        self.assertTrue(field.disabled)
++        
++        # The bound_data method should return initial value
++        bound = field.bound_data('user_provided_value', 'initial_hash')
++        self.assertEqual(bound, 'initial_hash')
++        
++        # has_changed should always return False for disabled fields
++        self.assertFalse(field.has_changed('initial_hash', 'different_value'))
+diff --git a/tests/auth_tests/test_password_field_disabled.py b/tests/auth_tests/test_password_field_disabled.py
+new file mode 100644
+index 0000000000..4b00332913
+--- /dev/null
++++ b/tests/auth_tests/test_password_field_disabled.py
+@@ -0,0 +1,54 @@
++from django.contrib.auth.forms import UserChangeForm, ReadOnlyPasswordHashField
++from django.contrib.auth.models import User
++from django.test import TestCase
++
++class TestPasswordFieldDisabled(TestCase):
++    def setUp(self):
++        self.user = User.objects.create_user('testuser', 'test@example.com', 'testpass123')
++    
++    def test_readonly_password_field_disabled_by_default(self):
++        """Test that ReadOnlyPasswordHashField has disabled=True by default"""
++        field = ReadOnlyPasswordHashField()
++        self.assertTrue(field.disabled)
++    
++    def test_userchangeform_without_clean_password(self):
++        """Test that UserChangeForm works correctly without clean_password due to disabled field"""
++        # Remove clean_password temporarily  
++        original_clean_password = getattr(UserChangeForm, 'clean_password', None)
++        if hasattr(UserChangeForm, 'clean_password'):
++            delattr(UserChangeForm, 'clean_password')
++        
++        try:
++            # Create form with initial data
++            form = UserChangeForm(instance=self.user)
++            initial_password = form.initial['password']
++            
++            # Submit form with changed password (should be ignored)
++            post_data = form.initial.copy()
++            post_data['password'] = 'this_should_be_ignored'
++            
++            form = UserChangeForm(instance=self.user, data=post_data)
++            
++            # Validate form
++            self.assertTrue(form.is_valid())
++            
++            # Check that password field returns initial value
++            self.assertEqual(form.cleaned_data['password'], initial_password)
++            
++        finally:
++            # Restore clean_password if it existed
++            if original_clean_password:
++                UserChangeForm.clean_password = original_clean_password
++    
++    def test_disabled_field_ignores_user_input(self):
++        """Test that a disabled ReadOnlyPasswordHashField ignores user input"""
++        field = ReadOnlyPasswordHashField(initial='initial_hash')
++        # Even though disabled is now True by default, let's be explicit
++        self.assertTrue(field.disabled)
++        
++        # The bound_data method should return initial value
++        bound = field.bound_data('user_provided_value', 'initial_hash')
++        self.assertEqual(bound, 'initial_hash')
++        
++        # has_changed should always return False for disabled fields
++        self.assertFalse(field.has_changed('initial_hash', 'different_value'))

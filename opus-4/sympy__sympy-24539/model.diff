@@ -1,0 +1,40 @@
+diff --git a/sympy/polys/rings.py b/sympy/polys/rings.py
+index 12bd2fc920..a3e722ecda 100644
+--- a/sympy/polys/rings.py
++++ b/sympy/polys/rings.py
+@@ -616,9 +616,34 @@ def set_ring(self, new_ring):
+             return new_ring.from_dict(self, self.ring.domain)
+ 
+     def as_expr(self, *symbols):
++        """
++        Convert a polynomial to a SymPy expression.
++
++        Parameters
++        ==========
++
++        symbols : optional
++            Symbols to use for the generators. If not specified, the symbols
++            from the ring will be used. If specified, the number of symbols
++            must match the number of generators in the ring.
++
++        Examples
++        ========
++
++        >>> from sympy import ring, ZZ, symbols
++        >>> R, x, y, z = ring("x,y,z", ZZ)
++        >>> f = 3*x**2*y - x*y*z + 7*z**3 + 1
++        >>> f.as_expr()
++        3*x**2*y - x*y*z + 7*z**3 + 1
++
++        >>> u, v, w = symbols("u,v,w")
++        >>> f.as_expr(u, v, w)
++        3*u**2*v - u*v*w + 7*w**3 + 1
++
++        """
+         if symbols and len(symbols) != self.ring.ngens:
+             raise ValueError("not enough symbols, expected %s got %s" % (self.ring.ngens, len(symbols)))
+-        else:
++        elif not symbols:
+             symbols = self.ring.symbols
+ 
+         return expr_from_dict(self.as_expr_dict(), *symbols)

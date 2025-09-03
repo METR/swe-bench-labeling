@@ -1,0 +1,89 @@
+From 5868aed40b520e87bef501361bdc2beb7eb0b26c Mon Sep 17 00:00:00 2001
+From: Sam Levang <slevang@salientpredictions.com>
+Date: Fri, 8 Apr 2022 22:50:52 -0400
+Subject: [PATCH 1/3] check for attrs on x
+
+---
+ xarray/core/computation.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 7676d8e558c..e57072508c8 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1826,7 +1826,7 @@ def where(cond, x, y, keep_attrs=None):
+     if keep_attrs is None:
+         keep_attrs = _get_keep_attrs(default=False)
+ 
+-    if keep_attrs is True:
++    if keep_attrs is True and hasattr(x, "attrs"):
+         # keep the attributes of x, the second parameter, by default to
+         # be consistent with the `where` method of `DataArray` and `Dataset`
+         keep_attrs = lambda attrs, context: attrs[1]
+
+From b3b9f57aab2ba822d95d2c59a9c8c8aaec7c7d35 Mon Sep 17 00:00:00 2001
+From: Sam Levang <slevang@salientpredictions.com>
+Date: Sat, 9 Apr 2022 22:59:54 -0400
+Subject: [PATCH 2/3] ensure we only get attrs of x
+
+---
+ xarray/core/computation.py       | 5 ++---
+ xarray/tests/test_computation.py | 4 ++++
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index e57072508c8..1834622d96e 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1825,11 +1825,10 @@ def where(cond, x, y, keep_attrs=None):
+     """
+     if keep_attrs is None:
+         keep_attrs = _get_keep_attrs(default=False)
+-
+-    if keep_attrs is True and hasattr(x, "attrs"):
++    if keep_attrs is True:
+         # keep the attributes of x, the second parameter, by default to
+         # be consistent with the `where` method of `DataArray` and `Dataset`
+-        keep_attrs = lambda attrs, context: attrs[1]
++        keep_attrs = lambda attrs, context: getattr(x, "attrs", {})
+ 
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index 6a86738ab2f..7a397428ba3 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -1928,6 +1928,10 @@ def test_where_attrs() -> None:
+     expected = xr.DataArray([1, 0], dims="x", attrs={"attr": "x"})
+     assert_identical(expected, actual)
+ 
++    # ensure keep_attrs can handle scalar values
++    actual = xr.where(cond, 1, 0, keep_attrs=True)
++    assert actual.attrs == {}
++
+ 
+ @pytest.mark.parametrize("use_dask", [True, False])
+ @pytest.mark.parametrize("use_datetime", [True, False])
+
+From 38ef3b793ffe2cfe58e6f433e0012e16442f2bc3 Mon Sep 17 00:00:00 2001
+From: Sam Levang <slevang@salientpredictions.com>
+Date: Sat, 9 Apr 2022 23:10:10 -0400
+Subject: [PATCH 3/3] add whats-new
+
+---
+ doc/whats-new.rst | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index c84a0549774..d5f00432c85 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -73,6 +73,8 @@ Bug fixes
+ - In the API for backends, support dimensions that express their preferred chunk sizes
+   as a tuple of integers. (:issue:`6333`, :pull:`6334`)
+   By `Stan West <https://github.com/stanwest>`_.
++- Fix bug in :py:func:`where` when passing non-xarray objects with ``keep_attrs=True``. (:issue:`6444`, :pull:`6461`)
++  By `Sam Levang <https://github.com/slevang>`_.
+ 
+ Documentation
+ ~~~~~~~~~~~~~

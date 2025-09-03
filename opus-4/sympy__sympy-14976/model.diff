@@ -1,0 +1,37 @@
+diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
+index d06901425d..f6456252cd 100644
+--- a/sympy/printing/pycode.py
++++ b/sympy/printing/pycode.py
+@@ -331,6 +331,14 @@ def _print_Float(self, e):
+         args = str(tuple(map(int, e._mpf_)))
+         return '{func}({args})'.format(func=self._module_format('mpmath.mpf'), args=args)
+ 
++    def _print_Rational(self, e):
++        # Convert rational to mpmath's mpf for full precision
++        # mpmath.mpf(p)/mpmath.mpf(q) will maintain precision
++        return '{func}({p})/{func}({q})'.format(
++            func=self._module_format('mpmath.mpf'),
++            p=e.p,
++            q=e.q
++        )
+ 
+     def _print_uppergamma(self, e):
+         return "{0}({1}, {2}, {3})".format(
+diff --git a/sympy/printing/tests/test_pycode.py b/sympy/printing/tests/test_pycode.py
+index 68994056ea..d897372e9e 100644
+--- a/sympy/printing/tests/test_pycode.py
++++ b/sympy/printing/tests/test_pycode.py
+@@ -40,6 +40,13 @@ def test_PythonCodePrinter():
+ def test_MpmathPrinter():
+     p = MpmathPrinter()
+     assert p.doprint(sign(x)) == 'mpmath.sign(x)'
++    # Test rational printing
++    from sympy import Rational, S
++    assert p.doprint(Rational(7, 13)) == 'mpmath.mpf(7)/mpmath.mpf(13)'
++    assert p.doprint(S(232)/3) == 'mpmath.mpf(232)/mpmath.mpf(3)'
++    assert p.doprint(-S(5)/7) == 'mpmath.mpf(-5)/mpmath.mpf(7)'
++    # Integer (rational with denominator 1)
++    assert p.doprint(S(5)/1) == '5'
+ 
+ 
+ def test_NumPyPrinter():

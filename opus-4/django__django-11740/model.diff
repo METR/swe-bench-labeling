@@ -1,0 +1,284 @@
+diff --git a/test_simple_uuid_to_fk.py b/test_simple_uuid_to_fk.py
+new file mode 100644
+index 0000000000..19c407b695
+--- /dev/null
++++ b/test_simple_uuid_to_fk.py
+@@ -0,0 +1,134 @@
++"""
++Simple test case for UUID field to ForeignKey dependency issue.
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++django.setup()
++
++from django.db import models
++from django.db.migrations.state import ModelState, ProjectState
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.questioner import MigrationQuestioner
++import uuid
++
++
++# First, let's run the example from the Django test suite
++def test_from_django_suite():
++    """Test from Django test suite to ensure our setup works."""
++    
++    author_name = ModelState("testapp", "Author", [
++        ("id", models.AutoField(primary_key=True)),
++        ("name", models.CharField(max_length=200)),
++    ])
++    
++    author_name_longer = ModelState("testapp", "Author", [
++        ("id", models.AutoField(primary_key=True)),
++        ("name", models.CharField(max_length=400)),  # Changed from 200 to 400
++    ])
++    
++    before = ProjectState()
++    before.add_model(author_name.clone())
++    
++    after = ProjectState() 
++    after.add_model(author_name_longer.clone())
++    
++    autodetector = MigrationAutodetector(before, after)
++    changes = autodetector._detect_changes()
++    
++    print("Test from Django suite:")
++    print(f"Changes: {changes}")
++    print()
++
++
++def test_uuid_to_fk():
++    """Test the actual UUID to FK change."""
++    
++    # Define the models
++    app1_before = ModelState("testapp1", "App1", [
++        ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++        ("text", models.CharField(max_length=100)),
++        ("another_app", models.UUIDField(null=True, blank=True)),
++    ])
++    
++    app2_model = ModelState("testapp2", "App2", [
++        ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++        ("text", models.CharField(max_length=100)),
++    ])
++    
++    app1_after = ModelState("testapp1", "App1", [
++        ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++        ("text", models.CharField(max_length=100)),
++        ("another_app", models.ForeignKey("testapp2.App2", null=True, blank=True, on_delete=models.SET_NULL)),
++    ])
++    
++    # Create before state
++    before = ProjectState()
++    before.add_model(app1_before.clone())
++    before.add_model(app2_model.clone())
++    
++    # Create after state
++    after = ProjectState()
++    after.add_model(app2_model.clone())
++    after.add_model(app1_after.clone())
++    
++    # Run autodetector
++    autodetector = MigrationAutodetector(before, after)
++    changes = autodetector._detect_changes()
++    
++    print("UUID to FK test:")
++    print(f"Number of apps with changes: {len(changes)}")
++    
++    for app_label, migrations in changes.items():
++        print(f"\nApp: {app_label}")
++        for migration in migrations:
++            print(f"  Migration: {migration}")
++            print(f"  Migration class: {migration.__class__.__name__}")
++            print(f"  Migration dependencies: {migration.dependencies}")
++            
++            for operation in migration.operations:
++                print(f"\n  Operation: {operation}")
++                print(f"  Operation class: {operation.__class__.__name__}")
++                if hasattr(operation, '_auto_deps'):
++                    print(f"  Operation auto deps: {operation._auto_deps}")
++                    
++                # Check for AlterField
++                if operation.__class__.__name__ == 'AlterField' and operation.name == 'another_app':
++                    print(f"\n  Found AlterField for 'another_app'!")
++                    print(f"  Field: {operation.field}")
++                    print(f"  Field class: {operation.field.__class__.__name__}")
++                    print(f"  Operation auto deps: {getattr(operation, '_auto_deps', [])}")
++                    
++                    # Check if migration has dependency on testapp2
++                    has_testapp2_dep = any('testapp2' in str(dep) for dep in migration.dependencies)
++                    
++                    if not has_testapp2_dep:
++                        print("\n  BUG CONFIRMED: Migration has no dependency on testapp2!")
++                        print("  Expected a dependency like: ('testapp2', '__first__')")
++                    else:
++                        print("\n  Migration dependencies are correctly set!")
++                        
++                    if not getattr(operation, '_auto_deps', []):
++                        print("\n  Also, AlterField operation has no auto_deps!")
++                        print("  Expected: [('testapp2', 'App2', None, True)]")
++
++
++if __name__ == "__main__":
++    test_from_django_suite()
++    test_uuid_to_fk()
+diff --git a/test_uuid_to_fk_dependency.py b/test_uuid_to_fk_dependency.py
+new file mode 100644
+index 0000000000..2dce131e2d
+--- /dev/null
++++ b/test_uuid_to_fk_dependency.py
+@@ -0,0 +1,138 @@
++"""
++Test case for UUID field to ForeignKey dependency issue.
++"""
++import django
++from django.conf import settings
++from django.db import models
++from django.db.migrations.state import ModelState, ProjectState
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.questioner import MigrationQuestioner
++from django.db.migrations.graph import MigrationGraph
++import uuid
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++django.setup()
++
++
++def test_uuid_to_fk_dependency():
++    """Test that changing a UUID field to a ForeignKey creates proper dependencies."""
++    
++    # Create the initial state with App1 having a UUID field
++    before_state = ProjectState()
++    before_state.add_model(ModelState(
++        "testapp1", "App1",
++        [
++            ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++            ("text", models.CharField(max_length=100)),
++            ("another_app", models.UUIDField(null=True, blank=True)),
++        ],
++    ))
++    before_state.add_model(ModelState(
++        "testapp2", "App2",
++        [
++            ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++            ("text", models.CharField(max_length=100)),
++        ],
++    ))
++    
++    # Ensure the models are resolved
++    before_state = before_state.clone()
++    
++    # Create the after state with App1 having a ForeignKey to App2
++    after_state = ProjectState()
++    after_state.add_model(ModelState(
++        "testapp2", "App2",
++        [
++            ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++            ("text", models.CharField(max_length=100)),
++        ],
++    ))
++    after_state.add_model(ModelState(
++        "testapp1", "App1",
++        [
++            ("id", models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)),
++            ("text", models.CharField(max_length=100)),
++            ("another_app", models.ForeignKey("testapp2.App2", null=True, blank=True, on_delete=models.SET_NULL)),
++        ],
++    ))
++    
++    # Ensure the models are resolved
++    after_state = after_state.clone()
++    
++    # Create the autodetector
++    questioner = MigrationQuestioner()
++    autodetector = MigrationAutodetector(before_state, after_state, questioner)
++    
++    # Generate changes with an empty graph
++    graph = MigrationGraph()
++    changes = autodetector.changes(graph)
++    
++    # Check the generated operations
++    print("Generated changes:")
++    print(f"Number of app changes: {len(changes)}")
++    for app_label, migrations in changes.items():
++        print(f"\nApp: {app_label}")
++        print(f"  Number of migrations: {len(migrations)}")
++        for i, migration in enumerate(migrations):
++            print(f"  Migration {i}: {migration}")
++            print(f"  Dependencies: {migration.dependencies}")
++            for j, operation in enumerate(migration.operations):
++                print(f"    Operation {j}: {operation}")
++                print(f"    Operation class: {operation.__class__.__name__}")
++                print(f"    Operation details: {operation.deconstruct()}")
++                if hasattr(operation, '_auto_deps'):
++                    print(f"    Operation auto_deps: {operation._auto_deps}")
++    
++    # Check if AlterField operation has dependencies on App2
++    alter_field_op = None
++    for migrations in changes.values():
++        for migration in migrations:
++            for op in migration.operations:
++                if op.__class__.__name__ == 'AlterField' and op.name == 'another_app':
++                    alter_field_op = op
++                    break
++    
++    if alter_field_op:
++        print(f"\nAlterField operation found: {alter_field_op}")
++        print(f"Operation auto_deps: {getattr(alter_field_op, '_auto_deps', [])}")
++        
++        # Check migration dependencies too
++        testapp1_migration = None
++        for migration in changes.get('testapp1', []):
++            if any(op.__class__.__name__ == 'AlterField' and op.name == 'another_app' for op in migration.operations):
++                testapp1_migration = migration
++                break
++        
++        if testapp1_migration:
++            print(f"\nMigration dependencies: {testapp1_migration.dependencies}")
++            # Check if dependency on testapp2 exists
++            has_testapp2_dep = any('testapp2' in str(dep) for dep in testapp1_migration.dependencies)
++            if not has_testapp2_dep:
++                print("\nBUG CONFIRMED: Migration has no dependency on testapp2!")
++                print("Expected a dependency like: ('testapp2', '...')")
++            else:
++                print("\nDependencies are correctly set!")
++        
++        # The bug is that _auto_deps is empty, but it should contain ('testapp2', 'App2', None, True)
++        if not getattr(alter_field_op, '_auto_deps', []):
++            print("\nBUG CONFIRMED: AlterField operation has no auto_deps!")
++            print("Expected dependency: ('testapp2', 'App2', None, True)")
++    else:
++        print("\nNo AlterField operation found!")
++
++
++if __name__ == "__main__":
++    test_uuid_to_fk_dependency()

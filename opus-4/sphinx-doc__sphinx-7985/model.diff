@@ -1,0 +1,409 @@
+diff --git a/setup.py b/setup.py
+index a404f1fa5..2c6848797 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index dd5317087..ac2819da4 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -208,12 +208,59 @@ class CheckExternalLinksBuilder(Builder):
+                 else:
+                     return 'redirected', new_url, 0
+ 
++        def check_local() -> Tuple[str, str, int]:
++            """Check if a local link (reference to doc/label/anchor) exists."""
++            # Check for fragment (anchor) in the same document
++            if uri.startswith('#'):
++                anchor = uri[1:]
++                # Get the current document's doctree
++                doctree = self.env.get_doctree(docname)
++                # Check if the anchor exists as an ID in the document
++                if anchor in doctree.ids:
++                    return 'working', '', 0
++                else:
++                    return 'broken', __("Anchor '%s' not found") % anchor, 0
++            
++            # Handle other local references
++            # First check if it's a document reference (without extension)
++            if '/' not in uri and '#' not in uri:
++                # Check if it's a valid document name
++                if uri in self.env.found_docs:
++                    return 'working', '', 0
++                
++                # Check if it's a label in the standard domain
++                std_domain = self.env.get_domain('std')
++                if uri in std_domain.labels or uri in std_domain.anonlabels:
++                    return 'working', '', 0
++            
++            # Check for document#anchor pattern
++            if '#' in uri and not uri.startswith('#'):
++                doc_name, anchor = uri.split('#', 1)
++                # Check if document exists
++                if doc_name in self.env.found_docs:
++                    # Get the target document's doctree
++                    target_doctree = self.env.get_doctree(doc_name)
++                    # Check if anchor exists in the target document
++                    if anchor in target_doctree.ids:
++                        return 'working', '', 0
++                    else:
++                        return 'broken', __("Anchor '%s' not found in document '%s'") % (anchor, doc_name), 0
++                else:
++                    return 'broken', __("Document '%s' not found") % doc_name, 0
++            
++            # If we reach here, it's an unknown local reference format
++            return 'broken', __("Local reference '%s' not found") % uri, 0
++
+         def check() -> Tuple[str, str, int]:
+             # check for various conditions without bothering the network
+             if len(uri) == 0 or uri.startswith(('#', 'mailto:', 'ftp:')):
+                 return 'unchecked', '', 0
+             elif not uri.startswith(('http:', 'https:')):
+-                return 'local', '', 0
++                # Check local links only if they don't have a protocol
++                if '://' not in uri:
++                    return check_local()
++                # URLs with other protocols are unchecked
++                return 'unchecked', '', 0
+             elif uri in self.good:
+                 return 'working', 'old', 0
+             elif uri in self.broken:
+@@ -267,10 +314,7 @@ class CheckExternalLinksBuilder(Builder):
+             else:
+                 logger.info(darkgray('-ignored- ') + uri)
+             self.write_linkstat(linkstat)
+-        elif status == 'local':
+-            logger.info(darkgray('-local-   ') + uri)
+-            self.write_entry('local', docname, filename, lineno, uri)
+-            self.write_linkstat(linkstat)
++
+         elif status == 'working':
+             logger.info(darkgreen('ok        ') + uri + info)
+             self.write_linkstat(linkstat)
+diff --git a/test_doctree_refs.py b/test_doctree_refs.py
+new file mode 100644
+index 000000000..d080eff57
+--- /dev/null
++++ b/test_doctree_refs.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python
++"""Test script to analyze doctree references."""
++
++import os
++import tempfile
++import shutil
++from sphinx.application import Sphinx
++from docutils import nodes
++
++# Create a temporary directory
++tmpdir = tempfile.mkdtemp()
++print(f"Working in {tmpdir}")
++
++# Create conf.py
++with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++    f.write("""
++project = 'Test'
++extensions = []
++master_doc = 'index'
++""")
++
++# Create index.rst with a simple link
++with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++    f.write("""
++Test Local Links
++================
++
++Reference to target_
++Reference to broken_target_
++
++.. _target: #anchor
++.. _broken_target: doesntexist
++""")
++
++# Build the doctree
++app = Sphinx(tmpdir, tmpdir, os.path.join(tmpdir, '_build/doctrees'),
++             os.path.join(tmpdir, '_build'), 'linkcheck')
++app.build()
++
++# Analyze the doctree
++doctree = app.env.get_doctree('index')
++print("\nAnalyzing reference nodes in doctree:")
++for refnode in doctree.traverse(nodes.reference):
++    print(f"Reference node: {refnode}")
++    print(f"  attributes: {refnode.attributes}")
++    print()
++
++# Clean up
++shutil.rmtree(tmpdir)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 000000000..e2875783b
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,97 @@
++#!/usr/bin/env python
++"""Test script for edge cases in local link checking."""
++
++import os
++import tempfile
++import shutil
++from sphinx.cmd.build import build_main
++
++# Create a temporary directory
++tmpdir = tempfile.mkdtemp()
++print(f"Working in {tmpdir}")
++
++# Create conf.py
++with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++    f.write("""
++project = 'Test'
++extensions = []
++master_doc = 'index'
++""")
++
++# Create index.rst with various link types
++with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++    f.write("""
++Test Local Links Edge Cases
++===========================
++
++Working Links
++-------------
++
++1. Link to existing anchor in same document: `existing-anchor`_
++2. Link to existing document: doc1_
++3. Link to anchor in another document: `doc2#anchor`_
++4. Fragment-only link to existing: `#test-local-links-edge-cases`_
++
++Broken Links
++------------
++
++1. Link to non-existing anchor in same document: `broken-anchor`_
++2. Link to non-existing document: missing_
++3. Link to non-existing anchor in existing doc: `doc2#missing`_
++4. Fragment-only link to non-existing: `#missing-section`_
++
++.. _existing-anchor: #test-local-links-edge-cases
++.. _doc1: doc1
++.. _doc2#anchor: doc2#existing-anchor  
++.. _broken-anchor: #does-not-exist
++.. _missing: missing-doc
++.. _doc2#missing: doc2#missing-anchor
++
++.. _test-label:
++
++Label Section
++-------------
++
++This section has a label.
++""")
++
++# Create doc1.rst
++with open(os.path.join(tmpdir, 'doc1.rst'), 'w') as f:
++    f.write("""
++Document 1
++==========
++
++This is document 1.
++""")
++
++# Create doc2.rst with an anchor
++with open(os.path.join(tmpdir, 'doc2.rst'), 'w') as f:
++    f.write("""
++Document 2
++==========
++
++.. _existing-anchor:
++
++Section with Anchor
++-------------------
++
++This section has an anchor.
++""")
++
++# Run linkcheck
++print("\nRunning linkcheck...")
++result = build_main(['-b', 'linkcheck', tmpdir, os.path.join(tmpdir, '_build')])
++
++# Check output
++output_file = os.path.join(tmpdir, '_build', 'output.txt')
++if os.path.exists(output_file):
++    print("\nLinkcheck output:")
++    with open(output_file, 'r') as f:
++        content = f.read()
++        if content:
++            print(content)
++        else:
++            print("(No broken links found)")
++
++# Clean up
++shutil.rmtree(tmpdir)
+diff --git a/test_local_links.py b/test_local_links.py
+new file mode 100644
+index 000000000..c95b8ebcb
+--- /dev/null
++++ b/test_local_links.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python
++"""Test script to reproduce the local link issue."""
++
++import os
++import tempfile
++import shutil
++from sphinx.cmd.build import build_main
++
++# Create a temporary directory
++tmpdir = tempfile.mkdtemp()
++print(f"Working in {tmpdir}")
++
++# Create conf.py
++with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++    f.write("""
++project = 'Test'
++extensions = []
++master_doc = 'index'
++""")
++
++# Create index.rst with broken links
++with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++    f.write("""
++Test Local Links
++================
++
++broken external-link_
++broken local-link_
++
++.. _external-link: https://lkfqhlkghflkhs
++.. _local-link: doesntexist
++""")
++
++# Run linkcheck
++print("\nRunning linkcheck...")
++result = build_main(['-b', 'linkcheck', tmpdir, os.path.join(tmpdir, '_build')])
++
++# Check output
++output_file = os.path.join(tmpdir, '_build', 'output.txt')
++if os.path.exists(output_file):
++    print("\nLinkcheck output:")
++    with open(output_file, 'r') as f:
++        print(f.read())
++
++# Clean up
++shutil.rmtree(tmpdir)
+diff --git a/test_local_links_comprehensive.py b/test_local_links_comprehensive.py
+new file mode 100644
+index 000000000..d4b120ec9
+--- /dev/null
++++ b/test_local_links_comprehensive.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python
++"""Test script to reproduce various local link issues."""
++
++import os
++import tempfile
++import shutil
++from sphinx.cmd.build import build_main
++
++# Create a temporary directory
++tmpdir = tempfile.mkdtemp()
++print(f"Working in {tmpdir}")
++
++# Create conf.py
++with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++    f.write("""
++project = 'Test'
++extensions = []
++master_doc = 'index'
++""")
++
++# Create index.rst with various types of links
++with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++    f.write("""
++Test Local Links
++================
++
++Reference to existing target_
++Reference to broken_target_
++
++Cross-reference to a document :doc:`existing`
++Cross-reference to missing doc :doc:`missing`
++
++Reference to section ref :ref:`existing-section`
++Reference to missing section :ref:`missing-section`
++
++.. _existing target: #existing-anchor
++.. _broken_target: #non-existing-anchor
++
++.. _existing-section:
++
++Existing Section
++----------------
++
++Some content here.
++""")
++
++# Create existing.rst
++with open(os.path.join(tmpdir, 'existing.rst'), 'w') as f:
++    f.write("""
++Existing Document
++=================
++
++This document exists.
++""")
++
++# Run linkcheck
++print("\nRunning linkcheck...")
++result = build_main(['-b', 'linkcheck', tmpdir, os.path.join(tmpdir, '_build')])
++
++# Check output
++output_file = os.path.join(tmpdir, '_build', 'output.txt')
++if os.path.exists(output_file):
++    print("\nLinkcheck output:")
++    with open(output_file, 'r') as f:
++        print(f.read())
++
++# Clean up
++shutil.rmtree(tmpdir)
+diff --git a/tox.ini b/tox.ini
+index bddd822a6..34baee205 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

@@ -1,0 +1,370 @@
+diff --git a/setup.py b/setup.py
+index a404f1fa5..2c6848797 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/application.py b/sphinx/application.py
+index 385b74d8a..197a1dc56 100644
+--- a/sphinx/application.py
++++ b/sphinx/application.py
+@@ -293,7 +293,7 @@ class Sphinx:
+                 if catalog.domain == 'sphinx' and catalog.is_outdated():
+                     catalog.write_mo(self.config.language)
+ 
+-            locale_dirs = [None, path.join(package_dir, 'locale')] + list(repo.locale_dirs)
++            locale_dirs = [None] + list(repo.locale_dirs) + [path.join(package_dir, 'locale')]
+             self.translator, has_translation = locale.init(locale_dirs, self.config.language)
+             if has_translation or self.config.language == 'en':
+                 # "en" never needs to be translated
+diff --git a/test_locale_debug.py b/test_locale_debug.py
+new file mode 100644
+index 000000000..a0650f013
+--- /dev/null
++++ b/test_locale_debug.py
+@@ -0,0 +1,118 @@
++#!/usr/bin/env python
++"""Test script to reproduce the locale override issue."""
++import os
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for testing
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create necessary directories
++os.makedirs(os.path.join(test_dir, "locale/da/LC_MESSAGES"), exist_ok=True)
++os.makedirs(os.path.join(test_dir, "_build/html"), exist_ok=True)
++
++# Create conf.py
++conf_content = '''
++project = 'Test'
++language = 'da'
++locale_dirs = ['locale']
++gettext_auto_build = True
++numfig = True
++'''
++with open(os.path.join(test_dir, "conf.py"), "w") as f:
++    f.write(conf_content)
++
++# Create index.rst with a figure
++index_content = '''
++Test Document
++=============
++
++.. figure:: test.png
++   :name: myfigure
++
++   This is a test figure
++
++See :numref:`myfigure`.
++
++.. code-block:: python
++   :caption: My code
++   :name: mycode
++
++   print("Hello World")
++   
++See :numref:`mycode`.
++'''
++with open(os.path.join(test_dir, "index.rst"), "w") as f:
++    f.write(index_content)
++
++# Create a dummy image file
++Path(os.path.join(test_dir, "test.png")).touch()
++
++# Create sphinx.po with custom translations
++po_content = '''# Danish translations for Sphinx
++msgid ""
++msgstr ""
++"Project-Id-Version: Sphinx\\n"
++"POT-Creation-Date: 2019-07-20 11:27+0000\\n"
++"PO-Revision-Date: 2019-07-20 11:27+0000\\n"
++"Language: da\\n"
++"MIME-Version: 1.0\\n"
++"Content-Type: text/plain; charset=UTF-8\\n"
++"Content-Transfer-Encoding: 8bit\\n"
++
++#: sphinx/domains/std.py:166
++msgid "Fig. %s"
++msgstr "Foobar %s"
++
++#: sphinx/directives/code.py:263
++msgid "Listing %s"
++msgstr "Whatever %s"
++'''
++with open(os.path.join(test_dir, "locale/da/LC_MESSAGES/sphinx.po"), "w") as f:
++    f.write(po_content)
++
++# Change to test directory and build
++os.chdir(test_dir)
++
++# Build the documentation
++from sphinx.cmd.build import build_main
++result = build_main(['-b', 'html', '.', '_build/html'])
++
++# Check if .mo file was created
++mo_file = os.path.join(test_dir, "locale/da/LC_MESSAGES/sphinx.mo")
++if os.path.exists(mo_file):
++    print(f"✓ .mo file created: {mo_file}")
++else:
++    print("✗ .mo file NOT created")
++
++# Check the output HTML for the translations
++html_file = os.path.join(test_dir, "_build/html/index.html")
++if os.path.exists(html_file):
++    with open(html_file, "r") as f:
++        html_content = f.read()
++        if "Foobar" in html_content:
++            print("✓ Custom translation 'Foobar' found in HTML")
++        else:
++            print("✗ Custom translation 'Foobar' NOT found in HTML")
++        
++        if "Whatever" in html_content:
++            print("✓ Custom translation 'Whatever' found in HTML")
++        else:
++            print("✗ Custom translation 'Whatever' NOT found in HTML")
++            
++        # Show what's actually in the HTML
++        import re
++        fig_matches = re.findall(r'<span class="caption-number">([^<]+)</span>', html_content)
++        for i, match in enumerate(fig_matches):
++            print(f"Caption {i+1}: '{match}'")
++            
++        # Let's also check for Danish text
++        if "Figur" in html_content:
++            print("Found 'Figur' (Danish default translation)")
++        if "Viser" in html_content:
++            print("Found 'Viser' (Danish default translation)")
++
++print(f"\nTest directory preserved at: {test_dir}")
++print(f"HTML file at: {html_file}")
+diff --git a/test_locale_fixed.py b/test_locale_fixed.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/test_locale_fixed.py
+@@ -0,0 +1 @@
++
+diff --git a/test_locale_override.py b/test_locale_override.py
+new file mode 100644
+index 000000000..3019d96f1
+--- /dev/null
++++ b/test_locale_override.py
+@@ -0,0 +1,109 @@
++#!/usr/bin/env python
++"""Test script to reproduce the locale override issue."""
++import os
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for testing
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create necessary directories
++os.makedirs(os.path.join(test_dir, "locale/da/LC_MESSAGES"), exist_ok=True)
++os.makedirs(os.path.join(test_dir, "_build/html"), exist_ok=True)
++
++# Create conf.py
++conf_content = '''
++project = 'Test'
++language = 'da'
++locale_dirs = ['locale']
++gettext_auto_build = True
++'''
++with open(os.path.join(test_dir, "conf.py"), "w") as f:
++    f.write(conf_content)
++
++# Create index.rst with a figure
++index_content = '''
++Test Document
++=============
++
++.. figure:: test.png
++
++   This is a test figure
++
++.. code-block:: python
++
++   print("Hello World")
++'''
++with open(os.path.join(test_dir, "index.rst"), "w") as f:
++    f.write(index_content)
++
++# Create a dummy image file
++Path(os.path.join(test_dir, "test.png")).touch()
++
++# Create sphinx.po with custom translations
++po_content = '''# Danish translations for Sphinx
++msgid ""
++msgstr ""
++"Project-Id-Version: Sphinx\\n"
++"POT-Creation-Date: 2019-07-20 11:27+0000\\n"
++"PO-Revision-Date: 2019-07-20 11:27+0000\\n"
++"Language: da\\n"
++"MIME-Version: 1.0\\n"
++"Content-Type: text/plain; charset=UTF-8\\n"
++"Content-Transfer-Encoding: 8bit\\n"
++
++#: sphinx/domains/std.py:166
++msgid "Fig. %s"
++msgstr "Foobar %s"
++
++#: sphinx/directives/code.py:263
++msgid "Listing %s"
++msgstr "Whatever %s"
++'''
++with open(os.path.join(test_dir, "locale/da/LC_MESSAGES/sphinx.po"), "w") as f:
++    f.write(po_content)
++
++# Change to test directory and build
++os.chdir(test_dir)
++
++# Build the documentation
++from sphinx.cmd.build import build_main
++result = build_main(['-b', 'html', '.', '_build/html'])
++
++# Check if .mo file was created
++mo_file = os.path.join(test_dir, "locale/da/LC_MESSAGES/sphinx.mo")
++if os.path.exists(mo_file):
++    print(f"✓ .mo file created: {mo_file}")
++else:
++    print("✗ .mo file NOT created")
++
++# Check the output HTML for the translations
++html_file = os.path.join(test_dir, "_build/html/index.html")
++if os.path.exists(html_file):
++    with open(html_file, "r") as f:
++        html_content = f.read()
++        if "Foobar" in html_content:
++            print("✓ Custom translation 'Foobar' found in HTML")
++        else:
++            print("✗ Custom translation 'Foobar' NOT found in HTML")
++        
++        if "Whatever" in html_content:
++            print("✓ Custom translation 'Whatever' found in HTML")
++        else:
++            print("✗ Custom translation 'Whatever' NOT found in HTML")
++            
++        # Show what's actually in the HTML
++        import re
++        fig_match = re.search(r'<span class="caption-number">([^<]+)</span>', html_content)
++        if fig_match:
++            print(f"Actual figure caption: '{fig_match.group(1)}'")
++            
++        listing_match = re.search(r'<span class="caption-number">([^<]+)</span>', html_content)
++        if listing_match:
++            print(f"Actual listing caption: '{listing_match.group(1)}'")
++
++# Cleanup
++os.chdir("/")
++shutil.rmtree(test_dir)
+diff --git a/tests/test_locale.py b/tests/test_locale.py
+index a744a5ff7..7e6362710 100644
+--- a/tests/test_locale.py
++++ b/tests/test_locale.py
+@@ -63,3 +63,58 @@ def test_add_message_catalog(app, rootdir):
+     assert _('Hello world') == 'HELLO WORLD'
+     assert _('Hello sphinx') == 'Hello sphinx'
+     assert _('Hello reST') == 'Hello reST'
++
++
++def test_user_locale_overrides_builtin(rootdir, tmp_path):
++    """Test that user-provided locale directories override built-in translations."""
++    # Create a test locale directory with custom translations
++    import os
++    from pathlib import Path
++    
++    # Mock built-in locale directory
++    builtin_locale = tmp_path / 'builtin' / 'locale'
++    builtin_locale.mkdir(parents=True)
++    (builtin_locale / 'en' / 'LC_MESSAGES').mkdir(parents=True)
++    
++    # Mock user locale directory  
++    user_locale = tmp_path / 'user' / 'locale'
++    user_locale.mkdir(parents=True)
++    (user_locale / 'en' / 'LC_MESSAGES').mkdir(parents=True)
++    
++    # Create .po files (we'll use locale1 test files as base)
++    import shutil
++    shutil.copy(rootdir / 'test-locale' / 'locale1' / 'en' / 'LC_MESSAGES' / 'myext.po',
++                builtin_locale / 'en' / 'LC_MESSAGES' / 'myext.po')
++    shutil.copy(rootdir / 'test-locale' / 'locale1' / 'en' / 'LC_MESSAGES' / 'myext.mo',
++                builtin_locale / 'en' / 'LC_MESSAGES' / 'myext.mo')
++                
++    # Create user .po with different translation
++    po_content = '''# Test
++msgid ""
++msgstr ""
++"Content-Type: text/plain; charset=UTF-8\\n"
++
++msgid "Hello world"
++msgstr "USER HELLO"
++'''
++    with open(user_locale / 'en' / 'LC_MESSAGES' / 'myext.po', 'w') as f:
++        f.write(po_content)
++        
++    # Compile .mo file
++    from subprocess import run
++    run(['msgfmt', '-o', str(user_locale / 'en' / 'LC_MESSAGES' / 'myext.mo'),
++         str(user_locale / 'en' / 'LC_MESSAGES' / 'myext.po')])
++    
++    # Test with built-in locale first, then user locale
++    # This simulates the old behavior where built-in comes before user
++    locale.init([str(builtin_locale), str(user_locale)], 'en', 'myext', 'test1')
++    _ = locale.get_translation('myext', 'test1')
++    # With old behavior, built-in (HELLO WORLD) would be used
++    assert _('Hello world') == 'HELLO WORLD'
++    
++    # Clear and test with user locale first (new behavior)
++    locale.translators.clear()
++    locale.init([str(user_locale), str(builtin_locale)], 'en', 'myext', 'test2') 
++    _ = locale.get_translation('myext', 'test2')
++    # With new behavior, user translation should be used
++    assert _('Hello world') == 'USER HELLO'
+diff --git a/tox.ini b/tox.ini
+index a61299979..e2baccc07 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = --color yes
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

@@ -1,0 +1,90 @@
+diff --git a/xarray/core/weighted.py b/xarray/core/weighted.py
+index 996d2e4c..a9feac10 100644
+--- a/xarray/core/weighted.py
++++ b/xarray/core/weighted.py
+@@ -141,8 +141,14 @@ class Weighted:
+ 
+         # we need to mask data values that are nan; else the weights are wrong
+         mask = da.notnull()
+-
+-        sum_of_weights = self._reduce(mask, self.weights, dim=dim, skipna=False)
++        
++        # Convert weights to numeric if they are boolean to ensure correct sum
++        # when mask is also boolean (e.g., when weights are boolean)
++        weights = self.weights
++        if weights.dtype == bool:
++            weights = weights.astype(int)
++
++        sum_of_weights = self._reduce(mask, weights, dim=dim, skipna=False)
+ 
+         # 0-weights are not valid
+         valid_weights = sum_of_weights != 0.0
+diff --git a/xarray/tests/test_weighted.py b/xarray/tests/test_weighted.py
+index 24531215..e1b5d32b 100644
+--- a/xarray/tests/test_weighted.py
++++ b/xarray/tests/test_weighted.py
+@@ -158,6 +158,64 @@ def test_weighted_mean_nan(weights, expected, skipna):
+     assert_equal(expected, result)
+ 
+ 
++def test_weighted_mean_boolean_weights():
++    # Test case from issue #4349
++    dta = DataArray([1., 1., 1.])
++    wgt = DataArray(np.array([1, 1, 0], dtype=bool))
++    result = dta.weighted(wgt).mean()
++    expected = DataArray(1.0)
++    assert_equal(result, expected)
++
++
++def test_weighted_sum_boolean_weights():
++    dta = DataArray([1., 2., 3.])
++    wgt = DataArray(np.array([True, False, True]))
++    result = dta.weighted(wgt).sum()
++    expected = DataArray(4.0)
++    assert_equal(result, expected)
++
++
++def test_weighted_sum_of_weights_boolean():
++    dta = DataArray([1., 2., 3.])
++    wgt = DataArray(np.array([True, True, False]))
++    result = dta.weighted(wgt).sum_of_weights()
++    expected = DataArray(2.0)
++    assert_equal(result, expected)
++
++
++@pytest.mark.parametrize("skipna", [True, False])
++def test_weighted_mean_boolean_weights_with_nan(skipna):
++    dta = DataArray([1., np.nan, 3.])
++    wgt = DataArray(np.array([True, True, False]))
++    result = dta.weighted(wgt).mean(skipna=skipna)
++    if skipna:
++        expected = DataArray(1.0)
++    else:
++        expected = DataArray(np.nan)
++    assert_equal(result, expected)
++
++
++def test_weighted_operations_boolean_multidim():
++    # Test multi-dimensional case with boolean weights
++    dta = DataArray([[1., 2.], [3., 4.]], dims=['x', 'y'])
++    wgt = DataArray([[True, False], [True, True]], dims=['x', 'y'])
++    
++    # Test mean over all dimensions
++    result_mean = dta.weighted(wgt).mean()
++    expected_mean = DataArray((1 + 3 + 4) / 3.0)
++    assert_allclose(result_mean, expected_mean)
++    
++    # Test mean over one dimension
++    result_mean_x = dta.weighted(wgt).mean(dim='x')
++    expected_mean_x = DataArray([2.0, 4.0], dims=['y'])
++    assert_allclose(result_mean_x, expected_mean_x)
++    
++    # Test sum
++    result_sum = dta.weighted(wgt).sum()
++    expected_sum = DataArray(8.0)
++    assert_equal(result_sum, expected_sum)
++
++
+ def expected_weighted(da, weights, dim, skipna, operation):
+     """
+     Generate expected result using ``*`` and ``sum``. This is checked against

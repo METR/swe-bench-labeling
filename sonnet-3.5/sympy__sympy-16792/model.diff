@@ -1,0 +1,63 @@
+diff --git a/sympy/utilities/autowrap.py b/sympy/utilities/autowrap.py
+index bd6afb12d1..06d90771f7 100644
+--- a/sympy/utilities/autowrap.py
++++ b/sympy/utilities/autowrap.py
+@@ -81,6 +81,7 @@
+ from sympy.core.relational import Eq
+ from sympy.core.symbol import Dummy, Symbol
+ from sympy.tensor.indexed import Idx, IndexedBase
++from sympy.matrices import MatrixSymbol
+ from sympy.utilities.codegen import (make_routine, get_code_generator,
+                                      OutputArgument, InOutArgument,
+                                      InputArgument, CodeGenArgumentListError,
+@@ -342,6 +343,18 @@ def _prepare_files(self, routine, build_dir=os.curdir):
+     def _get_wrapped_function(cls, mod, name):
+         return getattr(mod, name + '_c')
+ 
++    def _prototype_arg_matrix(self, arg):
++        if isinstance(arg, (IndexedBase, MatrixSymbol)):
++            return f"np.ndarray[np.float64_t, ndim={arg.shape[1]}] {arg.name}"
++        else:
++            return self._prototype_arg(arg)
++
++    def _call_arg_matrix(self, arg):
++        if isinstance(arg, (IndexedBase, MatrixSymbol)):
++            return f"&{arg.name}[0]"
++        else:
++            return self._call_arg(arg)
++
+     def dump_pyx(self, routines, f, prefix):
+         """Write a Cython file with python wrappers
+ 
+@@ -358,6 +371,7 @@ def dump_pyx(self, routines, f, prefix):
+             The filename prefix, used to refer to the proper header file.
+             Only the basename of the prefix is used.
+         """
++        self._need_numpy = True  # Always import numpy for matrix handling
+         headers = []
+         functions = []
+         for routine in routines:
+@@ -372,12 +386,12 @@ def dump_pyx(self, routines, f, prefix):
+ 
+             # Function prototype
+             name = routine.name
+-            arg_string = ", ".join(self._prototype_arg(arg) for arg in py_args)
++            arg_string = ", ".join(self._prototype_arg_matrix(arg) for arg in py_args)
+ 
+             # Local Declarations
+             local_decs = []
+             for arg, val in py_inf.items():
+-                proto = self._prototype_arg(arg)
++                proto = self._prototype_arg_matrix(arg)
+                 mat, ind = [self._string_var(v) for v in val]
+                 local_decs.append("    cdef {0} = {1}.shape[{2}]".format(proto, mat, ind))
+             local_decs.extend(["    cdef {0}".format(self._declare_arg(a)) for a in py_loc])
+@@ -386,7 +400,7 @@ def dump_pyx(self, routines, f, prefix):
+                 declarations = declarations + "\n"
+ 
+             # Function Body
+-            args_c = ", ".join([self._call_arg(a) for a in routine.arguments])
++            args_c = ", ".join([self._call_arg_matrix(a) for a in routine.arguments])
+             rets = ", ".join([self._string_var(r.name) for r in py_rets])
+             if routine.results:
+                 body = '    return %s(%s)' % (routine.name, args_c)

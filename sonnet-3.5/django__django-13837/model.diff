@@ -1,0 +1,36 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index b8efb9f881..9c9777028e 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -215,16 +215,25 @@ def get_child_arguments():
+     Return the executable. This contains a workaround for Windows if the
+     executable is reported to not have the .exe extension which can cause bugs
+     on reloading.
++
++    This function has been modified to support autoreloading when using
++    `python -m` with any package, not just Django. It detects if the script
++    was invoked with `-m` and handles both package and script invocations.
+     """
+-    import django.__main__
+-    django_main_path = Path(django.__main__.__file__)
++    import __main__
+     py_script = Path(sys.argv[0])
+ 
+     args = [sys.executable] + ['-W%s' % o for o in sys.warnoptions]
+-    if py_script == django_main_path:
+-        # The server was started with `python -m django runserver`.
+-        args += ['-m', 'django']
+-        args += sys.argv[1:]
++    if hasattr(__main__, '__spec__') and __main__.__spec__ is not None:
++        # The script was invoked with -m
++        if __main__.__spec__.parent:
++            # The parent is not an empty string, so it was invoked as `python -m pkg`
++            args += ['-m', __main__.__spec__.parent]
++            args += sys.argv[1:]
++        else:
++            # The parent is an empty string, so it was invoked as `python -m script.py`
++            args += ['-m', Path(py_script).stem]
++            args += sys.argv[1:]
+     elif not py_script.exists():
+         # sys.argv[0] may not exist for several reasons on Windows.
+         # It may exist with a .exe extension or have a -script.py suffix.

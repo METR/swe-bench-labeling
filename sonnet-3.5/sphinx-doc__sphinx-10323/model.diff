@@ -1,0 +1,48 @@
+diff --git a/sphinx/directives/code.py b/sphinx/directives/code.py
+index dc44ed314..bdfd524a2 100644
+--- a/sphinx/directives/code.py
++++ b/sphinx/directives/code.py
+@@ -343,14 +343,28 @@ class LiteralIncludeReader:
+     def prepend_filter(self, lines: List[str], location: Tuple[str, int] = None) -> List[str]:
+         prepend = self.options.get('prepend')
+         if prepend:
+-            lines.insert(0, prepend + '\n')
++            # Determine the indentation of the first non-empty line
++            indent = ''
++            for line in lines:
++                if line.strip():
++                    indent = line[:len(line) - len(line.lstrip())]
++                    break
++            # Prepend the content with the same indentation
++            lines.insert(0, indent + prepend + '\n')
+ 
+         return lines
+ 
+     def append_filter(self, lines: List[str], location: Tuple[str, int] = None) -> List[str]:
+         append = self.options.get('append')
+         if append:
+-            lines.append(append + '\n')
++            # Determine the indentation of the last non-empty line
++            indent = ''
++            for line in reversed(lines):
++                if line.strip():
++                    indent = line[:len(line) - len(line.lstrip())]
++                    break
++            # Append the content with the same indentation
++            lines.append(indent + append + '\n')
+ 
+         return lines
+ 
+diff --git a/tox.ini b/tox.ini
+index f0afd779b..30ca90275 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:du-latest]
+ commands =

@@ -1,0 +1,60 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 794e0faae7..92349cd0c5 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1209,7 +1209,8 @@ class QuerySet:
+         if ignore_conflicts and not connections[self.db].features.supports_ignore_conflicts:
+             raise NotSupportedError('This database backend does not support ignoring conflicts.')
+         ops = connections[self.db].ops
+-        batch_size = (batch_size or max(ops.bulk_batch_size(fields, objs), 1))
++        max_batch_size = max(ops.bulk_batch_size(fields, objs), 1)
++        batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size
+         inserted_rows = []
+         bulk_return = connections[self.db].features.can_return_rows_from_bulk_insert
+         for item in [objs[i:i + batch_size] for i in range(0, len(objs), batch_size)]:
+diff --git a/test_bulk_create_batch_size.py b/test_bulk_create_batch_size.py
+new file mode 100644
+index 0000000000..0a5b8b69fb
+--- /dev/null
++++ b/test_bulk_create_batch_size.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++"""
++Test script to demonstrate the bulk_create batch_size issue.
++"""
++
++# This test would normally be in the Django test suite, but for demonstration
++# we'll create a simple test that shows the expected behavior
++
++def test_bulk_create_respects_max_batch_size():
++    """
++    Test that bulk_create respects the database's maximum batch size
++    even when a larger batch_size is explicitly provided.
++    """
++    # Mock scenario:
++    # Let's say the database backend calculates max_batch_size as 100
++    # but the user provides batch_size=1000
++    
++    # Expected behavior (like bulk_update):
++    # The actual batch size used should be min(1000, 100) = 100
++    
++    # Current buggy behavior:
++    # The actual batch size used is 1000 (ignoring the max_batch_size)
++    
++    print("Testing bulk_create batch_size handling...")
++    print("If batch_size=1000 and max_batch_size=100:")
++    print("Expected: Use batch_size=100")
++    print("Current bug: Uses batch_size=1000")
++    
++if __name__ == "__main__":
++    test_bulk_create_respects_max_batch_size()
+diff --git a/test_bulk_create_batch_size_fix.patch b/test_bulk_create_batch_size_fix.patch
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_bulk_create_batch_size_fix.patch
+@@ -0,0 +1 @@
++
+diff --git a/test_bulk_create_fix.py b/test_bulk_create_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2

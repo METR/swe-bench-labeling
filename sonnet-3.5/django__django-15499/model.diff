@@ -1,0 +1,33 @@
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index 90fc31bee5..c64488f774 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -6,6 +6,7 @@ from django.db.models.options import normalize_together
+ from django.utils.functional import cached_property
+ 
+ from .fields import AddField, AlterField, FieldOperation, RemoveField, RenameField
++from .managers import AlterModelManagers
+ 
+ 
+ def _check_for_duplicates(arg_name, objs):
+@@ -65,6 +66,20 @@ class CreateModel(ModelOperation):
+         )
+         _check_for_duplicates("managers", (name for name, _ in self.managers))
+ 
++    def reduce(self, operation, app_label):
++        if isinstance(operation, AlterModelManagers) and self.name_lower == operation.name_lower:
++            self.managers = operation.managers
++            return [
++                CreateModel(
++                    name=self.name,
++                    fields=self.fields,
++                    options=self.options,
++                    bases=self.bases,
++                    managers=self.managers,
++                ),
++            ]
++        return super().reduce(operation, app_label)
++
+     def deconstruct(self):
+         kwargs = {
+             "name": self.name,

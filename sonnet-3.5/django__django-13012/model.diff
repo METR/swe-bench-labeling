@@ -1,0 +1,23 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index abbb1e37cb..601353c7f3 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -6,7 +6,7 @@ from itertools import chain
+ from django.core.exceptions import EmptyResultSet, FieldError
+ from django.db import DatabaseError, NotSupportedError
+ from django.db.models.constants import LOOKUP_SEP
+-from django.db.models.expressions import F, OrderBy, Random, RawSQL, Ref, Value
++from django.db.models.expressions import ExpressionWrapper, F, OrderBy, Random, RawSQL, Ref, Value
+ from django.db.models.functions import Cast
+ from django.db.models.query_utils import Q, select_related_descend
+ from django.db.models.sql.constants import (
+@@ -138,6 +138,9 @@ class SQLCompiler:
+         expressions = self.collapse_group_by(expressions, having_group_by)
+ 
+         for expr in expressions:
++            # Skip constant expressions wrapped in ExpressionWrapper
++            if isinstance(expr, ExpressionWrapper) and isinstance(expr.expression, Value):
++                continue
+             sql, params = self.compile(expr)
+             sql, params = expr.select_format(self, sql, params)
+             params_hash = make_hashable(params)

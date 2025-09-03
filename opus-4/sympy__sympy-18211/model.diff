@@ -1,0 +1,189 @@
+diff --git a/sympy/core/relational.py b/sympy/core/relational.py
+index f581bfa3c4..41de9ec84c 100644
+--- a/sympy/core/relational.py
++++ b/sympy/core/relational.py
+@@ -671,6 +671,40 @@ def as_poly(self, *gens, **kwargs):
+         '''
+         return (self.lhs - self.rhs).as_poly(*gens, **kwargs)
+ 
++    def _eval_as_set(self):
++        """
++        Rewrites an Equality as a set. If the equation can be solved,
++        returns a FiniteSet of solutions. If not, returns a ConditionSet.
++
++        Examples
++        ========
++
++        >>> from sympy import Eq, Symbol, cos, sin
++        >>> x = Symbol('x')
++        >>> Eq(x**2, 1).as_set()
++        FiniteSet(-1, 1)
++        >>> n = Symbol('n')
++        >>> Eq(n*cos(n) - 3*sin(n), 0).as_set()
++        {n | n ∊ ℝ ∧ n⋅cos(n) - 3⋅sin(n) = 0}
++        """
++        from sympy.sets import ConditionSet
++        from sympy.solvers.solveset import solveset
++        
++        free = self.free_symbols
++        if len(free) == 1:
++            x = free.pop()
++            try:
++                # Try to solve the equation
++                solutions = solveset(self, x, domain=S.Reals)
++                # If solveset returns a ConditionSet, return it as is
++                return solutions
++            except (NotImplementedError, ValueError):
++                # If solving fails, return a ConditionSet
++                return ConditionSet(x, self, S.Reals)
++        else:
++            # Multivariate case - return to base class behavior
++            return super()._eval_as_set()
++
+ 
+ Eq = Equality
+ 
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..04539b2e25
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,53 @@
++from sympy import *
++from sympy.sets import ConditionSet, FiniteSet
++
++# Test the original issue
++n = Symbol('n', real=True)
++eq = Eq(n*cos(n) - 3*sin(n), 0)
++
++try:
++    result = eq.as_set()
++    print(f"Result for transcendental equation: {result}")
++    assert isinstance(result, ConditionSet)
++    print("✓ Transcendental equation returns ConditionSet")
++except NotImplementedError as e:
++    print(f"✗ NotImplementedError raised: {e}")
++
++# Expected result
++expected = ConditionSet(n, Eq(n*cos(n) - 3*sin(n), 0), Reals)
++print(f"Expected: {expected}")
++print()
++
++# Test that normal solvable equations still work
++x = Symbol('x', real=True)
++
++# Test 1: Simple quadratic equation
++eq1 = Eq(x**2, 1)
++result1 = eq1.as_set()
++print(f"Result for x**2 = 1: {result1}")
++assert result1 == FiniteSet(-1, 1)
++print("✓ Simple quadratic equation works")
++print()
++
++# Test 2: Linear equation
++eq2 = Eq(2*x + 3, 7)
++result2 = eq2.as_set()
++print(f"Result for 2*x + 3 = 7: {result2}")
++assert result2 == FiniteSet(2)
++print("✓ Linear equation works")
++print()
++
++# Test 3: Another unsolvable equation
++eq3 = Eq(x*exp(x) - 1, 0)
++result3 = eq3.as_set()
++print(f"Result for x*exp(x) - 1 = 0: {result3}")
++assert isinstance(result3, ConditionSet)
++print("✓ Another transcendental equation returns ConditionSet")
++print()
++
++# Test 4: Empty solution set
++eq4 = Eq(x**2 + 1, 0)
++result4 = eq4.as_set()
++print(f"Result for x**2 + 1 = 0 (no real solutions): {result4}")
++assert result4 == EmptySet
++print("✓ Equation with no real solutions returns EmptySet")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..0c311d850e
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,57 @@
++from sympy import *
++from sympy.sets import ConditionSet, FiniteSet
++from sympy.logic.boolalg import And, Or
++
++# Test multivariate equations
++x, y = symbols('x y', real=True)
++
++# Test 1: Multivariate equation should fall back to base class behavior
++print("Test 1: Multivariate equation")
++try:
++    eq = Eq(x + y, 0)
++    result = eq.as_set()
++    print(f"Result: {result}")
++except NotImplementedError as e:
++    print(f"NotImplementedError raised (expected): {e}")
++
++# Test 2: Symbol without real assumption
++print("\nTest 2: Complex symbol")
++z = Symbol('z')
++eq = Eq(z**2, 1)
++result = eq.as_set()
++print(f"Result for z**2 = 1 (complex z): {result}")
++
++# Test 3: Boolean equations 
++print("\nTest 3: Boolean equations")
++eq_true = Eq(1, 1)
++result_true = eq_true.as_set()
++print(f"Eq(1, 1).as_set() = {result_true}")
++
++eq_false = Eq(1, 2)
++result_false = eq_false.as_set()
++print(f"Eq(1, 2).as_set() = {result_false}")
++
++# Test 4: Equation with parameters
++print("\nTest 4: Equation with parameter")
++a = Symbol('a', real=True)
++x = Symbol('x', real=True)
++eq = Eq(a*x, 1)
++try:
++    result = eq.as_set()
++    print(f"Result for a*x = 1: {result}")
++except Exception as e:
++    print(f"Error (expected for multivariate): {type(e).__name__}: {e}")
++
++# Test 5: Periodic equation
++print("\nTest 5: Periodic equation")
++x = Symbol('x', real=True)
++eq = Eq(sin(x), 0)
++result = eq.as_set()
++print(f"Result for sin(x) = 0: {result}")
++
++# Test 6: Equation with complex solutions only
++print("\nTest 6: Complex solutions only")
++x = Symbol('x', real=True)
++eq = Eq(exp(x), -1)
++result = eq.as_set()
++print(f"Result for exp(x) = -1 (no real solutions): {result}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..10dfe3a6dc
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,16 @@
++from sympy import *
++from sympy.sets import ConditionSet
++
++# Test the issue
++n = Symbol('n', real=True)
++eq = Eq(n*cos(n) - 3*sin(n), 0)
++
++try:
++    result = eq.as_set()
++    print(f"Result: {result}")
++except NotImplementedError as e:
++    print(f"NotImplementedError raised: {e}")
++
++# Expected result
++expected = ConditionSet(n, Eq(n*cos(n) - 3*sin(n), 0), Reals)
++print(f"Expected: {expected}")

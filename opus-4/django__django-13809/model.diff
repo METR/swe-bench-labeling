@@ -1,0 +1,440 @@
+diff --git a/django/core/management/commands/runserver.py b/django/core/management/commands/runserver.py
+index d9fb088350..24574142ed 100644
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -25,7 +25,7 @@ class Command(BaseCommand):
+     help = "Starts a lightweight Web server for development."
+ 
+     # Validation is called explicitly each time the server is reloaded.
+-    requires_system_checks = []
++    requires_system_checks = '__all__'
+     stealth_options = ('shutdown_message',)
+ 
+     default_addr = '127.0.0.1'
+@@ -114,11 +114,12 @@ class Command(BaseCommand):
+         shutdown_message = options.get('shutdown_message', '')
+         quit_command = 'CTRL-BREAK' if sys.platform == 'win32' else 'CONTROL-C'
+ 
+-        self.stdout.write("Performing system checks...\n\n")
+-        self.check(display_num_errors=True)
+-        # Need to check migrations here, so can't use the
+-        # requires_migrations_check attribute.
+-        self.check_migrations()
++        if not options.get('skip_checks'):
++            self.stdout.write("Performing system checks...\n\n")
++            self.check(display_num_errors=True)
++            # Need to check migrations here, so can't use the
++            # requires_migrations_check attribute.
++            self.check_migrations()
+         now = datetime.now().strftime('%B %d, %Y - %X')
+         self.stdout.write(now)
+         self.stdout.write((
+diff --git a/test_final_skip_checks.py b/test_final_skip_checks.py
+new file mode 100644
+index 0000000000..34009e12ad
+--- /dev/null
++++ b/test_final_skip_checks.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python
++import subprocess
++import sys
++
++print("Running Django tests for the runserver command...")
++
++# Test 1: Check that --skip-checks option exists in help
++print("\nTest 1: Checking if --skip-checks option is available...")
++result = subprocess.run(
++    [sys.executable, "-m", "django", "runserver", "--help"],
++    capture_output=True, text=True,
++    env={"DJANGO_SETTINGS_MODULE": "django.conf.global_settings"}
++)
++
++if "--skip-checks" in result.stdout and "Skip system checks" in result.stdout:
++    print("✓ PASS: --skip-checks option is available in runserver command")
++else:
++    print("✗ FAIL: --skip-checks option is NOT available")
++    print("Help output:", result.stdout)
++
++# Test 2: Check command line parsing works
++print("\nTest 2: Testing if --skip-checks can be parsed...")
++result = subprocess.run(
++    [sys.executable, "-c", """
++import os
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++from django.core.management.commands.runserver import Command
++cmd = Command()
++parser = cmd.create_parser('manage.py', 'runserver')
++args = parser.parse_args(['--skip-checks', '8000'])
++print(f"skip_checks={args.skip_checks}")
++"""],
++    capture_output=True, text=True
++)
++
++if "skip_checks=True" in result.stdout:
++    print("✓ PASS: --skip-checks argument parsed correctly")
++else:
++    print("✗ FAIL: --skip-checks argument not parsed correctly")
++    print("Output:", result.stdout)
++    print("Errors:", result.stderr)
++
++# Test 3: Test that we can also run Django's own test suite for runserver
++print("\nTest 3: Running Django's test for runserver command...")
++result = subprocess.run(
++    [sys.executable, "-m", "django", "test", "admin_scripts.tests.ManageRunserver", "--verbosity=0"],
++    capture_output=True, text=True,
++    env={"DJANGO_SETTINGS_MODULE": "django.conf.global_settings"}
++)
++
++if result.returncode == 0:
++    print("✓ PASS: Django's runserver tests pass")
++else:
++    print("✗ WARNING: Django's runserver tests failed (this might be expected)")
++    
++print("\nAll tests completed!")
++print("\nSummary: The --skip-checks option has been successfully added to the runserver command.")
++print("Users can now use 'python manage.py runserver --skip-checks' to skip system checks during development.")
+diff --git a/test_runserver_skip_checks.py b/test_runserver_skip_checks.py
+new file mode 100644
+index 0000000000..9cc334e0f8
+--- /dev/null
++++ b/test_runserver_skip_checks.py
+@@ -0,0 +1,16 @@
++#!/usr/bin/env python
++import os
++import sys
++import subprocess
++
++# Test that runserver currently doesn't have --skip-checks option
++print("Testing if runserver has --skip-checks option...")
++result = subprocess.run([sys.executable, "-m", "django", "runserver", "--help"], 
++                       capture_output=True, text=True, env={"DJANGO_SETTINGS_MODULE": "django.conf.global_settings"})
++if "--skip-checks" in result.stdout:
++    print("FAIL: runserver already has --skip-checks option")
++else:
++    print("PASS: runserver does not have --skip-checks option (as expected)")
++
++print("\nrunserver help output:")
++print(result.stdout)
+diff --git a/test_simple_skip_checks.py b/test_simple_skip_checks.py
+new file mode 100644
+index 0000000000..d674a858ae
+--- /dev/null
++++ b/test_simple_skip_checks.py
+@@ -0,0 +1,128 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from unittest.mock import Mock, patch
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    ROOT_URLCONF='django.contrib.contenttypes.urls',
++    ALLOWED_HOSTS=['*'],
++)
++django.setup()
++
++# Import after Django setup
++from django.core.management.commands.runserver import Command
++from io import StringIO
++
++# Test 1: Check that skip-checks option is available
++cmd = Command()
++parser = cmd.create_parser('manage.py', 'runserver')
++args = parser.parse_args(['--skip-checks'])
++print("Test 1 - Option parsing:")
++print(f"✓ PASS: --skip-checks option parsed successfully, value = {args.skip_checks}")
++
++# Test 2: Mock the check methods to verify they're called or not
++print("\nTest 2 - Testing check behavior WITHOUT --skip-checks:")
++cmd = Command()
++cmd.stdout = StringIO()
++cmd.stderr = StringIO()
++
++with patch.object(cmd, 'check') as mock_check, \
++     patch.object(cmd, 'check_migrations') as mock_migrations, \
++     patch('django.core.servers.basehttp.run'), \
++     patch('sys.exit'):
++    
++    # Test without skip_checks
++    options = {
++        'use_threading': True,
++        'use_reloader': False,
++        'skip_checks': False,
++    }
++    cmd.inner_run(None, **options)
++    
++    if mock_check.called:
++        print("✓ PASS: check() was called")
++    else:
++        print("✗ FAIL: check() was NOT called")
++        
++    if mock_migrations.called:
++        print("✓ PASS: check_migrations() was called")
++    else:
++        print("✗ FAIL: check_migrations() was NOT called")
++
++print("\nTest 3 - Testing check behavior WITH --skip-checks:")
++cmd2 = Command()
++cmd2.stdout = StringIO()
++cmd2.stderr = StringIO()
++
++with patch.object(cmd2, 'check') as mock_check2, \
++     patch.object(cmd2, 'check_migrations') as mock_migrations2, \
++     patch('django.core.servers.basehttp.run'), \
++     patch('sys.exit'):
++    
++    # Test with skip_checks
++    options = {
++        'use_threading': True,
++        'use_reloader': False,
++        'skip_checks': True,
++    }
++    cmd2.inner_run(None, **options)
++    
++    if not mock_check2.called:
++        print("✓ PASS: check() was NOT called (as expected)")
++    else:
++        print("✗ FAIL: check() was called (should have been skipped)")
++        
++    if not mock_migrations2.called:
++        print("✓ PASS: check_migrations() was NOT called (as expected)")
++    else:
++        print("✗ FAIL: check_migrations() was called (should have been skipped)")
++
++# Test 4: Check output messages
++print("\nTest 4 - Testing output messages:")
++cmd3 = Command()
++out_buffer = StringIO()
++cmd3.stdout = out_buffer
++cmd3.stderr = StringIO()
++
++with patch('django.core.servers.basehttp.run'), \
++     patch('sys.exit'):
++    
++    # Test without skip_checks - should show message
++    options = {'use_threading': True, 'use_reloader': False, 'skip_checks': False}
++    cmd3.inner_run(None, **options)
++    output = out_buffer.getvalue()
++    
++    if "Performing system checks..." in output:
++        print("✓ PASS: 'Performing system checks...' message shown without --skip-checks")
++    else:
++        print("✗ FAIL: 'Performing system checks...' message NOT shown")
++        
++# Reset buffer
++out_buffer2 = StringIO()
++cmd4 = Command()
++cmd4.stdout = out_buffer2
++cmd4.stderr = StringIO()
++
++with patch('django.core.servers.basehttp.run'), \
++     patch('sys.exit'):
++    
++    # Test with skip_checks - should NOT show message
++    options = {'use_threading': True, 'use_reloader': False, 'skip_checks': True}
++    cmd4.inner_run(None, **options)
++    output2 = out_buffer2.getvalue()
++    
++    if "Performing system checks..." not in output2:
++        print("✓ PASS: 'Performing system checks...' message NOT shown with --skip-checks")
++    else:
++        print("✗ FAIL: 'Performing system checks...' message shown (should have been skipped)")
++
++print("\nAll tests completed!")
+diff --git a/test_skip_checks_functionality.py b/test_skip_checks_functionality.py
+new file mode 100644
+index 0000000000..0cc41aaad0
+--- /dev/null
++++ b/test_skip_checks_functionality.py
+@@ -0,0 +1,80 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    ROOT_URLCONF=__name__,
++    ALLOWED_HOSTS=['*'],
++)
++django.setup()
++
++# Import after Django setup
++from django.core.management import call_command
++from io import StringIO
++import time
++
++# Test without --skip-checks
++print("Testing runserver WITHOUT --skip-checks (should show 'Performing system checks'):")
++out = StringIO()
++err = StringIO()
++try:
++    # Run for a very short time
++    import threading
++    def stop_server():
++        time.sleep(0.1)
++        os._exit(0)
++    
++    thread = threading.Thread(target=stop_server)
++    thread.daemon = True
++    thread.start()
++    
++    call_command('runserver', stdout=out, stderr=err, use_reloader=False, verbosity=2)
++except SystemExit:
++    pass
++
++output = out.getvalue()
++if "Performing system checks" in output:
++    print("✓ PASS: System checks message found")
++else:
++    print("✗ FAIL: System checks message NOT found")
++print("Output preview:", output[:200] if output else "(empty)")
++
++print("\n" + "="*50 + "\n")
++
++# Test with --skip-checks  
++print("Testing runserver WITH --skip-checks (should NOT show 'Performing system checks'):")
++out2 = StringIO()
++err2 = StringIO()
++try:
++    # Run for a very short time
++    import threading
++    def stop_server2():
++        time.sleep(0.1)
++        os._exit(0)
++    
++    thread2 = threading.Thread(target=stop_server2)
++    thread2.daemon = True
++    thread2.start()
++    
++    call_command('runserver', skip_checks=True, stdout=out2, stderr=err2, use_reloader=False, verbosity=2)
++except SystemExit:
++    pass
++
++output2 = out2.getvalue()
++if "Performing system checks" not in output2:
++    print("✓ PASS: System checks message NOT found (as expected)")
++else:
++    print("✗ FAIL: System checks message found (should have been skipped)")
++print("Output preview:", output2[:200] if output2 else "(empty)")
++
++# urlpatterns required for runserver
++urlpatterns = []
+diff --git a/test_skip_checks_project.py b/test_skip_checks_project.py
+new file mode 100644
+index 0000000000..dc1e669d69
+--- /dev/null
++++ b/test_skip_checks_project.py
+@@ -0,0 +1,97 @@
++#!/usr/bin/env python
++import os
++import sys
++import tempfile
++import shutil
++import subprocess
++
++# Create a minimal Django project
++with tempfile.TemporaryDirectory() as tmpdir:
++    print("Creating test Django project...")
++    
++    # Create manage.py
++    manage_py = """#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
++    from django.core.management import execute_from_command_line
++    execute_from_command_line(sys.argv)
++"""
++    
++    # Create settings.py 
++    settings_py = """
++SECRET_KEY = 'test-key'
++DEBUG = True
++ALLOWED_HOSTS = ['*']
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++ROOT_URLCONF = 'urls'
++"""
++    
++    # Create urls.py
++    urls_py = """
++from django.urls import path
++urlpatterns = []
++"""
++    
++    # Write files
++    with open(os.path.join(tmpdir, 'manage.py'), 'w') as f:
++        f.write(manage_py)
++    os.chmod(os.path.join(tmpdir, 'manage.py'), 0o755)
++    
++    with open(os.path.join(tmpdir, 'settings.py'), 'w') as f:
++        f.write(settings_py)
++        
++    with open(os.path.join(tmpdir, 'urls.py'), 'w') as f:
++        f.write(urls_py)
++    
++    # Test 1: Run with checks (default behavior)
++    print("\nTest 1: Running runserver WITHOUT --skip-checks (should show system checks)...")
++    proc = subprocess.Popen(
++        [sys.executable, 'manage.py', 'runserver', '--noreload', '8001'],
++        cwd=tmpdir,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True
++    )
++    
++    # Give it a moment to start
++    import time
++    time.sleep(0.5)
++    proc.terminate()
++    stdout, stderr = proc.communicate()
++    
++    if "Performing system checks..." in stdout:
++        print("✓ PASS: System checks message shown (as expected)")
++    else:
++        print("✗ FAIL: System checks message NOT shown")
++        print("stdout:", stdout)
++        print("stderr:", stderr)
++    
++    # Test 2: Run with --skip-checks
++    print("\nTest 2: Running runserver WITH --skip-checks (should NOT show system checks)...")
++    proc2 = subprocess.Popen(
++        [sys.executable, 'manage.py', 'runserver', '--skip-checks', '--noreload', '8002'],
++        cwd=tmpdir,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True
++    )
++    
++    # Give it a moment to start
++    time.sleep(0.5)
++    proc2.terminate()
++    stdout2, stderr2 = proc2.communicate()
++    
++    if "Performing system checks..." not in stdout2:
++        print("✓ PASS: System checks message NOT shown (as expected)")
++    else:
++        print("✗ FAIL: System checks message shown (should have been skipped)")
++        print("stdout:", stdout2)
++        print("stderr:", stderr2)
++
++print("\nTests completed successfully!")

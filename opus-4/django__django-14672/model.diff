@@ -1,0 +1,449 @@
+diff --git a/django/db/models/fields/reverse_related.py b/django/db/models/fields/reverse_related.py
+index ccc2223a5f..65950590e2 100644
+--- a/django/db/models/fields/reverse_related.py
++++ b/django/db/models/fields/reverse_related.py
+@@ -310,7 +310,7 @@ class ManyToManyRel(ForeignObjectRel):
+     def identity(self):
+         return super().identity + (
+             self.through,
+-            self.through_fields,
++            make_hashable(self.through_fields),
+             self.db_constraint,
+         )
+ 
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..5c7129b394
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,186 @@
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.core import checks
++
++# Test Case 1: Original issue - ManyToMany with through_fields as list
++class Parent(models.Model):
++    name = models.CharField(max_length=256)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyParent(Parent):
++    class Meta:
++        proxy = True
++        app_label = 'test_app'
++
++class Child(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE)
++    many_to_many_field = models.ManyToManyField(
++        to=Parent,
++        through="ManyToManyModel",
++        through_fields=['child', 'parent'],
++        related_name="something"
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ManyToManyModel(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE, related_name='+')
++    child = models.ForeignKey(Child, on_delete=models.CASCADE, related_name='+')
++    second_child = models.ForeignKey(Child, on_delete=models.CASCADE, null=True, default=None)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test Case 2: ManyToMany with through_fields as tuple (should also work)
++class Parent2(models.Model):
++    name = models.CharField(max_length=256)
++    
++    class Meta:
++        app_label = 'test_app2'
++
++class Child2(models.Model):
++    parent = models.ForeignKey(Parent2, on_delete=models.CASCADE)
++    many_to_many_field = models.ManyToManyField(
++        to=Parent2,
++        through="ManyToManyModel2",
++        through_fields=('child2', 'parent2'),  # Tuple instead of list
++        related_name="something2"
++    )
++    
++    class Meta:
++        app_label = 'test_app2'
++
++class ManyToManyModel2(models.Model):
++    parent2 = models.ForeignKey(Parent2, on_delete=models.CASCADE, related_name='+')
++    child2 = models.ForeignKey(Child2, on_delete=models.CASCADE, related_name='+')
++    
++    class Meta:
++        app_label = 'test_app2'
++
++# Test Case 3: ManyToMany without through_fields (None case)
++class Parent3(models.Model):
++    name = models.CharField(max_length=256)
++    
++    class Meta:
++        app_label = 'test_app3'
++
++class Child3(models.Model):
++    many_to_many_field = models.ManyToManyField(
++        to=Parent3,
++        related_name="something3"
++    )
++    
++    class Meta:
++        app_label = 'test_app3'
++
++def test_hashing():
++    """Test that all ManyToManyRel objects can be hashed"""
++    test_cases = [
++        ("Case 1: List through_fields", Child._meta.get_field('many_to_many_field')),
++        ("Case 2: Tuple through_fields", Child2._meta.get_field('many_to_many_field')),
++        ("Case 3: No through_fields", Child3._meta.get_field('many_to_many_field')),
++    ]
++    
++    all_passed = True
++    for case_name, field in test_cases:
++        try:
++            remote_field = field.remote_field
++            print(f"\n{case_name}:")
++            print(f"  Remote field: {remote_field}")
++            print(f"  Through fields: {remote_field.through_fields}")
++            
++            # Try to hash it
++            hash_value = hash(remote_field)
++            print(f"  Hash value: {hash_value}")
++            print(f"  ✓ Hashing successful")
++            
++            # Also test that it can be put in a set
++            field_set = {remote_field}
++            print(f"  ✓ Can be added to a set")
++            
++        except Exception as e:
++            print(f"  ✗ ERROR: {e}")
++            all_passed = False
++            import traceback
++            traceback.print_exc()
++    
++    return all_passed
++
++def test_checks():
++    """Test that Django checks pass"""
++    print("\nRunning Django checks...")
++    try:
++        errors = checks.run_checks()
++        if errors:
++            print(f"✗ Django checks failed with {len(errors)} errors:")
++            for error in errors:
++                print(f"  - {error}")
++            return False
++        else:
++            print("✓ All Django checks passed")
++            return True
++    except Exception as e:
++        print(f"✗ Django checks crashed: {e}")
++        import traceback
++        traceback.print_exc()
++        return False
++
++def test_proxy_model_checks():
++    """Test that proxy model checks work properly"""
++    print("\nRunning proxy model checks...")
++    try:
++        errors = ProxyParent.check()
++        if errors:
++            print(f"✗ Proxy model checks failed with {len(errors)} errors:")
++            for error in errors:
++                print(f"  - {error}")
++            return False
++        else:
++            print("✓ Proxy model checks passed")
++            return True
++    except Exception as e:
++        print(f"✗ Proxy model checks crashed: {e}")
++        import traceback
++        traceback.print_exc()
++        return False
++
++if __name__ == "__main__":
++    print("Testing ManyToManyRel.identity fix...")
++    print("=" * 50)
++    
++    # Run all tests
++    hash_test_passed = test_hashing()
++    checks_passed = test_checks()
++    proxy_checks_passed = test_proxy_model_checks()
++    
++    print("\n" + "=" * 50)
++    print("Test Summary:")
++    print(f"  Hashing test: {'PASSED' if hash_test_passed else 'FAILED'}")
++    print(f"  Django checks: {'PASSED' if checks_passed else 'FAILED'}")
++    print(f"  Proxy model checks: {'PASSED' if proxy_checks_passed else 'FAILED'}")
++    
++    all_passed = hash_test_passed and checks_passed and proxy_checks_passed
++    print(f"\nOverall: {'ALL TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
++    exit(0 if all_passed else 1)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..e468e61444
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,78 @@
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++
++class Parent(models.Model):
++    name = models.CharField(max_length=256)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyParent(Parent):
++    class Meta:
++        proxy = True
++        app_label = 'test_app'
++
++class Child(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE)
++    many_to_many_field = models.ManyToManyField(
++        to=Parent,
++        through="ManyToManyModel",
++        through_fields=['child', 'parent'],
++        related_name="something"
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ManyToManyModel(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE, related_name='+')
++    child = models.ForeignKey(Child, on_delete=models.CASCADE, related_name='+')
++    second_child = models.ForeignKey(Child, on_delete=models.CASCADE, null=True, default=None)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test code
++if __name__ == "__main__":
++    # Try to trigger the _check_field_name_clashes
++    try:
++        # This method creates a set of fields which will trigger hashing
++        errors = ProxyParent._check_field_name_clashes()
++        print(f"ProxyParent field name clash check errors: {errors}")
++    except TypeError as e:
++        print(f"ERROR on field name clash check: {e}")
++        import traceback
++        traceback.print_exc()
++    
++    # Let's also check if we can hash the many_to_many_field's remote_field
++    try:
++        m2m_field = Child._meta.get_field('many_to_many_field')
++        print(f"ManyToMany field: {m2m_field}")
++        print(f"Remote field: {m2m_field.remote_field}")
++        print(f"Through fields: {m2m_field.remote_field.through_fields}")
++        # Try to hash it
++        hash(m2m_field.remote_field)
++        print("Successfully hashed the remote field")
++    except TypeError as e:
++        print(f"ERROR when hashing remote field: {e}")
++        import traceback
++        traceback.print_exc()
+diff --git a/test_rel_identity.py b/test_rel_identity.py
+new file mode 100644
+index 0000000000..6227d5527d
+--- /dev/null
++++ b/test_rel_identity.py
+@@ -0,0 +1,154 @@
++"""
++Test that verifies ManyToManyRel.identity is hashable with list through_fields.
++This test ensures the fix for the issue where through_fields as a list
++would cause a TypeError when hashing.
++"""
++
++from django.test import TestCase
++from django.db import models
++from django.db.models.fields.reverse_related import ManyToManyRel
++from django.utils.hashable import make_hashable
++
++
++class IdentityTestCase(TestCase):
++    """Test ForeignObjectRel identity property hashability"""
++    
++    def test_make_hashable_on_list(self):
++        """Test that make_hashable works on lists"""
++        test_list = ['a', 'b', 'c']
++        result = make_hashable(test_list)
++        # Should be able to hash the result
++        hash(result)
++        # Should be a tuple
++        self.assertIsInstance(result, tuple)
++        self.assertEqual(result, ('a', 'b', 'c'))
++    
++    def test_make_hashable_on_tuple(self):
++        """Test that make_hashable works on tuples"""
++        test_tuple = ('a', 'b', 'c')
++        result = make_hashable(test_tuple)
++        # Should be able to hash the result
++        hash(result)
++        # Should still be a tuple
++        self.assertIsInstance(result, tuple)
++        self.assertEqual(result, test_tuple)
++    
++    def test_make_hashable_on_none(self):
++        """Test that make_hashable works on None"""
++        result = make_hashable(None)
++        # Should be able to hash the result
++        hash(result)
++        # None is already hashable
++        self.assertIsNone(result)
++    
++    def test_manytomanyrel_identity_with_list_through_fields(self):
++        """Test that ManyToManyRel identity is hashable when through_fields is a list"""
++        # Create a mock field and ManyToManyRel
++        class MockField:
++            model = None
++            def related_query_name(self):
++                return 'test'
++        
++        # Create ManyToManyRel with list through_fields
++        rel = ManyToManyRel(
++            field=MockField(),
++            to='testapp.TestModel',
++            through='testapp.ThroughModel',  # Required when using through_fields
++            through_fields=['field1', 'field2']  # This is a list
++        )
++        
++        # The identity property should be hashable
++        identity = rel.identity
++        hash_value = hash(identity)
++        
++        # Verify it's actually hashable by using it in a set
++        rel_set = {rel}
++        self.assertEqual(len(rel_set), 1)
++        
++        # Verify the through_fields was properly converted
++        # Find the through_fields in the identity tuple
++        self.assertIn(('field1', 'field2'), identity)
++    
++    def test_manytomanyrel_identity_with_tuple_through_fields(self):
++        """Test that ManyToManyRel identity is hashable when through_fields is a tuple"""
++        class MockField:
++            model = None
++            def related_query_name(self):
++                return 'test'
++        
++        # Create ManyToManyRel with tuple through_fields
++        rel = ManyToManyRel(
++            field=MockField(),
++            to='testapp.TestModel',
++            through='testapp.ThroughModel',  # Required when using through_fields
++            through_fields=('field1', 'field2')  # This is a tuple
++        )
++        
++        # The identity property should be hashable
++        identity = rel.identity
++        hash_value = hash(identity)
++        
++        # Verify it's actually hashable by using it in a set
++        rel_set = {rel}
++        self.assertEqual(len(rel_set), 1)
++    
++    def test_manytomanyrel_equality_with_different_through_fields_types(self):
++        """Test that ManyToManyRel objects with list and tuple through_fields are equal"""
++        class MockField:
++            model = None
++            def related_query_name(self):
++                return 'test'
++            def __eq__(self, other):
++                return isinstance(other, MockField)
++            def __hash__(self):
++                return hash('MockField')
++        
++        # Use the same field instance for both
++        field = MockField()
++        
++        # Create two ManyToManyRel objects with same fields but different types
++        rel_with_list = ManyToManyRel(
++            field=field,
++            to='testapp.TestModel',
++            through='testapp.ThroughModel',  # Required when using through_fields
++            through_fields=['field1', 'field2']  # List
++        )
++        
++        rel_with_tuple = ManyToManyRel(
++            field=field,
++            to='testapp.TestModel',
++            through='testapp.ThroughModel',  # Required when using through_fields
++            through_fields=('field1', 'field2')  # Tuple
++        )
++        
++        # They should be considered equal
++        self.assertEqual(rel_with_list, rel_with_tuple)
++        # And have the same hash
++        self.assertEqual(hash(rel_with_list), hash(rel_with_tuple))
++
++
++if __name__ == '__main__':
++    import django
++    from django.conf import settings
++    from django.test.utils import get_runner
++    
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++    )
++    
++    django.setup()
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner()
++    failures = test_runner.run_tests(["__main__"])
++    exit(bool(failures))

@@ -1,0 +1,255 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 0000000000..9d9d0d3e74
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,108 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models import Q, Count
++from django.db.models.sql.where import SubqueryConstraint
++
++# Configure Django
++os.environ['DJANGO_SETTINGS_MODULE'] = 'test_settings'
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test',
++    )
++
++django.setup()
++
++# Define test models
++class Group(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Agent(models.Model):
++    name = models.CharField(max_length=100)
++    groups = models.ManyToManyField(Group)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Thing(models.Model):
++    agent = models.ForeignKey(Agent, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Group)
++    schema_editor.create_model(Agent)
++    schema_editor.create_model(Thing)
++
++# Test queries
++groups = Group.objects.all()
++
++# Test Q object compilation
++q1 = Q(agent__groups__in=groups)
++q2 = Q(agent__groups__count=0) 
++q_combined = q1 | q2
++
++# Check how the Q object resolves
++things = Thing.objects.annotate(Count("agent__groups"))
++query = things.filter(q_combined).query
++
++print("Combined Q object:", q_combined)
++print("\nSQL Query:")
++print(query)
++
++# Let's debug the subquery generation
++# Patch SubqueryConstraint to see what's happening
++original_as_sql = SubqueryConstraint.as_sql
++
++def debug_as_sql(self, compiler, connection):
++    print("\n=== SubqueryConstraint.as_sql called ===")
++    print(f"Targets: {self.targets}")
++    print(f"Query object: {self.query_object}")
++    print(f"Query object type: {type(self.query_object)}")
++    
++    # Check if query has default_cols set
++    if hasattr(self.query_object, 'default_cols'):
++        print(f"default_cols: {self.query_object.default_cols}")
++    
++    # Check select fields
++    if hasattr(self.query_object, 'select'):
++        print(f"select: {self.query_object.select}")
++        
++    # Call set_values
++    print(f"\nCalling set_values with targets: {self.targets}")
++    
++    result = original_as_sql(self, compiler, connection)
++    print(f"\nGenerated SQL: {result[0]}")
++    return result
++
++SubqueryConstraint.as_sql = debug_as_sql
++
++# Now run the query
++try:
++    result = things.filter(q_combined).distinct()
++    print("\n\nFinal query:")
++    print(result.query)
++    list(result)  # Force execution
++except Exception as e:
++    print(f"\nError: {e}")
+diff --git a/django/db/models/sql/where.py b/django/db/models/sql/where.py
+index 795eff8395..adf15daa90 100644
+--- a/django/db/models/sql/where.py
++++ b/django/db/models/sql/where.py
+@@ -242,7 +242,7 @@ class SubqueryConstraint:
+         self.query_object = query_object
+ 
+     def as_sql(self, compiler, connection):
+-        query = self.query_object
++        query = self.query_object.clone()
+         query.set_values(self.targets)
+         query_compiler = query.get_compiler(connection=connection)
+         return query_compiler.as_subquery_condition(self.alias, self.columns, compiler)
+diff --git a/test_q_or_issue.py b/test_q_or_issue.py
+new file mode 100644
+index 0000000000..25d6b47292
+--- /dev/null
++++ b/test_q_or_issue.py
+@@ -0,0 +1,122 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.models import Q, Count
++
++# Configure Django
++os.environ['DJANGO_SETTINGS_MODULE'] = 'test_settings'
++
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.postgresql',
++                'NAME': 'test_db',
++                'USER': 'postgres',
++                'PASSWORD': 'postgres',
++                'HOST': 'localhost',
++                'PORT': '5432',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test',
++    )
++
++django.setup()
++
++# Define test models
++class PropertyGroup(models.Model):
++    name = models.CharField(max_length=100)
++    created = models.DateTimeField(auto_now_add=True)
++    updated = models.DateTimeField(auto_now=True)
++    create_by = models.CharField(max_length=100, default='')
++    update_by = models.CharField(max_length=100, default='')
++    tenant_objs = models.CharField(max_length=100, default='')
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'property_propertygroup'
++
++class ManagementAgent(models.Model):
++    name = models.CharField(max_length=100)
++    property_groups = models.ManyToManyField(PropertyGroup, through='ManagementAgentPropertyGroup')
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'manager_managementagent'
++
++class ManagementAgentPropertyGroup(models.Model):
++    management_agent = models.ForeignKey(ManagementAgent, on_delete=models.CASCADE)
++    property_group = models.ForeignKey(PropertyGroup, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'manager_managementagentpropertygroup'
++
++class ManagerTicketRatingCumulativeMovingAverage(models.Model):
++    date = models.DateField()
++    average = models.FloatField()
++    data_points = models.IntegerField()
++    agent = models.ForeignKey(ManagementAgent, on_delete=models.CASCADE)
++    created = models.DateTimeField(auto_now_add=True)
++    updated = models.DateTimeField(auto_now=True)
++    create_by = models.CharField(max_length=100, default='')
++    update_by = models.CharField(max_length=100, default='')
++    tenant_objs = models.CharField(max_length=100, default='')
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'thing_managerticketratingcumulativemovingaverage'
++
++# Create the tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(PropertyGroup)
++    schema_editor.create_model(ManagementAgent)
++    schema_editor.create_model(ManagementAgentPropertyGroup)
++    schema_editor.create_model(ManagerTicketRatingCumulativeMovingAverage)
++
++# Create test data
++pg1 = PropertyGroup.objects.create(name='Group 1')
++pg2 = PropertyGroup.objects.create(name='Group 2')
++agent1 = ManagementAgent.objects.create(name='Agent 1')
++agent2 = ManagementAgent.objects.create(name='Agent 2')
++ManagementAgentPropertyGroup.objects.create(management_agent=agent1, property_group=pg1)
++ManagementAgentPropertyGroup.objects.create(management_agent=agent1, property_group=pg2)
++
++avg1 = ManagerTicketRatingCumulativeMovingAverage.objects.create(
++    date='2023-01-01', average=4.5, data_points=10, agent=agent1
++)
++avg2 = ManagerTicketRatingCumulativeMovingAverage.objects.create(
++    date='2023-01-02', average=4.0, data_points=5, agent=agent2
++)
++
++# Test the problematic query
++property_groups = PropertyGroup.objects.filter(id__in=[pg1.id])
++queryset = ManagerTicketRatingCumulativeMovingAverage.objects.annotate(
++    Count("agent__property_groups")
++)
++
++# This should fail with the error described in the issue
++try:
++    result = queryset.filter(
++        Q(agent__property_groups__in=property_groups) | Q(agent__property_groups__count=0)
++    ).distinct()
++    
++    print("Query SQL:")
++    print(result.query)
++    print("\nQuery executed successfully!")
++    print(f"Results: {list(result)}")
++except Exception as e:
++    print(f"Error occurred: {e}")
++    print("\nSQL:")
++    print(queryset.filter(
++        Q(agent__property_groups__in=property_groups) | Q(agent__property_groups__count=0)
++    ).distinct().query)

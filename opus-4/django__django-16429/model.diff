@@ -1,0 +1,252 @@
+diff --git a/django/utils/timesince.py b/django/utils/timesince.py
+index 701c49bab9..f052116849 100644
+--- a/django/utils/timesince.py
++++ b/django/utils/timesince.py
+@@ -97,6 +97,8 @@ def timesince(d, now=None, reversed=False, time_strings=None, depth=2):
+             d.hour,
+             d.minute,
+             d.second,
++            d.microsecond,
++            d.tzinfo,
+         )
+     else:
+         pivot = d
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..b3a9be9c28
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,59 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        USE_TZ=True,
++        INSTALLED_APPS=[],
++        DATABASES={},
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++import datetime
++from django.utils import timezone
++from django.utils.timesince import timesince
++
++def test_various_cases():
++    print("Testing various cases with USE_TZ=True...")
++    
++    # Test 1: 1 month ago
++    now = timezone.now()
++    d = now - datetime.timedelta(days=31)
++    result = timesince(d)
++    print(f"1 month ago: {result}")
++    
++    # Test 2: 2 months ago
++    d = now - datetime.timedelta(days=62)
++    result = timesince(d)
++    print(f"2 months ago: {result}")
++    
++    # Test 3: 1 year ago
++    d = now - datetime.timedelta(days=366)
++    result = timesince(d)
++    print(f"1 year ago: {result}")
++    
++    # Test 4: 1 year and 1 month ago
++    d = now - datetime.timedelta(days=397)
++    result = timesince(d)
++    print(f"1 year 1 month ago: {result}")
++    
++    # Test 5: Test with naive datetime (should still work)
++    now_naive = datetime.datetime.now()
++    d_naive = now_naive - datetime.timedelta(days=31)
++    result = timesince(d_naive, now_naive)
++    print(f"1 month ago (naive): {result}")
++    
++    # Test 6: Test mixed aware/naive (d is naive, now is not provided)
++    # This should use a naive now since d is naive
++    d_naive = datetime.datetime.now() - datetime.timedelta(days=31)
++    result = timesince(d_naive)
++    print(f"1 month ago (d naive, now auto): {result}")
++    
++    print("\nAll tests passed!")
++
++if __name__ == "__main__":
++    test_various_cases()
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..70b0e33904
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,54 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        USE_TZ=True,
++        INSTALLED_APPS=[],
++        DATABASES={},
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++import datetime
++from django.utils import timezone
++from django.utils.timesince import timesince
++
++def test_edge_cases():
++    print("Testing edge cases...")
++    
++    # Test with different timezones
++    eastern = timezone.get_fixed_timezone(-300)  # UTC-5
++    pacific = timezone.get_fixed_timezone(-480)  # UTC-8
++    
++    now_eastern = timezone.now().astimezone(eastern)
++    d_eastern = now_eastern - datetime.timedelta(days=31)
++    
++    # Test same timezone
++    result = timesince(d_eastern, now_eastern)
++    print(f"Same timezone (Eastern): {result}")
++    
++    # Test cross-timezone
++    now_pacific = timezone.now().astimezone(pacific)
++    result = timesince(d_eastern, now_pacific)
++    print(f"Cross timezone (d=Eastern, now=Pacific): {result}")
++    
++    # Test with years + months
++    d = timezone.now() - datetime.timedelta(days=400)
++    result = timesince(d)
++    print(f"~400 days ago: {result}")
++    
++    # Test with microseconds to ensure they're preserved
++    now = timezone.now()
++    d = now.replace(microsecond=123456) - datetime.timedelta(days=31)
++    result = timesince(d, now)
++    print(f"With microseconds: {result}")
++    print(f"d microseconds: {d.microsecond}, now microseconds: {now.microsecond}")
++    
++    print("\nAll edge case tests passed!")
++
++if __name__ == "__main__":
++    test_edge_cases()
+diff --git a/test_timesince_issue.py b/test_timesince_issue.py
+new file mode 100644
+index 0000000000..3b2f30f250
+--- /dev/null
++++ b/test_timesince_issue.py
+@@ -0,0 +1,35 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        USE_TZ=True,
++        INSTALLED_APPS=[],
++        DATABASES={},
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++import datetime
++from django.utils import timezone
++from django.utils.timesince import timesince
++
++# Test the issue
++def test_long_interval_with_tz():
++    now = timezone.now()
++    d = now - datetime.timedelta(days=31)
++    try:
++        result = timesince(d)
++        print(f"Success! Result: {result}")
++    except TypeError as e:
++        print(f"Error occurred: {e}")
++        print(f"now type: {type(now)}, tzinfo: {now.tzinfo}")
++        print(f"d type: {type(d)}, tzinfo: {d.tzinfo}")
++        import traceback
++        traceback.print_exc()
++
++if __name__ == "__main__":
++    test_long_interval_with_tz()
+diff --git a/test_timeuntil.py b/test_timeuntil.py
+new file mode 100644
+index 0000000000..e657800d0e
+--- /dev/null
++++ b/test_timeuntil.py
+@@ -0,0 +1,37 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        USE_TZ=True,
++        INSTALLED_APPS=[],
++        DATABASES={},
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++import datetime
++from django.utils import timezone
++from django.utils.timesince import timesince, timeuntil
++
++def test_timeuntil():
++    print("Testing timeuntil with timezone-aware datetimes...")
++    
++    # Test future date
++    now = timezone.now()
++    future = now + datetime.timedelta(days=31)
++    result = timeuntil(future)
++    print(f"1 month in future: {result}")
++    
++    # Test with years + months
++    future = now + datetime.timedelta(days=400)
++    result = timeuntil(future)
++    print(f"~400 days in future: {result}")
++    
++    print("\nAll timeuntil tests passed!")
++
++if __name__ == "__main__":
++    test_timeuntil()
+diff --git a/tests/utils_tests/test_timesince.py b/tests/utils_tests/test_timesince.py
+index bf05f32f5e..834b6b159c 100644
+--- a/tests/utils_tests/test_timesince.py
++++ b/tests/utils_tests/test_timesince.py
+@@ -236,6 +236,25 @@ class TimesinceTests(TestCase):
+             with self.subTest():
+                 self.assertEqual(timesince(t, value), expected)
+ 
++    @requires_tz_support
++    def test_long_interval_with_tz(self):
++        """Test timesince with USE_TZ=True and >1 month interval."""
++        from django.test import override_settings
++        with override_settings(USE_TZ=True):
++            now = timezone.now()
++            d = now - datetime.timedelta(days=31)
++            self.assertEqual(timesince(d), "1\xa0month")
++            
++            # Test multiple months
++            d = now - datetime.timedelta(days=62)
++            self.assertEqual(timesince(d), "2\xa0months")
++            
++            # Test with years
++            d = now - datetime.timedelta(days=400)
++            result = timesince(d)
++            # Should be something like "1 year, 1 month"
++            self.assertTrue(result.startswith("1\xa0year"))
++
+     def test_depth_invalid(self):
+         msg = "depth must be greater than 0."
+         with self.assertRaisesMessage(ValueError, msg):

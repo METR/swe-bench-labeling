@@ -1,0 +1,247 @@
+diff --git a/analyze_issue.py b/analyze_issue.py
+new file mode 100644
+index 0000000000..d7b66988da
+--- /dev/null
++++ b/analyze_issue.py
+@@ -0,0 +1,15 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++from test_app.models import Child, Base, OtherBase
++
++# Show what primary keys the Child instances have
++print("Child instances:")
++for child in Child.objects.all():
++    print(f"  pk={child.pk}, base_ptr_id={child.base_ptr_id}, otherbase_ptr_id={child.otherbase_ptr_id}")
++
++# The issue: When we update Child queryset, the related_ids collected are base_ptr_id values (1, 2)
++# But when updating OtherBase fields, it uses these IDs to filter OtherBase records with pk__in=[1,2]
++# This incorrectly updates OtherBase instances with otherbase_id=1,2 instead of otherbase_id=3,4
+diff --git a/check_parent_links.py b/check_parent_links.py
+new file mode 100644
+index 0000000000..ad5537c3c8
+--- /dev/null
++++ b/check_parent_links.py
+@@ -0,0 +1,14 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++from test_app.models import Child, Base, OtherBase
++
++print("Child._meta.parents:")
++for parent_model, parent_link in Child._meta.parents.items():
++    print(f"  Parent model: {parent_model}")
++    print(f"  Parent link field: {parent_link}")
++    print(f"  Parent link name: {parent_link.name}")
++    print(f"  Parent link attname: {parent_link.attname}")
++    print()
+diff --git a/check_pk.py b/check_pk.py
+new file mode 100644
+index 0000000000..6b8830e425
+--- /dev/null
++++ b/check_pk.py
+@@ -0,0 +1,15 @@
++import os
++import django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++from test_app.models import Child, Base, OtherBase
++
++print(f"Child._meta.pk: {Child._meta.pk}")
++print(f"Child._meta.pk.name: {Child._meta.pk.name}")
++print(f"Child._meta.pk.attname: {Child._meta.pk.attname}")
++print(f"Child._meta.pk.model: {Child._meta.pk.model}")
++
++print("\nParent links:")
++for field in Child._meta.parents.values():
++    print(f"  {field.model}: {field.name} -> {field.related_model}")
+diff --git a/django/db/models/sql/subqueries.py b/django/db/models/sql/subqueries.py
+index 04063f73bc..9218f20c4c 100644
+--- a/django/db/models/sql/subqueries.py
++++ b/django/db/models/sql/subqueries.py
+@@ -3,7 +3,7 @@ Query subclasses which provide extra functionality beyond simple data retrieval.
+ """
+ 
+ from django.core.exceptions import FieldError
+-from django.db.models.sql.constants import CURSOR, GET_ITERATOR_CHUNK_SIZE, NO_RESULTS
++from django.db.models.sql.constants import CURSOR, GET_ITERATOR_CHUNK_SIZE, MULTI, NO_RESULTS
+ from django.db.models.sql.query import Query
+ 
+ __all__ = ["DeleteQuery", "UpdateQuery", "InsertQuery", "AggregateQuery"]
+@@ -134,7 +134,26 @@ class UpdateQuery(Query):
+             query = UpdateQuery(model)
+             query.values = values
+             if self.related_ids is not None:
+-                query.add_filter("pk__in", self.related_ids)
++                # Find the parent link field that connects the child model to this parent model
++                parent_link_field = None
++                for parent_model, parent_link in self.get_meta().parents.items():
++                    if parent_model == model:
++                        parent_link_field = parent_link
++                        break
++                
++                if parent_link_field is not None:
++                    # For multiple inheritance, we need to use a subquery to get the correct
++                    # parent IDs. We'll create a query that selects the parent link field
++                    # values for the child records.
++                    from django.db.models.sql import Query
++                    subquery = Query(self.model)
++                    subquery.add_fields([parent_link_field.attname])
++                    subquery.add_filter("pk__in", self.related_ids)
++                    # Filter the parent model using a subquery
++                    query.add_filter("pk__in", subquery)
++                else:
++                    # Fallback to pk if no parent link found (shouldn't happen in normal cases)
++                    query.add_filter("pk__in", self.related_ids)
+             result.append(query)
+         return result
+ 
+diff --git a/test_app/__init__.py b/test_app/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..30d016be6a
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,13 @@
++
++from django.db import models
++
++class Base(models.Model):
++    base_id = models.AutoField(primary_key=True)
++    field_base = models.IntegerField()
++
++class OtherBase(models.Model):
++    otherbase_id = models.AutoField(primary_key=True)
++    field_otherbase = models.IntegerField()
++
++class Child(Base, OtherBase):
++    pass
+diff --git a/test_base_update.py b/test_base_update.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_base_update.py
+@@ -0,0 +1 @@
++
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..aaf7ac8ffa
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,88 @@
++import os
++import sys
++import django
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++# Create test settings module
++with open('test_settings.py', 'w') as f:
++    f.write("""
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'test_app',
++]
++
++SECRET_KEY = 'test-key'
++USE_TZ = False
++""")
++
++# Create test app
++os.makedirs('test_app', exist_ok=True)
++with open('test_app/__init__.py', 'w') as f:
++    pass
++
++# Create models
++with open('test_app/models.py', 'w') as f:
++    f.write("""
++from django.db import models
++
++class Base(models.Model):
++    base_id = models.AutoField(primary_key=True)
++    field_base = models.IntegerField()
++
++class OtherBase(models.Model):
++    otherbase_id = models.AutoField(primary_key=True)
++    field_otherbase = models.IntegerField()
++
++class Child(Base, OtherBase):
++    pass
++""")
++
++django.setup()
++
++from django.db import connection
++from test_app.models import Base, OtherBase, Child
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Base)
++    schema_editor.create_model(OtherBase)
++    schema_editor.create_model(Child)
++
++# Run test
++print("Creating OtherBase instances...")
++OtherBase.objects.create(field_otherbase=100)
++OtherBase.objects.create(field_otherbase=101)
++print(f"OtherBase objects: {list(OtherBase.objects.values())}")
++
++print("\nCreating Child instances...")
++Child.objects.create(field_base=0, field_otherbase=0)
++Child.objects.create(field_base=1, field_otherbase=1)
++print(f"Child objects before update: {list(Child.objects.values())}")
++
++print("\nUpdating Child.field_otherbase to 55...")
++rows_updated = Child.objects.update(field_otherbase=55)
++print(f"Rows updated: {rows_updated}")
++
++print(f"\nChild objects after update: {list(Child.objects.values())}")
++print(f"OtherBase objects after update: {list(OtherBase.objects.values())}")
++
++# Check if the issue is present
++child_values = list(Child.objects.values_list('field_otherbase', flat=True))
++if all(v == 55 for v in child_values):
++    print("\n✓ Test PASSED: Child objects were properly updated")
++else:
++    print(f"\n✗ Test FAILED: Child objects were not updated properly. Values: {child_values}")
++    
++    # Check if OtherBase was incorrectly updated
++    otherbase_ids_1_2 = list(OtherBase.objects.filter(otherbase_id__in=[1,2]).values_list('field_otherbase', flat=True))
++    if all(v == 55 for v in otherbase_ids_1_2):
++        print("✗ BUG CONFIRMED: OtherBase instances with IDs 1,2 were incorrectly updated to 55")
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..a2252387b3
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,15 @@
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'test_app',
++]
++
++SECRET_KEY = 'test-key'
++USE_TZ = False

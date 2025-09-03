@@ -1,0 +1,35 @@
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 0cdead923..7b3c3d5e9 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1083,7 +1083,10 @@ def roc_curve(
+     # to make sure that the curve starts at (0, 0)
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+-    thresholds = np.r_[thresholds[0] + 1, thresholds]
++    if thresholds[0] <= 1:
++        thresholds = np.r_[min(thresholds[0] + 1, 1), thresholds]
++    else:
++        thresholds = np.r_[thresholds[0] + 1, thresholds]
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+diff --git a/sklearn/metrics/tests/test_ranking.py b/sklearn/metrics/tests/test_ranking.py
+index f38f118c3..911cd8ee0 100644
+--- a/sklearn/metrics/tests/test_ranking.py
++++ b/sklearn/metrics/tests/test_ranking.py
+@@ -1160,6 +1160,14 @@ def test_average_precision_constant_values():
+     assert average_precision_score(y_true, y_score) == 0.25
+ 
+ 
++def test_roc_curve_with_probability_estimates():
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    assert np.all(np.logical_or(thresholds <= 1, thresholds == thresholds[0] + 1))
++    assert thresholds[0] <= 1
++
+ def test_average_precision_score_pos_label_errors():
+     # Raise an error when pos_label is not in binary y_true
+     y_true = np.array([0, 1])

@@ -1,0 +1,156 @@
+diff --git a/classes.dot b/classes.dot
+new file mode 100644
+index 000000000..a8c8e2672
+--- /dev/null
++++ b/classes.dot
+@@ -0,0 +1,5 @@
++digraph "classes" {
++charset="utf-8"
++rankdir=BT
++"0" [label="{PropertyTest|value : int\l|}", shape="record"];
++}
+diff --git a/pylint/pyreverse/diagrams.py b/pylint/pyreverse/diagrams.py
+index bf9f67af6..928988367 100644
+--- a/pylint/pyreverse/diagrams.py
++++ b/pylint/pyreverse/diagrams.py
+@@ -84,6 +84,10 @@ class ClassDiagram(Figure, FilterMixIn):
+             for n, m in node.items()
+             if isinstance(m, astroid.FunctionDef) and decorated_with_property(m)
+         ]
++        
++        # Get type annotations from __init__ if available
++        init_annotations = getattr(node, 'instance_attrs_annotations', {})
++        
+         for node_name, associated_nodes in (
+             list(node.instance_attrs_type.items())
+             + list(node.locals_type.items())
+@@ -91,9 +95,28 @@ class ClassDiagram(Figure, FilterMixIn):
+         ):
+             if not self.show_attr(node_name):
+                 continue
+-            names = self.class_names(associated_nodes)
+-            if names:
+-                node_name = "{} : {}".format(node_name, ", ".join(names))
++            
++            # Check if there's a type annotation for this attribute
++            if node_name in init_annotations:
++                # Use the type annotation from __init__
++                annotation = init_annotations[node_name]
++                if hasattr(annotation, 'name'):
++                    node_name = "{} : {}".format(node_name, annotation.name)
++                else:
++                    # Try to get the string representation of the annotation
++                    try:
++                        node_name = "{} : {}".format(node_name, annotation.as_string())
++                    except:
++                        # Fall back to inferred types
++                        names = self.class_names(associated_nodes)
++                        if names:
++                            node_name = "{} : {}".format(node_name, ", ".join(names))
++            else:
++                # No annotation, use inferred types
++                names = self.class_names(associated_nodes)
++                if names:
++                    node_name = "{} : {}".format(node_name, ", ".join(names))
++            
+             attrs.append(node_name)
+         return sorted(attrs)
+ 
+diff --git a/pylint/pyreverse/inspector.py b/pylint/pyreverse/inspector.py
+index 8fa122022..af0006551 100644
+--- a/pylint/pyreverse/inspector.py
++++ b/pylint/pyreverse/inspector.py
+@@ -171,6 +171,24 @@ class Linker(IdGeneratorMixIn, utils.LocalsVisitor):
+             node.implements = list(interfaces(node, self.inherited_interfaces))
+         except astroid.InferenceError:
+             node.implements = ()
++        
++        # extract type annotations from __init__ method
++        node.instance_attrs_annotations = {}
++        try:
++            if hasattr(node, 'locals'):
++                init_method = node.locals.get('__init__')
++                if init_method and len(init_method) > 0:
++                    init_func = init_method[0]
++                    if hasattr(init_func, 'args') and init_func.args:
++                        args = init_func.args
++                        # Skip 'self' parameter
++                        if hasattr(args, 'args') and args.args:
++                            for i, arg in enumerate(args.args[1:], 1):
++                                if i < len(args.annotations) and args.annotations[i]:
++                                    # Store annotation for parameters that might become instance attributes
++                                    node.instance_attrs_annotations[arg.name] = args.annotations[i]
++        except (AttributeError, IndexError):
++            pass
+ 
+     def visit_functiondef(self, node):
+         """visit an astroid.Function node
+diff --git a/test_comprehensive_type_hints.py b/test_comprehensive_type_hints.py
+new file mode 100644
+index 000000000..9721430dd
+--- /dev/null
++++ b/test_comprehensive_type_hints.py
+@@ -0,0 +1,32 @@
++from typing import List, Optional, Union
++
++class TestClass:
++    def __init__(self, 
++                 name: str, 
++                 age: int = 0, 
++                 items: List[str] = None,
++                 value: Optional[float] = None,
++                 data: Union[str, int] = "default"):
++        self.name = name
++        self.age = age
++        self.items = items or []
++        self.value = value
++        self.data = data
++        
++        # This should be inferred, not from annotation
++        self.computed = age * 2
++        
++    def other_method(self):
++        # This should also be inferred
++        self.other_attr = "hello"
++
++class NoTypeHints:
++    def __init__(self, x, y=None):
++        self.x = x
++        self.y = y
++
++class MixedHints:
++    def __init__(self, typed: str, untyped, default_typed: int = 5):
++        self.typed = typed
++        self.untyped = untyped
++        self.default_typed = default_typed
+diff --git a/test_property_hints.py b/test_property_hints.py
+new file mode 100644
+index 000000000..9252e1f0b
+--- /dev/null
++++ b/test_property_hints.py
+@@ -0,0 +1,11 @@
++class PropertyTest:
++    def __init__(self, value: int):
++        self._value = value
++    
++    @property
++    def value(self) -> int:
++        return self._value
++    
++    @value.setter
++    def value(self, val: int):
++        self._value = val
+diff --git a/test_type_hints.py b/test_type_hints.py
+new file mode 100644
+index 000000000..b36b5b8a1
+--- /dev/null
++++ b/test_type_hints.py
+@@ -0,0 +1,8 @@
++class C(object):
++    def __init__(self, a: str = None):
++        self.a = a
++
++    def method(self, b: int, c: float = 1.0) -> bool:
++        self.b = b
++        self.c = c
++        return True

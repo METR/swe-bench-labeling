@@ -1,0 +1,131 @@
+diff --git a/django/utils/http.py b/django/utils/http.py
+index 572cfb4347..42dc82a0ce 100644
+--- a/django/utils/http.py
++++ b/django/utils/http.py
+@@ -176,10 +176,23 @@ def parse_http_date(date):
+     try:
+         year = int(m.group('year'))
+         if year < 100:
+-            if year < 70:
+-                year += 2000
++            # RFC 7231 compliance: if a two-digit year appears to be more
++            # than 50 years in the future, interpret it as the most recent
++            # year in the past that had the same last two digits.
++            current_year = datetime.datetime.now().year
++            current_century = current_year // 100 * 100
++            year_in_current_century = current_century + year
++            
++            # If the year is more than 50 years in the future,
++            # use the previous century
++            if year_in_current_century > current_year + 50:
++                year = year_in_current_century - 100
++            # If the year would be more than 50 years in the past,
++            # use the next century
++            elif year_in_current_century <= current_year - 50:
++                year = year_in_current_century + 100
+             else:
+-                year += 1900
++                year = year_in_current_century
+         month = MONTHS.index(m.group('mon').lower()) + 1
+         day = int(m.group('day'))
+         hour = int(m.group('hour'))
+diff --git a/test_rfc7231_demo.py b/test_rfc7231_demo.py
+new file mode 100644
+index 0000000000..46cf0e50c3
+--- /dev/null
++++ b/test_rfc7231_demo.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python
++"""
++Demonstration of RFC 7231 compliance for two-digit year parsing.
++
++According to RFC 7231:
++"Recipients of a timestamp value in rfc850-date format, which uses a
++two-digit year, MUST interpret a timestamp that appears to be more
++than 50 years in the future as representing the most recent year in
++the past that had the same last two digits."
++"""
++
++import datetime
++from django.utils.http import parse_http_date
++
++print("RFC 7231 Two-Digit Year Parsing Demonstration")
++print("=" * 50)
++print(f"Current year: {datetime.datetime.now().year}")
++print()
++
++# Test various two-digit years
++test_dates = [
++    ('Sunday, 06-Nov-20 08:49:37 GMT', 'Within 50 years'),
++    ('Sunday, 06-Nov-50 08:49:37 GMT', 'Within 50 years'),
++    ('Sunday, 06-Nov-75 08:49:37 GMT', 'Exactly 50 years in future'),
++    ('Sunday, 06-Nov-76 08:49:37 GMT', 'More than 50 years in future'),
++    ('Sunday, 06-Nov-90 08:49:37 GMT', 'More than 50 years in future'),
++    ('Sunday, 06-Nov-99 08:49:37 GMT', 'More than 50 years in future'),
++    ('Sunday, 06-Nov-00 08:49:37 GMT', 'Recent past'),
++    ('Sunday, 06-Nov-10 08:49:37 GMT', 'Recent past'),
++]
++
++print("Test Results:")
++print("-" * 50)
++for date_str, description in test_dates:
++    parsed = parse_http_date(date_str)
++    result_dt = datetime.datetime.utcfromtimestamp(parsed)
++    two_digit_year = date_str.split('-')[2][:2]
++    print(f"Input year: {two_digit_year} ({description})")
++    print(f"  -> Interpreted as: {result_dt.year}")
++    print()
++
++print("Summary:")
++print("-" * 50)
++print("Years within 50 years of the current year stay in the current/next century")
++print("Years more than 50 years in the future are interpreted as the previous century")
++print("Years that would be too far in the past are interpreted as the next century")
+diff --git a/tests/utils_tests/test_http.py b/tests/utils_tests/test_http.py
+index bc8bcfe977..a5a495a9fa 100644
+--- a/tests/utils_tests/test_http.py
++++ b/tests/utils_tests/test_http.py
+@@ -327,6 +327,43 @@ class HttpDateProcessingTests(unittest.TestCase):
+     def test_parsing_year_less_than_70(self):
+         parsed = parse_http_date('Sun Nov  6 08:49:37 0037')
+         self.assertEqual(datetime.utcfromtimestamp(parsed), datetime(2037, 11, 6, 8, 49, 37))
++    
++    def test_parsing_rfc7231_compliance(self):
++        # Test RFC 7231 compliance for two-digit year interpretation
++        # Save the current time and mock it for consistent testing
++        from unittest.mock import patch
++        
++        # Mock datetime to be 2025-01-01
++        with patch('django.utils.http.datetime') as mock_datetime:
++            mock_datetime.datetime.now.return_value = datetime(2025, 1, 1)
++            mock_datetime.datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
++            
++            # Years that should be in the future (within 50 years)
++            future_cases = [
++                ('Sunday, 06-Nov-25 08:49:37 GMT', 2025),
++                ('Sunday, 06-Nov-50 08:49:37 GMT', 2050),
++                ('Sunday, 06-Nov-75 08:49:37 GMT', 2075),
++            ]
++            
++            # Years that should be in the past (more than 50 years in future)
++            past_cases = [
++                ('Sunday, 06-Nov-76 08:49:37 GMT', 1976),
++                ('Sunday, 06-Nov-94 08:49:37 GMT', 1994),
++                ('Sunday, 06-Nov-99 08:49:37 GMT', 1999),
++            ]
++            
++            # Years that should be in the future (would be too far in the past)
++            future_from_past_cases = [
++                ('Sunday, 06-Nov-00 08:49:37 GMT', 2000),
++                ('Sunday, 06-Nov-10 08:49:37 GMT', 2010),
++                ('Sunday, 06-Nov-24 08:49:37 GMT', 2024),
++            ]
++            
++            for date_str, expected_year in future_cases + past_cases + future_from_past_cases:
++                with self.subTest(date=date_str, expected_year=expected_year):
++                    parsed = parse_http_date(date_str)
++                    result_dt = datetime.utcfromtimestamp(parsed)
++                    self.assertEqual(result_dt.year, expected_year)
+ 
+ 
+ class EscapeLeadingSlashesTests(unittest.TestCase):

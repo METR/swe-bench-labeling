@@ -1,0 +1,369 @@
+diff --git a/debug_mincount.py b/debug_mincount.py
+new file mode 100644
+index 00000000..32d7d4fd
+--- /dev/null
++++ b/debug_mincount.py
+@@ -0,0 +1,21 @@
++import numpy as np
++import xarray as xr
++
++# Let's trace through what's happening
++da = xr.DataArray([[np.nan, np.nan], [np.nan, np.nan]])
++print("All NaN array:")
++print(da.values)
++
++# The issue might be that when we sum all NaN values, numpy returns 0.0
++# Let's check the mask
++mask = np.isnan(da.values)
++print("\nMask (True = NaN):")
++print(mask)
++
++print("\nSum of mask along axes (0,1):", mask.sum((0,1)))
++print("Total size along axes (0,1):", np.take(mask.shape, (0,1)).prod())
++print("Valid count:", np.take(mask.shape, (0,1)).prod() - mask.sum((0,1)))
++
++# When doing sum with all NaN, what happens?
++print("\nNumPy sum of all NaN:", np.sum(da.values))
++print("NumPy nansum of all NaN:", np.nansum(da.values))
+diff --git a/debug_scalar.py b/debug_scalar.py
+new file mode 100644
+index 00000000..5ad9eadd
+--- /dev/null
++++ b/debug_scalar.py
+@@ -0,0 +1,14 @@
++import numpy as np
++
++# Test scalar result
++result = np.array(0.0)  # This is what nansum returns for all NaN
++print("Result:", result)
++print("Result type:", type(result))
++print("Result ndim:", getattr(result, "ndim", False))
++print("Is ndim > 0?", getattr(result, "ndim", False))
++
++# numpy scalars have ndim = 0
++print("\nFor a numpy scalar:")
++scalar = np.float64(0.0)
++print("Scalar ndim:", scalar.ndim)
++print("Scalar ndim bool:", bool(scalar.ndim))
+diff --git a/test_branch_flow.py b/test_branch_flow.py
+new file mode 100644
+index 00000000..d263fbb9
+--- /dev/null
++++ b/test_branch_flow.py
+@@ -0,0 +1,40 @@
++import numpy as np
++from xarray.core import dtypes
++
++# Simulate the flow in _maybe_null_out
++result = np.float64(0.0)  # scalar result
++axis = (0, 1)  # multiple axes
++mask = np.array([[True, True], [True, True]])  # all NaN
++
++print("Inputs:")
++print(f"  result: {result}, type: {type(result)}")
++print(f"  result.ndim: {result.ndim}")
++print(f"  axis: {axis}")
++print(f"  mask shape: {mask.shape}")
++print(f"  mask sum: {mask.sum()}")
++
++# First condition
++first_cond = axis is not None and getattr(result, "ndim", False)
++print(f"\nFirst condition (axis is not None and getattr(result, 'ndim', False)): {first_cond}")
++print(f"  axis is not None: {axis is not None}")
++print(f"  getattr(result, 'ndim', False): {getattr(result, 'ndim', False)}")
++print(f"  result.ndim (actual): {result.ndim}")
++
++# Since first condition is False (because ndim=0), go to elif
++elif_cond = getattr(result, "dtype", None) not in dtypes.NAT_TYPES
++print(f"\nElif condition (getattr(result, 'dtype', None) not in dtypes.NAT_TYPES): {elif_cond}")
++print(f"  result.dtype: {result.dtype}")
++print(f"  result.dtype in dtypes.NAT_TYPES: {result.dtype in dtypes.NAT_TYPES}")
++
++# Inside elif block
++if elif_cond:
++    null_mask = mask.size - mask.sum()
++    print(f"\nInside elif block:")
++    print(f"  mask.size: {mask.size}")
++    print(f"  mask.sum(): {mask.sum()}")
++    print(f"  null_mask (valid count): {null_mask}")
++    print(f"  min_count: 1")
++    print(f"  null_mask < min_count: {null_mask < 1}")
++    
++    if null_mask < 1:
++        print("  Should set result = np.nan")
+diff --git a/test_detailed.py b/test_detailed.py
+new file mode 100644
+index 00000000..ca993539
+--- /dev/null
++++ b/test_detailed.py
+@@ -0,0 +1,33 @@
++import numpy as np
++import xarray as xr
++
++# Test with NaN values
++print("Test 1: Array with some NaN values")
++da = xr.DataArray([[1., 2, np.nan], [4, np.nan, 6]])
++print("DataArray:")
++print(da)
++print()
++
++# Sum along single dimension with min_count
++print("Sum along dim_0 with min_count=1:")
++result = da.sum("dim_0", min_count=1)
++print(result)
++print()
++
++print("Sum along dim_0 with min_count=2:")
++result = da.sum("dim_0", min_count=2)
++print(result)
++print()
++
++# What we want to work: sum along multiple dimensions
++print("Attempting sum along both dimensions with min_count=1:")
++try:
++    result = da.sum(["dim_0", "dim_1"], min_count=1)
++    print(result)
++except ValueError as e:
++    print(f"Error: {e}")
++print()
++
++# Expected behavior: If there are at least min_count non-NaN values across all specified dimensions,
++# return the sum. Otherwise, return NaN.
++# In this case, we have 4 non-NaN values out of 6 total, so with min_count=1, it should return 13.0
+diff --git a/test_dtype_check.py b/test_dtype_check.py
+new file mode 100644
+index 00000000..d45a7e79
+--- /dev/null
++++ b/test_dtype_check.py
+@@ -0,0 +1,17 @@
++import numpy as np
++from xarray.core import dtypes
++
++result = np.float64(0.0)
++print("Result:", result)
++print("Result dtype:", result.dtype)
++print("NAT_TYPES:", dtypes.NAT_TYPES)
++print("Is dtype in NAT_TYPES?", result.dtype in dtypes.NAT_TYPES)
++print("Check individual items:")
++for nat_type in dtypes.NAT_TYPES:
++    print(f"  {nat_type} == {result.dtype}: {nat_type == result.dtype}")
++
++# I think the issue is with the comparison
++print("\nActual NAT dtypes:")
++for nat_type in dtypes.NAT_TYPES:
++    print(f"  Type: {type(nat_type)}, dtype: {nat_type.dtype if hasattr(nat_type, 'dtype') else 'N/A'}")
++print("Condition check:", getattr(result, "dtype", None) not in dtypes.NAT_TYPES)
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 00000000..9d5f9e8a
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,51 @@
++import numpy as np
++import xarray as xr
++
++print("=== Test 1: All NaN array ===")
++da = xr.DataArray([[np.nan, np.nan], [np.nan, np.nan]])
++print("DataArray:", da.values)
++result = da.sum(["dim_0", "dim_1"], min_count=1)
++print("Sum with min_count=1:", result.values)
++print("Expected: nan (no valid values)")
++print()
++
++print("=== Test 2: Array with exactly min_count valid values ===")
++da = xr.DataArray([[1., np.nan], [np.nan, np.nan]])
++print("DataArray:", da.values)
++result = da.sum(["dim_0", "dim_1"], min_count=1)
++print("Sum with min_count=1:", result.values)
++print("Expected: 1.0 (exactly 1 valid value)")
++print()
++
++print("=== Test 3: Array with min_count > valid values ===")
++da = xr.DataArray([[1., 2.], [np.nan, np.nan]])
++print("DataArray:", da.values)
++result = da.sum(["dim_0", "dim_1"], min_count=3)
++print("Sum with min_count=3:", result.values)
++print("Expected: nan (only 2 valid values, need 3)")
++print()
++
++print("=== Test 4: 3D array with multiple axes ===")
++da = xr.DataArray([[[1., 2.], [3., np.nan]], [[5., np.nan], [np.nan, np.nan]]])
++print("DataArray shape:", da.shape)
++print("Sum of non-NaN values:", 1 + 2 + 3 + 5)
++result = da.sum(["dim_1", "dim_2"], min_count=1)
++print("Sum along dim_1 and dim_2 with min_count=1:")
++print(result.values)
++print("Expected: [6., 5.] (sum along last two dims)")
++print()
++
++print("=== Test 5: Test with prod (nanprod) ===") 
++da = xr.DataArray([[1., 2., np.nan], [4., np.nan, 6.]])
++print("DataArray:", da.values)
++result = da.prod(["dim_0", "dim_1"], min_count=1)
++print("Product with min_count=1:", result.values)
++print("Expected: 48.0 (1*2*4*6)")
++print()
++
++print("=== Test 6: Single axis (regression test) ===")
++da = xr.DataArray([[1., 2., np.nan], [4., np.nan, 6.]])
++result = da.sum("dim_0", min_count=1)
++print("Sum along single axis with min_count=1:")
++print(result.values)
++print("Expected: [5., 2., 6.]")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..b0b9b05e
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,17 @@
++import xarray as xr
++import numpy as np
++
++# Test case from the issue
++da = xr.DataArray([[1., 2, 3], [4, 5, 6]])
++print("DataArray:")
++print(da)
++print()
++
++# This should fail with the current implementation
++try:
++    result = da.sum(["dim_0", "dim_1"], min_count=1)
++    print("Sum with min_count=1 on multiple dims:")
++    print(result)
++except ValueError as e:
++    print(f"Error: {e}")
++    print("This is expected with the current implementation")
+diff --git a/test_nat_comparison.py b/test_nat_comparison.py
+new file mode 100644
+index 00000000..621b4d99
+--- /dev/null
++++ b/test_nat_comparison.py
+@@ -0,0 +1,26 @@
++import numpy as np
++
++# The issue is NAT_TYPES contains scalar values, not dtypes
++nat1 = np.datetime64("NaT")
++nat2 = np.timedelta64("NaT")
++
++print("NAT values:")
++print(f"  nat1: {nat1}, type: {type(nat1)}")
++print(f"  nat2: {nat2}, type: {type(nat2)}")
++
++# When we do dtype in (nat1, nat2), it's comparing a dtype object to scalar values
++dtype = np.dtype('float64')
++print(f"\ndtype: {dtype}")
++print(f"dtype in (nat1, nat2): {dtype in (nat1, nat2)}")
++
++# The bug seems to be that numpy scalars have weird behavior with `in`
++# Let's see what happens
++print(f"\nWeird comparison behavior:")
++print(f"nat1 == dtype: {nat1 == dtype}")
++print(f"dtype == nat1: {dtype == nat1}")
++
++# The real check should be comparing dtype to the dtype of NAT values
++print(f"\nCorrect comparison:")
++print(f"nat1.dtype: {nat1.dtype}")
++print(f"nat2.dtype: {nat2.dtype}")
++print(f"dtype in (nat1.dtype, nat2.dtype): {dtype in (nat1.dtype, nat2.dtype)}")
+diff --git a/test_understanding.py b/test_understanding.py
+new file mode 100644
+index 00000000..05af807e
+--- /dev/null
++++ b/test_understanding.py
+@@ -0,0 +1,19 @@
++import numpy as np
++
++# Let's understand what the fix should do
++a = np.array([[1., 2, 3], [4, 5, 6]])
++axis = (0, 1)  # Multiple dimensions
++
++print("Array shape:", a.shape)
++print("Axis:", axis)
++
++# Current logic would use mask.shape[axis] but axis is a tuple, so it fails
++# Instead, we need to get the product of sizes along the specified axes
++
++# Using np.take to get the shapes at the specified axes
++shapes_at_axes = np.take(a.shape, axis)
++print("Shapes at axes:", shapes_at_axes)
++print("Product of shapes:", shapes_at_axes.prod())
++
++# This should give us the total number of elements along the specified axes
++# For our 2x3 array with axis=(0,1), that's 2*3 = 6 elements total
+diff --git a/trace_mincount.py b/trace_mincount.py
+new file mode 100644
+index 00000000..19ab8621
+--- /dev/null
++++ b/trace_mincount.py
+@@ -0,0 +1,38 @@
++import numpy as np
++import xarray as xr
++
++# Directly test the _maybe_null_out function
++from xarray.core.nanops import _maybe_null_out, _replace_nan
++
++# Case 1: All NaN
++print("=== Case 1: All NaN ===")
++a = np.array([[np.nan, np.nan], [np.nan, np.nan]])
++a_replaced, mask = _replace_nan(a, 0)
++print("Original array:", a)
++print("Replaced array:", a_replaced)
++print("Mask:", mask)
++
++# Simulate what happens in nansum
++result = np.sum(a_replaced, axis=(0,1))  # This gives 0.0
++print("Sum result:", result)
++print("Result type:", type(result))
++print("Result dtype:", result.dtype)
++print("Result ndim:", result.ndim)
++
++# Now call _maybe_null_out
++final_result = _maybe_null_out(result, axis=(0,1), mask=mask, min_count=1)
++print("Final result after _maybe_null_out:", final_result)
++print()
++
++# Case 2: Insufficient valid values
++print("=== Case 2: Insufficient valid values ===")
++a = np.array([[1., 2.], [np.nan, np.nan]])
++a_replaced, mask = _replace_nan(a, 0)
++print("Original array:", a)
++print("Mask:", mask)
++
++result = np.sum(a_replaced, axis=(0,1))  # This gives 3.0
++print("Sum result:", result)
++
++final_result = _maybe_null_out(result, axis=(0,1), mask=mask, min_count=3)
++print("Final result with min_count=3:", final_result)
+diff --git a/xarray/core/nanops.py b/xarray/core/nanops.py
+index 41c8d258..1bf4d520 100644
+--- a/xarray/core/nanops.py
++++ b/xarray/core/nanops.py
+@@ -26,19 +26,21 @@ def _maybe_null_out(result, axis, mask, min_count=1):
+     """
+     xarray version of pandas.core.nanops._maybe_null_out
+     """
+-    if hasattr(axis, "__len__"):  # if tuple or list
+-        raise ValueError(
+-            "min_count is not available for reduction with more than one dimensions."
+-        )
+-
+     if axis is not None and getattr(result, "ndim", False):
+-        null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0
++        # Handle single axis or multiple axes
++        if hasattr(axis, "__len__"):  # if tuple or list (multiple axes)
++            # For multiple axes, we need the product of sizes along those axes
++            total_size = np.take(mask.shape, axis).prod()
++            null_mask = (total_size - mask.sum(axis) - min_count) < 0
++        else:  # single axis
++            null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0
++            
+         if null_mask.any():
+             dtype, fill_value = dtypes.maybe_promote(result.dtype)
+             result = result.astype(dtype)
+             result[null_mask] = fill_value
+ 
+-    elif getattr(result, "dtype", None) not in dtypes.NAT_TYPES:
++    elif not dtypes.is_datetime_like(getattr(result, "dtype", np.dtype("O"))):
+         null_mask = mask.size - mask.sum()
+         if null_mask < min_count:
+             result = np.nan

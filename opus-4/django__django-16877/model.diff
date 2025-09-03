@@ -1,0 +1,108 @@
+diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py
+index 5289ef34a0..672a8f5946 100644
+--- a/django/template/defaultfilters.py
++++ b/django/template/defaultfilters.py
+@@ -498,6 +498,16 @@ def safeseq(value):
+     return [mark_safe(obj) for obj in value]
+ 
+ 
++@register.filter(is_safe=True)
++def escapeseq(value):
++    """
++    An "escape" filter for sequences. Escape each element in the sequence,
++    individually, after converting them to strings. Return a list
++    with the results.
++    """
++    return [conditional_escape(obj) for obj in value]
++
++
+ @register.filter(is_safe=True)
+ @stringfilter
+ def striptags(value):
+diff --git a/docs/ref/templates/builtins.txt b/docs/ref/templates/builtins.txt
+index 3aa20dfc71..989a53308c 100644
+--- a/docs/ref/templates/builtins.txt
++++ b/docs/ref/templates/builtins.txt
+@@ -1849,6 +1849,32 @@ For example:
+ If ``value`` is ``"testing\r\njavascript 'string\" <b>escaping</b>"``,
+ the output will be ``"testing\\u000D\\u000Ajavascript \\u0027string\\u0022 \\u003Cb\\u003Eescaping\\u003C/b\\u003E"``.
+ 
++.. templatefilter:: escapeseq
++
++``escapeseq``
++-------------
++
++Applies the :tfilter:`escape` filter to each element of a sequence. Useful in
++conjunction with other filters that operate on sequences, such as
++:tfilter:`join`. For example:
++
++.. code-block:: html+django
++
++    {{ some_list|escapeseq|join:", " }}
++
++This is particularly useful when you need to escape each element in a list
++before joining them, especially in contexts where autoescape is off:
++
++.. code-block:: html+django
++
++    {% autoescape off %}
++        {{ some_list|escapeseq|join:", " }}
++    {% endautoescape %}
++
++You couldn't use the :tfilter:`escape` filter directly in this case, as it would
++first convert the variable into a string, rather than working with the
++individual elements of the sequence.
++
+ .. templatefilter:: filesizeformat
+ 
+ ``filesizeformat``
+diff --git a/tests/template_tests/filter_tests/test_escapeseq.py b/tests/template_tests/filter_tests/test_escapeseq.py
+new file mode 100644
+index 0000000000..e5d2480dd6
+--- /dev/null
++++ b/tests/template_tests/filter_tests/test_escapeseq.py
+@@ -0,0 +1,44 @@
++from django.test import SimpleTestCase
++
++from ..utils import setup
++
++
++class EscapeseqTests(SimpleTestCase):
++    @setup({"escapeseq01": '{{ a|join:", " }} -- {{ a|escapeseq|join:", " }}'})
++    def test_escapeseq01(self):
++        """Test that escapeseq escapes each element when autoescape is on."""
++        output = self.engine.render_to_string("escapeseq01", {"a": ["&", "<", ">", '"']})
++        self.assertEqual(output, "&amp;, &lt;, &gt;, &quot; -- &amp;, &lt;, &gt;, &quot;")
++
++    @setup(
++        {
++            "escapeseq02": (
++                '{% autoescape off %}{{ a|join:", " }} -- {{ a|escapeseq|join:", " }}'
++                "{% endautoescape %}"
++            )
++        }
++    )
++    def test_escapeseq02(self):
++        """Test that escapeseq escapes each element even when autoescape is off."""
++        output = self.engine.render_to_string("escapeseq02", {"a": ["&", "<", ">", '"']})
++        self.assertEqual(output, "&, <, >, \" -- &amp;, &lt;, &gt;, &quot;")
++
++    @setup({"escapeseq03": "{% autoescape off %}{{ a|escapeseq|join:', ' }}{% endautoescape %}"})
++    def test_escapeseq03(self):
++        """Test that escapeseq output works with join when autoescape is off."""
++        output = self.engine.render_to_string("escapeseq03", {"a": ["&", "<", ">", '"']})
++        self.assertEqual(output, "&amp;, &lt;, &gt;, &quot;")
++
++    @setup({"escapeseq04": "{{ a|escapeseq|join:', ' }}"})
++    def test_escapeseq04(self):
++        """Test escapeseq with various data types."""
++        output = self.engine.render_to_string("escapeseq04", {"a": [1, 2.5, "test<>", None]})
++        self.assertEqual(output, "1, 2.5, test&lt;&gt;, None")
++
++    @setup({"escapeseq05": "{{ a|escapeseq }}"})
++    def test_escapeseq05(self):
++        """Test that escapeseq returns a list."""
++        output = self.engine.render_to_string("escapeseq05", {"a": ["<b>", "</b>"]})
++        # The list gets converted to string representation when rendered directly
++        # and the output itself gets escaped because it contains quotes
++        self.assertEqual(output, "[&#x27;&amp;lt;b&amp;gt;&#x27;, &#x27;&amp;lt;/b&amp;gt;&#x27;]")

@@ -1,0 +1,17 @@
+diff --git a/sklearn/pipeline.py b/sklearn/pipeline.py
+index 94d9465d7..ce313be7c 100644
+--- a/sklearn/pipeline.py
++++ b/sklearn/pipeline.py
+@@ -1280,6 +1280,12 @@ class FeatureUnion(TransformerMixin, _BaseComposition):
+         config = _get_output_config("transform", self)
+         if config["dense"] == "pandas" and all(hasattr(X, "iloc") for X in Xs):
+             pd = check_pandas_support("transform")
++            # Handle case where transformers return Series or DataFrames with different indices
++            if all(isinstance(X, (pd.Series, pd.DataFrame)) for X in Xs):
++                # Find the index with the most elements
++                max_index = max(X.index for X in Xs)
++                # Reindex all DataFrames to the max_index
++                Xs = [X.reindex(max_index) for X in Xs]
+             return pd.concat(Xs, axis=1)
+ 
+         if any(sparse.issparse(f) for f in Xs):

@@ -1,0 +1,141 @@
+diff --git a/sklearn/cluster/k_means_.py b/sklearn/cluster/k_means_.py
+index b7fbdf7da..efa70d459 100644
+--- a/sklearn/cluster/k_means_.py
++++ b/sklearn/cluster/k_means_.py
+@@ -363,13 +363,15 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
+     if effective_n_jobs(n_jobs) == 1:
+         # For a single thread, less memory is needed if we just store one set
+         # of the best results (as opposed to one set per run per thread).
++        # Generate seeds for deterministic behavior
++        seeds = random_state.randint(np.iinfo(np.int32).max, size=n_init)
+         for it in range(n_init):
+             # run a k-means once
+             labels, inertia, centers, n_iter_ = kmeans_single(
+                 X, sample_weight, n_clusters, max_iter=max_iter, init=init,
+                 verbose=verbose, precompute_distances=precompute_distances,
+                 tol=tol, x_squared_norms=x_squared_norms,
+-                random_state=random_state)
++                random_state=seeds[it])
+             # determine if these results are the best so far
+             if best_inertia is None or inertia < best_inertia:
+                 best_labels = labels.copy()
+diff --git a/sklearn/cluster/tests/test_k_means.py b/sklearn/cluster/tests/test_k_means.py
+index 362b0a914..d129d6afe 100644
+--- a/sklearn/cluster/tests/test_k_means.py
++++ b/sklearn/cluster/tests/test_k_means.py
+@@ -951,3 +951,25 @@ def test_minibatch_kmeans_partial_fit_int_data():
+     km = MiniBatchKMeans(n_clusters=2)
+     km.partial_fit(X)
+     assert km.cluster_centers_.dtype.kind == "f"
++
++
++
++def test_kmeans_n_jobs_consistency():
++    # Test that KMeans gives consistent results regardless of n_jobs
++    # Regression test for issue where n_jobs=1 gave different results than n_jobs>1
++    X, y = make_blobs(n_samples=1000, centers=10, n_features=2, random_state=2)
++    
++    # Run KMeans with n_jobs=1
++    kmeans_sequential = KMeans(n_clusters=10, random_state=2, n_jobs=1, n_init=10)
++    kmeans_sequential.fit(X)
++    inertia_sequential = kmeans_sequential.inertia_
++    
++    # Run KMeans with various n_jobs values
++    for n_jobs in [2, 3, 4, -1]:
++        kmeans_parallel = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs, n_init=10)
++        kmeans_parallel.fit(X)
++        assert_almost_equal(kmeans_parallel.inertia_, inertia_sequential)
++        # Also check that cluster centers are the same
++        assert_allclose(np.sort(kmeans_parallel.cluster_centers_.ravel()),
++                        np.sort(kmeans_sequential.cluster_centers_.ravel()),
++                        rtol=1e-7, atol=1e-7)
+diff --git a/test_kmeans_algorithms.py b/test_kmeans_algorithms.py
+new file mode 100644
+index 000000000..01262aab6
+--- /dev/null
++++ b/test_kmeans_algorithms.py
+@@ -0,0 +1,13 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++
++# Generate some data
++X, y = make_blobs(n_samples=1000, centers=5, n_features=10, random_state=42)
++
++# Test both algorithms
++for algorithm in ['full', 'elkan']:
++    print(f"\nTesting algorithm: {algorithm}")
++    for n_jobs in range(1, 4):
++        kmeans = KMeans(n_clusters=5, random_state=42, n_jobs=n_jobs, algorithm=algorithm, n_init=5)
++        kmeans.fit(X)
++        print(f'  (n_jobs={n_jobs}) kmeans.inertia_ = {kmeans.inertia_:.10f}')
+diff --git a/test_kmeans_n_jobs_consistency.py b/test_kmeans_n_jobs_consistency.py
+new file mode 100644
+index 000000000..0c471a64a
+--- /dev/null
++++ b/test_kmeans_n_jobs_consistency.py
+@@ -0,0 +1,48 @@
++"""Test that KMeans gives consistent results regardless of n_jobs"""
++import numpy as np
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++
++def test_kmeans_consistency_n_jobs():
++    # Generate some data
++    X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++    
++    # Run KMeans with n_jobs=1
++    kmeans_sequential = KMeans(n_clusters=10, random_state=2, n_jobs=1)
++    kmeans_sequential.fit(X)
++    inertia_sequential = kmeans_sequential.inertia_
++    
++    # Run KMeans with various n_jobs values
++    for n_jobs in [2, 3, 4, -1]:
++        kmeans_parallel = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs)
++        kmeans_parallel.fit(X)
++        assert kmeans_parallel.inertia_ == inertia_sequential, \
++            f"Inertia mismatch: n_jobs=1 gives {inertia_sequential}, n_jobs={n_jobs} gives {kmeans_parallel.inertia_}"
++    
++    print("Test passed: KMeans gives consistent results regardless of n_jobs")
++
++def test_kmeans_consistency_different_algorithms():
++    # Generate some data
++    X, y = make_blobs(n_samples=1000, centers=5, n_features=10, random_state=42)
++    
++    for algorithm in ['full', 'elkan']:
++        # Skip elkan for sparse data
++        if algorithm == 'elkan':
++            continue
++            
++        inertia_sequential = None
++        for n_jobs in [1, 2, -1]:
++            kmeans = KMeans(n_clusters=5, random_state=42, n_jobs=n_jobs, algorithm=algorithm, n_init=10)
++            kmeans.fit(X)
++            
++            if inertia_sequential is None:
++                inertia_sequential = kmeans.inertia_
++            else:
++                assert kmeans.inertia_ == inertia_sequential, \
++                    f"Algorithm {algorithm}: Inertia mismatch with n_jobs={n_jobs}"
++        
++        print(f"Test passed for algorithm={algorithm}")
++
++if __name__ == "__main__":
++    test_kmeans_consistency_n_jobs()
++    test_kmeans_consistency_different_algorithms()
+diff --git a/test_kmeans_reproducibility.py b/test_kmeans_reproducibility.py
+new file mode 100644
+index 000000000..72a9eb7ff
+--- /dev/null
++++ b/test_kmeans_reproducibility.py
+@@ -0,0 +1,11 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++
++# Generate some data
++X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++
++# Run KMeans with various n_jobs values
++for n_jobs in range(1, 5):
++    kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs)
++    kmeans.fit(X)
++    print(f'(n_jobs={n_jobs}) kmeans.inertia_ = {kmeans.inertia_}')

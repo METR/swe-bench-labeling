@@ -1,0 +1,38 @@
+diff --git a/sympy/core/function.py b/sympy/core/function.py
+index 47e3a56ae8..9ce1dbbcbd 100644
+--- a/sympy/core/function.py
++++ b/sympy/core/function.py
+@@ -2141,6 +2141,13 @@ class Subs(Expr):
+     >>> s, ss
+     (Subs(x, x, 0), Subs(y, y, 0))
+     """
++
++    def _latex(self, printer):
++        expr, variables, point = self.args
++        latex_expr = printer._print(expr)
++        latex_vars = ', '.join(map(printer._print, variables))
++        latex_point = ', '.join(map(printer._print, point))
++        return r'\left. \left(%s\right) \right|_{\substack{ %s=%s }}' % (latex_expr, latex_vars, latex_point)
+     def __new__(cls, expr, variables, point, **assumptions):
+         from sympy import Symbol
+ 
+diff --git a/sympy/printing/tests/test_subs_latex.py b/sympy/printing/tests/test_subs_latex.py
+new file mode 100644
+index 0000000000..e90c005a77
+--- /dev/null
++++ b/sympy/printing/tests/test_subs_latex.py
+@@ -0,0 +1,14 @@
++import unittest
++from sympy import symbols, Function, Subs, latex
++
++class TestSubsLatex(unittest.TestCase):
++    def test_subs_latex(self):
++        x, y = symbols('x y')
++        f = Function('f')
++        expr = Subs(3*f(-x+y), (x, y), (1, 2))
++        latex_output = latex(expr)
++        expected_output = r'\left. \left(3 f{\left(- x + y \right)}\right) \right|_{\substack{ x, y=1, 2 }}'
++        self.assertEqual(latex_output, expected_output, f"Expected {expected_output}, but got {latex_output}")
++
++if __name__ == '__main__':
++    unittest.main()

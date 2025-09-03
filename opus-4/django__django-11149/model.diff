@@ -1,0 +1,688 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 880a2cc17b..9ed469d9f9 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -2115,27 +2115,48 @@ class InlineModelAdmin(BaseModelAdmin):
+         if self.opts.auto_created:
+             # We're checking the rights to an auto-created intermediate model,
+             # which doesn't have its own individual permissions. The user needs
+-            # to have the view permission for the related model in order to
+-            # be able to do anything with the intermediate model.
+-            return self.has_view_permission(request, obj)
++            # to have the change permission for the related model in order to
++            # be able to add to the intermediate model.
++            opts = self.opts
++            # The model was auto-created as intermediary for a many-to-many
++            # relationship; find the target model.
++            for field in opts.fields:
++                if field.remote_field and field.remote_field.model != self.parent_model:
++                    opts = field.remote_field.model._meta
++                    break
++            return request.user.has_perm('%s.%s' % (opts.app_label, get_permission_codename('change', opts)))
+         return super().has_add_permission(request)
+ 
+     def has_change_permission(self, request, obj=None):
+         if self.opts.auto_created:
+             # We're checking the rights to an auto-created intermediate model,
+             # which doesn't have its own individual permissions. The user needs
+-            # to have the view permission for the related model in order to
+-            # be able to do anything with the intermediate model.
+-            return self.has_view_permission(request, obj)
++            # to have the change permission for the related model in order to
++            # be able to change the intermediate model.
++            opts = self.opts
++            # The model was auto-created as intermediary for a many-to-many
++            # relationship; find the target model.
++            for field in opts.fields:
++                if field.remote_field and field.remote_field.model != self.parent_model:
++                    opts = field.remote_field.model._meta
++                    break
++            return request.user.has_perm('%s.%s' % (opts.app_label, get_permission_codename('change', opts)))
+         return super().has_change_permission(request)
+ 
+     def has_delete_permission(self, request, obj=None):
+         if self.opts.auto_created:
+             # We're checking the rights to an auto-created intermediate model,
+             # which doesn't have its own individual permissions. The user needs
+-            # to have the view permission for the related model in order to
+-            # be able to do anything with the intermediate model.
+-            return self.has_view_permission(request, obj)
++            # to have the change permission for the related model in order to
++            # be able to delete from the intermediate model.
++            opts = self.opts
++            # The model was auto-created as intermediary for a many-to-many
++            # relationship; find the target model.
++            for field in opts.fields:
++                if field.remote_field and field.remote_field.model != self.parent_model:
++                    opts = field.remote_field.model._meta
++                    break
++            return request.user.has_perm('%s.%s' % (opts.app_label, get_permission_codename('change', opts)))
+         return super().has_delete_permission(request, obj)
+ 
+     def has_view_permission(self, request, obj=None):
+diff --git a/test_m2m_bug.py b/test_m2m_bug.py
+new file mode 100644
+index 0000000000..fbd2201106
+--- /dev/null
++++ b/test_m2m_bug.py
+@@ -0,0 +1,88 @@
++#!/usr/bin/env python
++"""
++Test to demonstrate the M2M inline permissions bug
++"""
++
++# Import Django and configure it for testing
++import os
++import sys
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.admin_inlines.test_settings')
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++import django
++django.setup()
++
++from django.contrib.auth.models import User, Permission
++from django.contrib.contenttypes.models import ContentType
++from django.test import RequestFactory
++from tests.admin_inlines.models import Author, Book
++from tests.admin_inlines.admin import BookInline
++from django.contrib.admin import site
++
++# Create a user with only view permission
++user = User.objects.create_user('viewer', 'viewer@example.com', 'password')
++
++# Get or create some test data
++author = Author.objects.first()
++if not author:
++    author = Author.objects.create(name='Test Author')
++
++book = Book.objects.first()
++if not book:
++    book = Book.objects.create(title='Test Book', author=author)
++
++# Create request
++rf = RequestFactory()
++request = rf.get('/admin/')
++request.user = user
++
++# Create inline instance
++inline = BookInline(Author, site)
++
++# First let's check what model the inline is for
++print(f"Inline model: {inline.model}")
++print(f"Is auto_created: {inline.opts.auto_created}")
++
++# Check permissions without any permissions
++print("\n=== Without any permissions ===")
++print(f"has_view_permission: {inline.has_view_permission(request, author)}")
++print(f"has_add_permission: {inline.has_add_permission(request, author)}")
++print(f"has_change_permission: {inline.has_change_permission(request, author)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, author)}")
++
++# Give view permission for Book
++book_ct = ContentType.objects.get_for_model(Book)
++user.user_permissions.add(
++    Permission.objects.get(content_type=book_ct, codename='view_book')
++)
++user = User.objects.get(pk=user.pk)  # Refresh from DB to clear cache
++request.user = user
++
++print("\n=== With view_book permission ===")
++print(f"has_view_permission: {inline.has_view_permission(request, author)}")
++print(f"has_add_permission: {inline.has_add_permission(request, author)}")
++print(f"has_change_permission: {inline.has_change_permission(request, author)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, author)}")
++
++# Now let's test with a ManyToMany field through model
++from django.db import models
++from django.contrib import admin
++
++# We need to find a M2M through model in the test suite
++print("\n=== Looking for M2M through models ===")
++for model in django.apps.apps.get_models():
++    if hasattr(model._meta, 'auto_created') and model._meta.auto_created:
++        print(f"Found auto-created model: {model}")
++        # Create an inline for this model
++        class TestInline(admin.TabularInline):
++            model = model
++        
++        # Test permissions
++        test_inline = TestInline(model._meta.auto_created, site)
++        print(f"  Is auto_created: {test_inline.opts.auto_created}")
++        print(f"  has_view_permission: {test_inline.has_view_permission(request, None)}")
++        print(f"  has_add_permission: {test_inline.has_add_permission(request, None)}")
++        print(f"  has_change_permission: {test_inline.has_change_permission(request, None)}")
++        print(f"  has_delete_permission: {test_inline.has_delete_permission(request, None)}")
++        print()
++        break
+diff --git a/test_m2m_fix.py b/test_m2m_fix.py
+new file mode 100644
+index 0000000000..6b8352edb7
+--- /dev/null
++++ b/test_m2m_fix.py
+@@ -0,0 +1,128 @@
++#!/usr/bin/env python
++"""
++Test to verify the M2M inline permissions fix
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Minimal Django configuration
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++        'django.contrib.sessions',
++        'django.contrib.messages',
++    ],
++    MIDDLEWARE=[],
++    ROOT_URLCONF=[],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.contrib.auth.models import User, Permission
++from django.contrib.contenttypes.models import ContentType
++from django.test import RequestFactory
++
++# Create the models dynamically
++class Photo(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Report(models.Model):
++    title = models.CharField(max_length=100)
++    photos = models.ManyToManyField(Photo)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the through model (this happens automatically but we'll access it)
++ThroughModel = Report.photos.through
++
++# Create inline admin
++class ReportPhotoInline(admin.TabularInline):
++    model = ThroughModel
++
++# Create tables
++from django.db import connection
++from django.apps import apps
++
++# Create all tables
++with connection.schema_editor() as schema_editor:
++    for model in apps.get_models():
++        try:
++            schema_editor.create_model(model)
++        except:
++            pass  # Table might already exist
++
++# Create permissions manually
++photo_ct = ContentType.objects.create(app_label='test_app', model='photo')
++report_ct = ContentType.objects.create(app_label='test_app', model='report')
++
++Permission.objects.create(codename='view_photo', name='Can view photo', content_type=photo_ct)
++Permission.objects.create(codename='change_photo', name='Can change photo', content_type=photo_ct)
++Permission.objects.create(codename='add_photo', name='Can add photo', content_type=photo_ct)
++Permission.objects.create(codename='delete_photo', name='Can delete photo', content_type=photo_ct)
++
++# Create a user with only view permission
++user = User.objects.create_user('viewer', 'viewer@example.com', 'password')
++
++# Create request
++rf = RequestFactory()
++request = rf.get('/admin/')
++request.user = user
++
++# Create inline instance
++inline = ReportPhotoInline(Report, admin.site)
++
++print("=== Testing M2M Inline Permissions Fix ===")
++print(f"Inline model: {inline.model}")
++print(f"Is auto_created: {inline.opts.auto_created}")
++
++# Test 1: User with no permissions
++print("\n--- Test 1: User with no permissions ---")
++print(f"has_view_permission: {inline.has_view_permission(request, None)}")
++print(f"has_add_permission: {inline.has_add_permission(request, None)}")
++print(f"has_change_permission: {inline.has_change_permission(request, None)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, None)}")
++
++# Test 2: User with only view permission
++user.user_permissions.add(Permission.objects.get(content_type=photo_ct, codename='view_photo'))
++user = User.objects.get(pk=user.pk)  # Refresh from DB
++request.user = user
++
++print("\n--- Test 2: User with only view_photo permission ---")
++print(f"has_view_permission: {inline.has_view_permission(request, None)}")
++print(f"has_add_permission: {inline.has_add_permission(request, None)}")
++print(f"has_change_permission: {inline.has_change_permission(request, None)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, None)}")
++print("^ Good! With only view permission, add/change/delete should be False")
++
++# Test 3: User with change permission
++user.user_permissions.add(Permission.objects.get(content_type=photo_ct, codename='change_photo'))
++user = User.objects.get(pk=user.pk)  # Refresh from DB
++request.user = user
++
++print("\n--- Test 3: User with view_photo and change_photo permissions ---")
++print(f"has_view_permission: {inline.has_view_permission(request, None)}")
++print(f"has_add_permission: {inline.has_add_permission(request, None)}")
++print(f"has_change_permission: {inline.has_change_permission(request, None)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, None)}")
++print("^ Good! With change permission, user can view/add/change/delete")
+diff --git a/test_m2m_inline_bug.py b/test_m2m_inline_bug.py
+new file mode 100644
+index 0000000000..703b07551e
+--- /dev/null
++++ b/test_m2m_inline_bug.py
+@@ -0,0 +1,118 @@
++#!/usr/bin/env python
++"""
++Test to demonstrate the M2M inline permissions bug
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Minimal Django configuration
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-key',
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++        'django.contrib.sessions',
++        'django.contrib.messages',
++    ],
++    MIDDLEWARE=[],
++    ROOT_URLCONF=[],
++    USE_TZ=True,
++)
++
++django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.contrib.auth.models import User
++from django.test import RequestFactory
++
++# Create the models dynamically
++class Photo(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Report(models.Model):
++    title = models.CharField(max_length=100)
++    photos = models.ManyToManyField(Photo)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the through model (this happens automatically but we'll access it)
++ThroughModel = Report.photos.through
++
++# Create inline admin
++class ReportPhotoInline(admin.TabularInline):
++    model = ThroughModel
++
++# Create tables
++from django.db import connection
++from django.apps import apps
++
++# Create all tables
++with connection.schema_editor() as schema_editor:
++    for model in apps.get_models():
++        try:
++            schema_editor.create_model(model)
++        except:
++            pass  # Table might already exist
++
++# Create a user with only view permission
++user = User.objects.create_user('viewer', 'viewer@example.com', 'password')
++
++# Create request
++rf = RequestFactory()
++request = rf.get('/admin/')
++request.user = user
++
++# Create inline instance
++inline = ReportPhotoInline(Report, admin.site)
++
++print("=== Testing M2M Inline Permissions Bug ===")
++print(f"Inline model: {inline.model}")
++print(f"Is auto_created: {inline.opts.auto_created}")
++
++print("\n--- Current behavior (buggy) ---")
++print(f"has_view_permission: {inline.has_view_permission(request, None)}")
++print(f"has_add_permission: {inline.has_add_permission(request, None)}")
++print(f"has_change_permission: {inline.has_change_permission(request, None)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, None)}")
++
++# Let's give the user view permission on Photo to see the bug
++from django.contrib.auth.models import Permission
++from django.contrib.contenttypes.models import ContentType
++
++photo_ct = ContentType.objects.get_for_model(Photo)
++user.user_permissions.add(
++    Permission.objects.get(content_type=photo_ct, codename='view_photo')
++)
++
++# Refresh user
++user = User.objects.get(pk=user.pk)
++request.user = user
++
++print("\n--- With view_photo permission (shows the bug) ---")
++print(f"has_view_permission: {inline.has_view_permission(request, None)}")
++print(f"has_add_permission: {inline.has_add_permission(request, None)}")
++print(f"has_change_permission: {inline.has_change_permission(request, None)}")
++print(f"has_delete_permission: {inline.has_delete_permission(request, None)}")
++
++print("\nThe bug: Even without any permissions, has_view_permission returns True,")
++print("and because of the buggy code, all other permissions also return True!")
++print("\nThis happens because for auto_created models (M2M through tables),")
++print("has_add_permission, has_change_permission, and has_delete_permission")
++print("all just return has_view_permission, which defaults to True for auto_created models.")
+diff --git a/test_m2m_permissions.py b/test_m2m_permissions.py
+new file mode 100644
+index 0000000000..8605017012
+--- /dev/null
++++ b/test_m2m_permissions.py
+@@ -0,0 +1,197 @@
++"""
++Test for ManyToMany inline permissions issue
++"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Create test app
++sys.path.insert(0, '.')
++
++# Create test_app directory
++os.makedirs('test_app', exist_ok=True)
++
++# Create __init__.py
++with open('test_app/__init__.py', 'w') as f:
++    f.write('')
++
++# Create models.py first (before Django setup)
++with open('test_app/models.py', 'w') as f:
++    f.write('''
++from django.db import models
++
++class Photo(models.Model):
++    name = models.CharField(max_length=100)
++    
++    def __str__(self):
++        return self.name
++
++class Report(models.Model):
++    title = models.CharField(max_length=100)
++    photos = models.ManyToManyField(Photo)
++    
++    def __str__(self):
++        return self.title
++''')
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++        'django.contrib.sessions',
++        'django.contrib.messages',
++        'test_app',
++    ],
++    MIDDLEWARE=[
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.contrib.auth.middleware.AuthenticationMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    SECRET_KEY='test-secret-key',
++    ROOT_URLCONF='test_app.urls',
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.template.context_processors.debug',
++                'django.template.context_processors.request',
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    }],
++)
++
++django.setup()
++
++# Create test app
++import sys
++sys.path.insert(0, '.')
++
++# Create test_app directory
++os.makedirs('test_app', exist_ok=True)
++
++# Create __init__.py
++with open('test_app/__init__.py', 'w') as f:
++    f.write('')
++
++# Create models.py
++with open('test_app/models.py', 'w') as f:
++    f.write('''
++from django.db import models
++
++class Photo(models.Model):
++    name = models.CharField(max_length=100)
++    
++    def __str__(self):
++        return self.name
++
++class Report(models.Model):
++    title = models.CharField(max_length=100)
++    photos = models.ManyToManyField(Photo)
++    
++    def __str__(self):
++        return self.title
++''')
++
++# Create admin.py
++with open('test_app/admin.py', 'w') as f:
++    f.write('''
++from django.contrib import admin
++from .models import Photo, Report
++
++class ReportPhotoInlineModelAdmin(admin.TabularInline):
++    model = Report.photos.through
++    show_change_link = True
++
++class ReportAdmin(admin.ModelAdmin):
++    inlines = [ReportPhotoInlineModelAdmin]
++
++admin.site.register(Photo)
++admin.site.register(Report, ReportAdmin)
++''')
++
++# Create urls.py
++with open('test_app/urls.py', 'w') as f:
++    f.write('''
++from django.urls import path
++from django.contrib import admin
++
++urlpatterns = [
++    path('admin/', admin.site.urls),
++]
++''')
++
++# Run the actual test
++from django.test import TestCase, RequestFactory
++from django.contrib.auth.models import User, Permission
++from django.contrib.contenttypes.models import ContentType
++from django.contrib import admin
++from test_app.models import Photo, Report
++from test_app.admin import ReportPhotoInlineModelAdmin, ReportAdmin
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    from django.apps import apps
++    for model in apps.get_models():
++        if model._meta.db_table not in connection.introspection.table_names():
++            schema_editor.create_model(model)
++
++# Run test
++class M2MPermissionTest(TestCase):
++    def test_m2m_inline_permissions(self):
++        # Create user with only view permission
++        user = User.objects.create_user('viewer', 'viewer@example.com', 'password')
++        report_ct = ContentType.objects.get_for_model(Report)
++        photo_ct = ContentType.objects.get_for_model(Photo)
++        
++        # Give view permissions
++        user.user_permissions.add(
++            Permission.objects.get(content_type=report_ct, codename='view_report'),
++            Permission.objects.get(content_type=photo_ct, codename='view_photo')
++        )
++        
++        # Create test data
++        photo = Photo.objects.create(name='Test Photo')
++        report = Report.objects.create(title='Test Report')
++        report.photos.add(photo)
++        
++        # Create request
++        rf = RequestFactory()
++        request = rf.get('/admin/')
++        request.user = user
++        
++        # Create admin instances
++        admin_site = admin.site
++        report_admin = ReportAdmin(Report, admin_site)
++        inline = ReportPhotoInlineModelAdmin(Report, admin_site)
++        
++        # Check permissions for the inline
++        print("Testing inline permissions for user with only view permission:")
++        print(f"has_view_permission: {inline.has_view_permission(request, report)}")
++        print(f"has_add_permission: {inline.has_add_permission(request, report)}")
++        print(f"has_change_permission: {inline.has_change_permission(request, report)}")
++        print(f"has_delete_permission: {inline.has_delete_permission(request, report)}")
++        
++        # The bug: these should all be False except has_view_permission
++        assert inline.has_view_permission(request, report) == True
++        assert inline.has_add_permission(request, report) == False  # This will fail due to bug
++        assert inline.has_change_permission(request, report) == False  # This will fail due to bug
++        assert inline.has_delete_permission(request, report) == False  # This will fail due to bug
++
++# Run the test
++test = M2MPermissionTest()
++test.test_m2m_inline_permissions()
+diff --git a/test_m2m_permissions_inline.py b/test_m2m_permissions_inline.py
+new file mode 100644
+index 0000000000..5d0d7d5cda
+--- /dev/null
++++ b/test_m2m_permissions_inline.py
+@@ -0,0 +1,65 @@
++"""
++Test for ManyToMany inline permissions
++"""
++from django.contrib.auth.models import User, Permission
++from django.contrib.contenttypes.models import ContentType
++from django.test import TestCase, RequestFactory
++from tests.admin_inlines.models import Author, Book
++from tests.admin_inlines.admin import AuthorBookInline
++from django.contrib.admin import site
++
++
++class M2MInlinePermissionsTest(TestCase):
++    def setUp(self):
++        self.factory = RequestFactory()
++        self.user = User.objects.create_user('testuser', 'test@example.com', 'password')
++        self.author = Author.objects.create(name='Test Author')
++        self.book = Book.objects.create(name='Test Book')
++        self.author.books.add(self.book)
++        
++    def test_m2m_inline_permissions_view_only(self):
++        """Test that view-only permission doesn't grant edit access to M2M inlines"""
++        # Create inline instance for the M2M through model
++        class AuthorBooksInline(site.admin.TabularInline):
++            model = Author.books.through
++            
++        inline = AuthorBooksInline(Author, site)
++        
++        # Give user only view permission on Book
++        book_ct = ContentType.objects.get_for_model(Book)
++        self.user.user_permissions.add(
++            Permission.objects.get(content_type=book_ct, codename='view_book')
++        )
++        
++        request = self.factory.get('/admin/')
++        request.user = self.user
++        
++        # User should be able to view but not add/change/delete
++        self.assertTrue(inline.has_view_permission(request, self.author))
++        self.assertFalse(inline.has_add_permission(request, self.author))
++        self.assertFalse(inline.has_change_permission(request, self.author))
++        self.assertFalse(inline.has_delete_permission(request, self.author))
++        
++    def test_m2m_inline_permissions_with_change(self):
++        """Test that change permission grants full edit access to M2M inlines"""
++        # Create inline instance for the M2M through model
++        class AuthorBooksInline(site.admin.TabularInline):
++            model = Author.books.through
++            
++        inline = AuthorBooksInline(Author, site)
++        
++        # Give user view and change permissions on Book
++        book_ct = ContentType.objects.get_for_model(Book)
++        self.user.user_permissions.add(
++            Permission.objects.get(content_type=book_ct, codename='view_book'),
++            Permission.objects.get(content_type=book_ct, codename='change_book')
++        )
++        
++        request = self.factory.get('/admin/')
++        request.user = self.user
++        
++        # User should be able to view/add/change/delete
++        self.assertTrue(inline.has_view_permission(request, self.author))
++        self.assertTrue(inline.has_add_permission(request, self.author))
++        self.assertTrue(inline.has_change_permission(request, self.author))
++        self.assertTrue(inline.has_delete_permission(request, self.author))

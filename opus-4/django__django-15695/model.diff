@@ -1,0 +1,227 @@
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index d17232e4ec..711508b391 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -963,6 +963,15 @@ class RenameIndex(IndexOperation):
+ 
+         to_model_state = to_state.models[app_label, self.model_name_lower]
+         new_index = to_model_state.get_index_by_name(self.new_name)
++        
++        # Check if the new index already exists (e.g., from a previous forward that wasn't rolled back)
++        if self.new_name in schema_editor._constraint_names(model, index=True):
++            # If we're trying to rename from an auto-generated name and the target already exists,
++            # we need to drop the auto-generated one to avoid duplicates
++            if self.old_fields and old_index.name != self.new_name:
++                schema_editor.remove_index(model, old_index)
++            return
++            
+         schema_editor.rename_index(model, old_index, new_index)
+ 
+     def database_backwards(self, app_label, schema_editor, from_state, to_state):
+diff --git a/fix_rename_index.py b/fix_rename_index.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/fix_rename_index.py
+@@ -0,0 +1 @@
++
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..92e7e02669
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,16 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.test.utils import get_runner
++
++if __name__ == "__main__":
++    os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_sqlite'
++    django.setup()
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner()
++    
++    # Run the specific test
++    failures = test_runner.run_tests(["migrations.test_operations.OperationTests.test_rename_index_unnamed_index"])
++    sys.exit(bool(failures))
+diff --git a/test_rename_index_bug.py b/test_rename_index_bug.py
+new file mode 100644
+index 0000000000..14afc062c2
+--- /dev/null
++++ b/test_rename_index_bug.py
+@@ -0,0 +1,78 @@
++#!/usr/bin/env python
++"""Test to reproduce the RenameIndex crash bug"""
++import os
++import sys
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++sys.path.insert(0, '/testbed')
++
++import django
++django.setup()
++
++from django.db import connection, migrations, models
++from django.db.migrations.state import ProjectState, ModelState
++from django.test import TestCase
++from django.test.utils import override_settings
++
++# Create a test to reproduce the bug
++def test_rename_index_crash():
++    """Test that reproduces the crash when re-applying RenameIndex"""
++    
++    # Setup
++    app_label = "test_app"
++    table_name = f"{app_label}_testmodel"
++    
++    # Create initial project state with index_together
++    project_state = ProjectState()
++    project_state.add_model(ModelState(
++        app_label,
++        "TestModel",
++        [
++            ("id", models.AutoField(primary_key=True)),
++            ("field1", models.CharField(max_length=50)),
++            ("field2", models.CharField(max_length=50)),
++        ],
++        {"index_together": [("field1", "field2")]},
++    ))
++    
++    # Create the table first
++    with connection.schema_editor() as editor:
++        model = project_state.apps.get_model(app_label, "TestModel")
++        editor.create_model(model)
++    
++    # Create RenameIndex operation
++    operation = migrations.RenameIndex(
++        "TestModel", 
++        new_name="new_test_idx",
++        old_fields=("field1", "field2")
++    )
++    
++    # Clone state for forward operation
++    new_state = project_state.clone()
++    operation.state_forwards(app_label, new_state)
++    
++    print("Step 1: Apply RenameIndex forward (rename unnamed to named)")
++    with connection.schema_editor() as editor:
++        operation.database_forwards(app_label, editor, project_state, new_state)
++    print("   Success! Index renamed to 'new_test_idx'")
++    
++    print("\nStep 2: Apply RenameIndex backward")
++    with connection.schema_editor() as editor:
++        operation.database_backwards(app_label, editor, new_state, project_state)
++    print("   Current behavior: no-op (index still has name 'new_test_idx')")
++    
++    print("\nStep 3: Re-apply RenameIndex forward")
++    try:
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        print("   Success! No crash.")
++    except Exception as e:
++        print(f"   ERROR: {type(e).__name__}: {e}")
++        print("   This is the bug - it tries to rename to a name that already exists!")
++    
++    # Cleanup
++    with connection.schema_editor() as editor:
++        model = project_state.apps.get_model(app_label, "TestModel")
++        editor.delete_model(model)
++
++if __name__ == "__main__":
++    test_rename_index_crash()
+diff --git a/test_rename_index_issue.py b/test_rename_index_issue.py
+new file mode 100644
+index 0000000000..994219f662
+--- /dev/null
++++ b/test_rename_index_issue.py
+@@ -0,0 +1,73 @@
++"""Test script to reproduce the RenameIndex issue"""
++import os
++import sys
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++# Add project root to Python path
++sys.path.insert(0, '/testbed')
++
++import django
++django.setup()
++
++from django.db import connection, models
++from django.db.migrations import state, operations
++from django.db.migrations.state import ProjectState, ModelState
++
++def test_rename_index_backward_forward():
++    """Test that reproduces the issue with RenameIndex moving backward and forward"""
++    
++    # Create a simple model state with index_together
++    app_label = "test_app"
++    
++    # Initial project state with index_together
++    project_state = ProjectState()
++    project_state.add_model(ModelState(
++        app_label,
++        "TestModel",
++        [
++            ("id", models.AutoField(primary_key=True)),
++            ("field1", models.CharField(max_length=50)),
++            ("field2", models.CharField(max_length=50)),
++        ],
++        {"index_together": [("field1", "field2")]},
++    ))
++    
++    # Create the RenameIndex operation
++    operation = operations.RenameIndex(
++        "TestModel", 
++        new_name="new_test_idx", 
++        old_fields=("field1", "field2")
++    )
++    
++    # Clone states for forward operation
++    new_state = project_state.clone()
++    operation.state_forwards(app_label, new_state)
++    
++    print("Initial state - index_together:", project_state.models[app_label, "testmodel"].options.get("index_together"))
++    print("After forward - indexes:", [idx.name for idx in new_state.models[app_label, "testmodel"].options.get("indexes", [])])
++    
++    # Simulate database operations
++    print("\n--- Testing database operations ---")
++    
++    # Forward (rename unnamed index to named)
++    print("1. Forward operation (rename unnamed to named)")
++    with connection.schema_editor() as editor:
++        # We'll simulate this instead of actually running it
++        print("   Would rename index from auto-generated name to 'new_test_idx'")
++    
++    # Backward (should be no-op according to current implementation)
++    print("2. Backward operation (current: no-op)")
++    with connection.schema_editor() as editor:
++        # Current implementation does nothing
++        print("   Current implementation: no-op")
++    
++    # Forward again - this would cause the crash
++    print("3. Forward operation again (this would crash)")
++    print("   Would try to rename to 'new_test_idx' but it already exists!")
++    
++    print("\n--- The issue ---")
++    print("The problem is that database_backwards() for unnamed indexes is a no-op,")
++    print("so when you apply forward again, it tries to create an index that already exists.")
++
++if __name__ == "__main__":
++    test_rename_index_backward_forward()
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index cfd28b1b39..c0a55023bb 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -2988,6 +2988,10 @@ class OperationTests(OperationTestBase):
+         with connection.schema_editor() as editor, self.assertNumQueries(0):
+             operation.database_backwards(app_label, editor, new_state, project_state)
+         self.assertIndexNameExists(table_name, "new_pony_test_idx")
++        # Re-apply renaming.
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        self.assertIndexNameExists(table_name, "new_pony_test_idx")
+         # Deconstruction.
+         definition = operation.deconstruct()
+         self.assertEqual(definition[0], "RenameIndex")

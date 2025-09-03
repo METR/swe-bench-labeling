@@ -1,0 +1,109 @@
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/roles.py b/sphinx/roles.py
+index 2d3042f8f..a7009a156 100644
+--- a/sphinx/roles.py
++++ b/sphinx/roles.py
+@@ -35,7 +35,6 @@ if False:
+ generic_docroles = {
+     'command': addnodes.literal_strong,
+     'dfn': nodes.emphasis,
+-    'kbd': nodes.literal,
+     'mailheader': addnodes.literal_emphasis,
+     'makevar': addnodes.literal_strong,
+     'manpage': addnodes.manpage,
+@@ -611,14 +610,45 @@ specific_docroles = {
+     'abbr': Abbreviation(),
+ }  # type: Dict[str, RoleFunction]
+ 
++def kbd(name, rawtext, text, lineno, inliner, options={}, content=[]):
++    env = inliner.document.settings.env
++    text = utils.unescape(text)
++    
++    # Split the text into individual keystrokes
++    keystrokes = re.split(r'(?<![-+^])[-+^](?![-+^])', text)
++    
++    # Create a list to store the kbd nodes
++    kbd_nodes = []
++    
++    for keystroke in keystrokes:
++        # Remove leading/trailing whitespace
++        keystroke = keystroke.strip()
++        
++        # Create a new literal node for each keystroke
++        node = nodes.literal(rawtext, keystroke, classes=['kbd'])
++        kbd_nodes.append(node)
++        
++        # Add separator if not the last keystroke
++        if keystroke != keystrokes[-1]:
++            separator = text[text.index(keystroke) + len(keystroke)]
++            kbd_nodes.append(nodes.Text(separator))
++    
++    return kbd_nodes, []
++
++# Update the generic_docroles dictionary
++generic_docroles['kbd'] = kbd
++
+ 
+ def setup(app: "Sphinx") -> Dict[str, Any]:
+     from docutils.parsers.rst import roles
+ 
+     for rolename, nodeclass in generic_docroles.items():
+-        generic = roles.GenericRole(rolename, nodeclass)
+-        role = roles.CustomRole(rolename, generic, {'classes': [rolename]})
+-        roles.register_local_role(rolename, role)
++        if rolename == 'kbd':
++            roles.register_local_role(rolename, kbd)
++        else:
++            generic = roles.GenericRole(rolename, nodeclass)
++            role = roles.CustomRole(rolename, generic, {'classes': [rolename]})
++            roles.register_local_role(rolename, role)
+ 
+     for rolename, func in specific_docroles.items():
+         roles.register_local_role(rolename, func)
+diff --git a/tox.ini b/tox.ini
+index 21a0faec3..be1a9127e 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

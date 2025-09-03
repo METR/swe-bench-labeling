@@ -1,0 +1,134 @@
+diff --git a/django/db/backends/sqlite3/base.py b/django/db/backends/sqlite3/base.py
+index 31e8a55a43..8434a828fd 100644
+--- a/django/db/backends/sqlite3/base.py
++++ b/django/db/backends/sqlite3/base.py
+@@ -559,9 +559,13 @@ def _sqlite_format_dtdelta(conn, lhs, rhs):
+             out = real_lhs - real_rhs
+     except (ValueError, TypeError):
+         return None
+-    # typecast_timestamp returns a date or a datetime without timezone.
+-    # It will be formatted as "%Y-%m-%d" or "%Y-%m-%d %H:%M:%S[.%f]"
+-    return str(out)
++    # When both operands are durations (integers), return microseconds
++    # for compatibility with convert_durationfield_value.
++    # Otherwise return a string for datetime/date operations.
++    if isinstance(lhs, int) and isinstance(rhs, int):
++        return duration_microseconds(out)
++    else:
++        return str(out)
+ 
+ 
+ @none_guard
+diff --git a/test_direct_query.py b/test_direct_query.py
+new file mode 100644
+index 0000000000..34260cb75c
+--- /dev/null
++++ b/test_direct_query.py
+@@ -0,0 +1,31 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import connection
++
++# Check what django_format_dtdelta returns
++cursor = connection.cursor()
++cursor.execute("SELECT django_format_dtdelta('+', 432000000000, 86400000000)")
++result = cursor.fetchone()
++print(f"django_format_dtdelta result: {result[0]}, type: {type(result[0])}")
++cursor.close()
+diff --git a/test_duration_issue.py b/test_duration_issue.py
+new file mode 100644
+index 0000000000..f57e18d94d
+--- /dev/null
++++ b/test_duration_issue.py
+@@ -0,0 +1,70 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import F
++import datetime
++
++# Define the model
++class Experiment(models.Model):
++    name = models.CharField(max_length=24)
++    assigned = models.DateField()
++    completed = models.DateField()
++    estimated_time = models.DurationField()
++    start = models.DateTimeField()
++    end = models.DateTimeField()
++
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'experiment'
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Experiment)
++
++# Create test data
++exp = Experiment.objects.create(
++    name='test',
++    assigned=datetime.date(2010, 6, 25),
++    completed=datetime.date(2010, 6, 30),
++    estimated_time=datetime.timedelta(days=5),
++    start=datetime.datetime(2010, 6, 25, 12, 0, 0),
++    end=datetime.datetime(2010, 6, 30, 12, 0, 0)
++)
++
++# Try the problematic query
++try:
++    delta = datetime.timedelta(days=1)
++    # Let's see what SQL is generated
++    qs = Experiment.objects.annotate(duration=F('estimated_time') + delta)
++    print("Generated SQL:", qs.query)
++    
++    # Now execute
++    result = list(qs)
++    print("Query succeeded!")
++    print(f"Result: {result[0].duration}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()

@@ -1,0 +1,179 @@
+diff --git a/sympy/core/_print_helpers.py b/sympy/core/_print_helpers.py
+index 96d7e72676..17098678ee 100644
+--- a/sympy/core/_print_helpers.py
++++ b/sympy/core/_print_helpers.py
+@@ -16,6 +16,8 @@ class Printable:
+ 
+     This also adds support for LaTeX printing in jupyter notebooks.
+     """
++    
++    __slots__ = ()
+ 
+     # Note, we always use the default ordering (lex) in __str__ and __repr__,
+     # regardless of the global setting. See issue 5487.
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..2d1fbd3cc5
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,60 @@
++import sympy
++from sympy import Symbol, Add, Mul, sin, cos, exp, log, sqrt
++from sympy.abc import x, y, z
++
++print("Testing Symbol behavior after adding __slots__ to Printable...")
++
++# Test 1: Ensure Symbol doesn't have __dict__
++s = Symbol('s')
++assert not hasattr(s, '__dict__'), "Symbol should not have __dict__"
++print("✓ Test 1 passed: Symbol doesn't have __dict__")
++
++# Test 2: Ensure Symbol still has its expected attributes
++assert hasattr(s, 'name'), "Symbol should have 'name' attribute"
++assert s.name == 's', "Symbol name should be 's'"
++print("✓ Test 2 passed: Symbol attributes work correctly")
++
++# Test 3: Test Symbol creation with assumptions
++s_real = Symbol('s', real=True)
++assert s_real.is_real, "Symbol with real=True should be real"
++assert not hasattr(s_real, '__dict__'), "Real Symbol should not have __dict__"
++print("✓ Test 3 passed: Symbol with assumptions works correctly")
++
++# Test 4: Test printing functionality (which is provided by Printable)
++assert str(s) == 's', "String representation should work"
++assert repr(s) == 's', "Repr should work"
++print("✓ Test 4 passed: Printing functionality works")
++
++# Test 5: Test LaTeX printing
++latex_repr = s._repr_latex_()
++assert latex_repr == '$\\displaystyle s$', f"LaTeX representation incorrect: {latex_repr}"
++print("✓ Test 5 passed: LaTeX printing works")
++
++# Test 6: Test other SymPy objects that inherit from Printable
++expr = x + y + z
++assert not hasattr(expr, '__dict__'), "Add expression should not have __dict__"
++print("✓ Test 6 passed: Add expression doesn't have __dict__")
++
++# Test 7: Test complex expressions
++complex_expr = sin(x) * cos(y) + exp(z) * log(x)
++assert not hasattr(complex_expr, '__dict__'), "Complex expression should not have __dict__"
++print("✓ Test 7 passed: Complex expressions don't have __dict__")
++
++# Test 8: Test mathematical operations
++result = s + s
++assert result == 2*s, "Addition should work"
++assert not hasattr(result, '__dict__'), "Result should not have __dict__"
++print("✓ Test 8 passed: Mathematical operations work correctly")
++
++# Test 9: Test substitution
++expr = x**2 + 2*x + 1
++result = expr.subs(x, 5)
++assert result == 36, "Substitution should work"
++print("✓ Test 9 passed: Substitution works correctly")
++
++# Test 10: Test differentiation
++diff_result = expr.diff(x)
++assert diff_result == 2*x + 2, "Differentiation should work"
++print("✓ Test 10 passed: Differentiation works correctly")
++
++print("\nAll tests passed! The fix doesn't break existing functionality.")
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..dfc3eb0524
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,45 @@
++"""
++Test for the specific issue reported:
++In version 1.6.2 Symbol instances had no `__dict__` attribute.
++This changed in 1.7 where Symbol('s').__dict__ existed (empty dict).
++This fix should restore the 1.6.2 behavior.
++"""
++import sympy
++
++# Test the exact scenario from the issue
++s = sympy.Symbol('s')
++
++# This should raise AttributeError like in 1.6.2
++try:
++    _ = s.__dict__
++    print("FAILED: Symbol.__dict__ exists (it shouldn't)")
++except AttributeError:
++    print("PASSED: Symbol object has no attribute '__dict__' (expected behavior)")
++
++# Verify __slots__ is still there
++print(f"Symbol.__slots__ = {s.__slots__}")
++
++# Also check various symbol types
++symbols_to_test = [
++    sympy.Symbol('x'),
++    sympy.Symbol('y', real=True),
++    sympy.Symbol('z', positive=True),
++    sympy.Symbol('w', integer=True),
++    sympy.symbols('a:d'),  # multiple symbols
++]
++
++all_good = True
++for sym in symbols_to_test:
++    if isinstance(sym, (list, tuple)):
++        for s in sym:
++            if hasattr(s, '__dict__'):
++                print(f"FAILED: {s} has __dict__")
++                all_good = False
++    else:
++        if hasattr(sym, '__dict__'):
++            print(f"FAILED: {sym} has __dict__")
++            all_good = False
++
++if all_good:
++    print("\nAll Symbol instances correctly have no __dict__ attribute!")
++    print("The issue has been fixed.")
+diff --git a/test_other_printables.py b/test_other_printables.py
+new file mode 100644
+index 0000000000..9e90fec6f0
+--- /dev/null
++++ b/test_other_printables.py
+@@ -0,0 +1,20 @@
++import sympy
++from sympy.physics.vector import Vector
++from sympy.physics.vector import ReferenceFrame
++from sympy.tensor.array import Array
++
++print("Testing other classes that inherit from Printable...")
++
++# Test Vector
++N = ReferenceFrame('N')
++v = 3*N.x + 4*N.y + 5*N.z
++print(f"Vector: {v}")
++print(f"Vector has __dict__: {hasattr(v, '__dict__')}")
++
++# Test Array
++arr = Array([1, 2, 3, 4])
++print(f"\nArray: {arr}")
++print(f"Array has __dict__: {hasattr(arr, '__dict__')}")
++
++# Note: We expect Vector and Array might have __dict__ if they or their
++# parent classes don't define __slots__, but Basic-derived classes shouldn't
+diff --git a/test_symbol_dict.py b/test_symbol_dict.py
+new file mode 100644
+index 0000000000..146bb0926b
+--- /dev/null
++++ b/test_symbol_dict.py
+@@ -0,0 +1,17 @@
++import sympy
++
++# Test if Symbol has __dict__
++s = sympy.Symbol('s')
++print("Symbol('s') has __dict__:", hasattr(s, '__dict__'))
++print("Symbol('s').__slots__:", s.__slots__)
++
++# Try to access __dict__
++try:
++    print("Symbol('s').__dict__:", s.__dict__)
++except AttributeError as e:
++    print("AttributeError when accessing __dict__:", e)
++
++# Check parent classes
++print("\nChecking parent classes for __slots__:")
++for cls in sympy.Symbol.__mro__:
++    print(f"{cls.__name__}: __slots__ = {getattr(cls, '__slots__', 'NOT DEFINED')}")

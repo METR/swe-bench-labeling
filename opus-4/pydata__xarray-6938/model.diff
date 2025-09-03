@@ -1,0 +1,258 @@
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 00000000..a88e4032
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,48 @@
++import numpy as np
++import xarray as xr
++
++# Create initial dataset
++nz = 11
++ds = xr.Dataset(
++    data_vars={
++        "y": ("z", np.random.rand(nz)),
++        "lev": ("z", np.arange(nz) * 10),
++    },
++)
++
++# Create ds2 through the series of operations
++ds2 = (
++    ds.swap_dims(z="lev")
++    .rename_dims(lev="z")
++    .reset_index("lev")
++    .reset_coords()
++)
++
++# Check if ds2.variables['lev'] is the same object after various operations
++print("Initial check:")
++print(f"ds2.variables['lev'] is ds2._variables['lev']: {ds2.variables['lev'] is ds2._variables['lev']}")
++print(f"type(ds2.variables): {type(ds2.variables)}")
++print(f"type(ds2._variables): {type(ds2._variables)}")
++
++# Now let's trace what happens in swap_dims
++print("\nChecking what swap_dims does...")
++dims_dict = {'z': 'lev'}
++
++# This is what happens inside swap_dims for the 'lev' variable
++v = ds2.variables['lev']
++print(f"Original variable dims: {v.dims}")
++print(f"Original variable id: {id(v)}")
++
++# to_base_variable creates new Variable but might share state
++var = v.to_base_variable()
++print(f"After to_base_variable, new var dims: {var.dims}")
++print(f"After to_base_variable, new var id: {id(var)}")
++print(f"Are they the same object? {var is v}")
++
++# Now setting dims
++dims = tuple('lev' if dim == 'z' else dim for dim in var.dims)
++print(f"New dims to set: {dims}")
++var.dims = dims
++print(f"After setting dims on new var: {var.dims}")
++print(f"Original variable dims after setting on new var: {v.dims}")
++print(f"Are the _dims the same object? {var._dims is v._dims}")
+diff --git a/test_index_var.py b/test_index_var.py
+new file mode 100644
+index 00000000..185155d8
+--- /dev/null
++++ b/test_index_var.py
+@@ -0,0 +1,31 @@
++import numpy as np
++import xarray as xr
++
++# Create initial dataset
++nz = 11
++ds = xr.Dataset(
++    data_vars={
++        "y": ("z", np.random.rand(nz)),
++        "lev": ("z", np.arange(nz) * 10),
++    },
++)
++
++# Create ds2 through the series of operations
++ds2 = (
++    ds.swap_dims(z="lev")
++    .rename_dims(lev="z")
++    .reset_index("lev")
++    .reset_coords()
++)
++
++# Check type of ds2._variables['lev']
++print(f"Type of ds2._variables['lev']: {type(ds2._variables['lev'])}")
++print(f"Is it an IndexVariable? {isinstance(ds2._variables['lev'], xr.IndexVariable)}")
++
++# Let's see what to_index_variable returns for an IndexVariable
++from xarray.core.variable import IndexVariable
++v = ds2._variables['lev']
++v_idx = v.to_index_variable()
++print(f"\nOriginal variable id: {id(v)}")
++print(f"to_index_variable result id: {id(v_idx)}")
++print(f"Are they the same object? {v is v_idx}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..1ec61423
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,39 @@
++import numpy as np
++import xarray as xr
++
++# Create initial dataset
++nz = 11
++ds = xr.Dataset(
++    data_vars={
++        "y": ("z", np.random.rand(nz)),
++        "lev": ("z", np.arange(nz) * 10),
++    },
++)
++
++# Create ds2 through the series of operations
++ds2 = (
++    ds.swap_dims(z="lev")
++    .rename_dims(lev="z")
++    .reset_index("lev")
++    .reset_coords()
++)
++
++# Print the dims of lev before swap_dims
++print("Before swap_dims:")
++print(f"ds2['lev'].dims = {ds2['lev'].dims}")
++print(f"id(ds2['lev']) = {id(ds2['lev'])}")
++print(f"id(ds2.variables['lev']) = {id(ds2.variables['lev'])}")
++
++# Apply swap_dims
++ds2_swapped = ds2.swap_dims(z='lev')
++
++# Print the dims of lev after swap_dims  
++print("\nAfter swap_dims:")
++print(f"ds2['lev'].dims = {ds2['lev'].dims}")
++print(f"id(ds2['lev']) = {id(ds2['lev'])}")
++print(f"id(ds2.variables['lev']) = {id(ds2.variables['lev'])}")
++
++# Also check the swapped version
++print(f"\nds2_swapped['lev'].dims = {ds2_swapped['lev'].dims}")
++print(f"id(ds2_swapped['lev']) = {id(ds2_swapped['lev'])}")
++print(f"id(ds2_swapped.variables['lev']) = {id(ds2_swapped.variables['lev'])}")
+diff --git a/test_swap_dims.py b/test_swap_dims.py
+new file mode 100644
+index 00000000..412186e8
+--- /dev/null
++++ b/test_swap_dims.py
+@@ -0,0 +1,27 @@
++import numpy as np
++import xarray as xr
++
++nz = 11
++ds = xr.Dataset(
++    data_vars={
++        "y": ("z", np.random.rand(nz)),
++        "lev": ("z", np.arange(nz) * 10),
++        # ^ We want this to be a dimension coordinate
++    },
++)
++print(f"ds\n{ds}")
++print(f"\nds, 'lev' -> dim coord\n{ds.swap_dims(z='lev')}")
++
++ds2 = (
++    ds.swap_dims(z="lev")
++    .rename_dims(lev="z")
++    .reset_index("lev")
++    .reset_coords()
++)
++print(f"\nds2\n{ds2}")
++# ^ This Dataset appears same as the original
++
++print(f"\nds2, 'lev' -> dim coord\n{ds2.swap_dims(z='lev')}")
++# ^ Produces a Dataset with dimension coordinate 'lev'
++print(f"\nds2 after .swap_dims() applied\n{ds2}")
++# ^ `ds2['lev']` now has dimension 'lev' although otherwise same
+diff --git a/test_swap_dims_regression.py b/test_swap_dims_regression.py
+new file mode 100644
+index 00000000..8b137891
+--- /dev/null
++++ b/test_swap_dims_regression.py
+@@ -0,0 +1 @@
++
+diff --git a/test_trace.py b/test_trace.py
+new file mode 100644
+index 00000000..3f8fa03a
+--- /dev/null
++++ b/test_trace.py
+@@ -0,0 +1,61 @@
++import numpy as np
++import xarray as xr
++
++# Create initial dataset
++nz = 11
++ds = xr.Dataset(
++    data_vars={
++        "y": ("z", np.random.rand(nz)),
++        "lev": ("z", np.arange(nz) * 10),
++    },
++)
++
++# Create ds2 through the series of operations
++ds2 = (
++    ds.swap_dims(z="lev")
++    .rename_dims(lev="z")
++    .reset_index("lev")
++    .reset_coords()
++)
++
++print("Before swap_dims:")
++print(f"ds2._variables['lev'].dims = {ds2._variables['lev'].dims}")
++print(f"id(ds2._variables['lev']) = {id(ds2._variables['lev'])}")
++
++# Manually trace through swap_dims logic
++dims_dict = {'z': 'lev'}
++variables = {}
++
++# Check what happens with the 'lev' variable during swap_dims
++k = 'lev'
++v = ds2._variables[k]
++print(f"\nProcessing variable '{k}':")
++print(f"  Original dims: {v.dims}")
++print(f"  Original variable id: {id(v)}")
++
++# This is the actual code from swap_dims
++dims = tuple(dims_dict.get(dim, dim) for dim in v.dims)
++print(f"  New dims tuple: {dims}")
++
++# Check if k is in result_dims
++result_dims = {dims_dict.get(dim, dim) for dim in ds2.dims}
++print(f"  result_dims: {result_dims}")
++print(f"  '{k}' in result_dims: {k in result_dims}")
++
++if k in result_dims:
++    print("  Taking the index variable path...")
++    var = v.to_index_variable()
++    print(f"  After to_index_variable, var id: {id(var)}")
++    print(f"  After to_index_variable, var dims: {var.dims}")
++    var.dims = dims
++    print(f"  After setting dims, var dims: {var.dims}")
++else:
++    print("  Taking the base variable path...")
++    var = v.to_base_variable()
++    print(f"  After to_base_variable, var id: {id(var)}")
++    print(f"  After to_base_variable, var dims: {var.dims}")
++    var.dims = dims
++    print(f"  After setting dims, var dims: {var.dims}")
++
++print(f"\nOriginal v dims after all operations: {v.dims}")
++print(f"Original ds2._variables['lev'].dims: {ds2._variables['lev'].dims}")
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index c775d05c..50b691f9 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -3773,6 +3773,10 @@ class Dataset(
+             dims = tuple(dims_dict.get(dim, dim) for dim in v.dims)
+             if k in result_dims:
+                 var = v.to_index_variable()
++                # to_index_variable returns self for IndexVariable, so we need to copy
++                # before modifying dims to avoid mutating the original
++                if dims != v.dims:
++                    var = var.copy(deep=False)
+                 var.dims = dims
+                 if k in self._indexes:
+                     indexes[k] = self._indexes[k]

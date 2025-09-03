@@ -1,0 +1,206 @@
+diff --git a/sklearn/linear_model/huber.py b/sklearn/linear_model/huber.py
+index 65c686400..d3606a09e 100644
+--- a/sklearn/linear_model/huber.py
++++ b/sklearn/linear_model/huber.py
+@@ -251,7 +251,7 @@ class HuberRegressor(LinearModel, RegressorMixin, BaseEstimator):
+         self : object
+         """
+         X, y = check_X_y(
+-            X, y, copy=False, accept_sparse=['csr'], y_numeric=True)
++            X, y, copy=False, accept_sparse=['csr'], y_numeric=True, dtype=np.float64)
+         if sample_weight is not None:
+             sample_weight = np.array(sample_weight)
+             check_consistent_length(y, sample_weight)
+diff --git a/sklearn/linear_model/tests/test_huber.py b/sklearn/linear_model/tests/test_huber.py
+index 6a8b26133..b1665233a 100644
+--- a/sklearn/linear_model/tests/test_huber.py
++++ b/sklearn/linear_model/tests/test_huber.py
+@@ -199,3 +199,30 @@ def test_huber_better_r2_score():
+ 
+     # The huber model should also fit poorly on the outliers.
+     assert_greater(ridge_outlier_score, huber_outlier_score)
++
++
++def test_huber_bool_input():
++    # Test that HuberRegressor can handle boolean input
++    X, y = make_regression_with_outliers(n_samples=200, n_features=2)
++    X_bool = X > 0
++    X_bool_as_float = X_bool.astype(float)
++
++    # Test with dense boolean array
++    huber_bool = HuberRegressor()
++    huber_bool.fit(X_bool, y)
++    
++    # Test with dense float array (converted from boolean)
++    huber_float = HuberRegressor()
++    huber_float.fit(X_bool_as_float, y)
++    
++    # Coefficients should be identical
++    assert_array_almost_equal(huber_bool.coef_, huber_float.coef_)
++    assert_almost_equal(huber_bool.intercept_, huber_float.intercept_)
++    
++    # Test with sparse boolean matrix
++    X_bool_sparse = sparse.csr_matrix(X_bool)
++    huber_sparse = HuberRegressor()
++    huber_sparse.fit(X_bool_sparse, y)
++    
++    # Results with sparse boolean should also be close
++    assert_array_almost_equal(huber_sparse.coef_, huber_float.coef_, decimal=5)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..604f7bdbb
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,37 @@
++import numpy as np
++from sklearn.datasets import make_regression
++from sklearn.linear_model import HuberRegressor
++
++# Test various dtypes
++print("Testing HuberRegressor with various dtypes...")
++
++# Random data
++X, y, coef = make_regression(n_samples=200, n_features=2, noise=4.0, coef=True, random_state=0)
++
++# Test with boolean
++X_bool = X > 0
++print(f"\nTesting with boolean dtype...")
++try:
++    huber = HuberRegressor(random_state=0).fit(X_bool, y)
++    print(f"  Success!")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++# Test with int
++print(f"\nTesting with int32 dtype...")
++X_int = X.astype(np.int32)
++try:
++    huber = HuberRegressor(random_state=0).fit(X_int, y)
++    print(f"  Success!")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++# Test sparse boolean
++from scipy import sparse
++X_bool_sparse = sparse.csr_matrix(X_bool)
++print(f"\nTesting with sparse boolean...")
++try:
++    huber = HuberRegressor(random_state=0).fit(X_bool_sparse, y)
++    print(f"  Success!")
++except Exception as e:
++    print(f"  Failed: {e}")
+diff --git a/test_fix2.py b/test_fix2.py
+new file mode 100644
+index 000000000..ca854a32f
+--- /dev/null
++++ b/test_fix2.py
+@@ -0,0 +1,43 @@
++import numpy as np
++from sklearn.datasets import make_regression
++from sklearn.linear_model import HuberRegressor
++
++# Test various dtypes
++print("Testing HuberRegressor with various dtypes...")
++
++# Random data
++X, y, coef = make_regression(n_samples=200, n_features=2, noise=4.0, coef=True, random_state=0)
++
++# Test with boolean
++X_bool = X > 0
++print(f"\nTesting with boolean dtype...")
++try:
++    huber = HuberRegressor().fit(X_bool, y)
++    print(f"  Success! Coef shape: {huber.coef_.shape}")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++# Test with int
++print(f"\nTesting with int32 dtype...")
++X_int = X.astype(np.int32)
++try:
++    huber = HuberRegressor().fit(X_int, y)
++    print(f"  Success! Coef shape: {huber.coef_.shape}")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++# Test sparse boolean
++from scipy import sparse
++X_bool_sparse = sparse.csr_matrix(X_bool)
++print(f"\nTesting with sparse boolean...")
++try:
++    huber = HuberRegressor().fit(X_bool_sparse, y)
++    print(f"  Success! Coef shape: {huber.coef_.shape}")
++except Exception as e:
++    print(f"  Failed: {e}")
++
++# Test that boolean conversion is consistent
++X_bool_as_float = X_bool.astype(float)
++huber_bool = HuberRegressor().fit(X_bool, y)
++huber_float = HuberRegressor().fit(X_bool_as_float, y)
++print(f"\nMax coefficient difference between bool and float: {np.max(np.abs(huber_bool.coef_ - huber_float.coef_))}")
+diff --git a/test_huber_bool.py b/test_huber_bool.py
+new file mode 100644
+index 000000000..00f7dfa6d
+--- /dev/null
++++ b/test_huber_bool.py
+@@ -0,0 +1,26 @@
++import numpy as np
++from sklearn.datasets import make_regression
++from sklearn.linear_model import HuberRegressor
++
++# Random data
++X, y, coef = make_regression(n_samples=200, n_features=2, noise=4.0, coef=True, random_state=0)
++X_bool = X > 0
++X_bool_as_float = np.asarray(X_bool, dtype=float)
++
++# Works
++print("Testing with float X...")
++huber = HuberRegressor().fit(X, y)
++print("Success!")
++
++# Should work but fails
++print("\nTesting with boolean X...")
++try:
++    huber = HuberRegressor().fit(X_bool, y)
++    print("Success!")
++except TypeError as e:
++    print(f"Failed with error: {e}")
++
++# Also works
++print("\nTesting with boolean X converted to float...")
++huber = HuberRegressor().fit(X_bool_as_float, y)
++print("Success!")
+diff --git a/test_huber_comprehensive.py b/test_huber_comprehensive.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/test_huber_dtypes.py b/test_huber_dtypes.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/test_linear_models_bool.py b/test_linear_models_bool.py
+new file mode 100644
+index 000000000..c533a950a
+--- /dev/null
++++ b/test_linear_models_bool.py
+@@ -0,0 +1,22 @@
++import numpy as np
++from sklearn.datasets import make_regression
++from sklearn.linear_model import LinearRegression, Ridge, Lasso, HuberRegressor
++
++# Test that various linear models handle boolean input
++X, y = make_regression(n_samples=50, n_features=2, random_state=0)
++X_bool = X > 0
++
++models = [
++    ("LinearRegression", LinearRegression()),
++    ("Ridge", Ridge()),
++    ("Lasso", Lasso()),
++    ("HuberRegressor", HuberRegressor())
++]
++
++print("Testing linear models with boolean input:")
++for name, model in models:
++    try:
++        model.fit(X_bool, y)
++        print(f"✓ {name} - Success!")
++    except Exception as e:
++        print(f"✗ {name} - Failed: {e}")

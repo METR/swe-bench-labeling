@@ -1,0 +1,326 @@
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..165f7fd5ea
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,84 @@
++import os
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++
++import django
++from django.conf import settings
++from django.db import connection
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Count
++
++
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    age = models.IntegerField()
++
++    class Meta:
++        ordering = ['age']
++        app_label = 'test_app'
++
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE, related_name='books')
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Author)
++    schema_editor.create_model(Book)
++
++# Create test data
++author1 = Author.objects.create(name="John", age=25)
++author2 = Author.objects.create(name="John", age=30)
++author3 = Author.objects.create(name="Jane", age=35)
++
++Book.objects.create(title="Book 1", author=author1)
++Book.objects.create(title="Book 2", author=author1)
++Book.objects.create(title="Book 3", author=author2)
++Book.objects.create(title="Book 4", author=author3)
++
++# Test the issue
++print("Testing Meta.ordering in GROUP BY issue...")
++result = list(Author.objects.values('name').annotate(book_count=Count('books')))
++print(f"Query results: {result}")
++print(f"Number of results: {len(result)}")
++
++# Check the actual SQL
++from django.db import connection
++qs = Author.objects.values('name').annotate(book_count=Count('books'))
++sql, params = qs.query.get_compiler('default').as_sql()
++print(f"\nGenerated SQL:\n{sql}")
++print(f"Params: {params}")
++
++# Expected: 2 results - John with 3 books, Jane with 1 book
++# But if age is in GROUP BY, we'll get 3 results (John/25, John/30, Jane/35)
++if len(result) == 3:
++    print("\nBUG CONFIRMED: Meta.ordering field 'age' is included in GROUP BY!")
++    print("This causes incorrect aggregation - John's books are split by age.")
++elif len(result) == 2:
++    print("\nGood: Meta.ordering is not affecting GROUP BY.")
++    john_count = sum(r['book_count'] for r in result if r['name'] == 'John')
++    jane_count = sum(r['book_count'] for r in result if r['name'] == 'Jane')
++    print(f"John has {john_count} books, Jane has {jane_count} books")
+diff --git a/test_meta_ordering_group_by.py b/test_meta_ordering_group_by.py
+new file mode 100644
+index 0000000000..0eefa56cb5
+--- /dev/null
++++ b/test_meta_ordering_group_by.py
+@@ -0,0 +1,112 @@
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Count
++from django.test import TestCase
++
++
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    age = models.IntegerField()
++
++    class Meta:
++        ordering = ['age']
++        app_label = 'test_app'
++
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class MetaOrderingGroupByTest(TestCase):
++    @classmethod
++    def setUpTestData(cls):
++        # Create authors with same name but different ages
++        author1 = Author.objects.create(name="John", age=25)
++        author2 = Author.objects.create(name="John", age=30)
++        author3 = Author.objects.create(name="Jane", age=35)
++        
++        # Create books
++        Book.objects.create(title="Book 1", author=author1)
++        Book.objects.create(title="Book 2", author=author1)
++        Book.objects.create(title="Book 3", author=author2)
++        Book.objects.create(title="Book 4", author=author3)
++    
++    def test_meta_ordering_not_in_group_by(self):
++        # Test that Meta.ordering fields are not included in GROUP BY
++        # This should group by author name only, not by age
++        result = Author.objects.values('name').annotate(book_count=Count('book'))
++        
++        # Expected: 2 results - John with 3 books, Jane with 1 book
++        self.assertEqual(len(result), 2)
++        
++        john_result = [r for r in result if r['name'] == 'John'][0]
++        jane_result = [r for r in result if r['name'] == 'Jane'][0]
++        
++        self.assertEqual(john_result['book_count'], 3)
++        self.assertEqual(jane_result['book_count'], 1)
++        
++        # Check the SQL to ensure 'age' is not in GROUP BY
++        qs = Author.objects.values('name').annotate(book_count=Count('book'))
++        sql = str(qs.query)
++        print("Generated SQL:", sql)
++        
++        # The GROUP BY clause should only contain the 'name' field, not 'age'
++        # Even though Meta.ordering includes 'age'
++        self.assertNotIn('age', sql.lower().split('group by')[1].split('order by')[0])
++
++
++if __name__ == '__main__':
++    import django
++    from django.conf import settings
++    
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=False,
++    )
++    
++    django.setup()
++    
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Author)
++        schema_editor.create_model(Book)
++    
++    # Run the test
++    test = MetaOrderingGroupByTest()
++    test.setUpTestData()
++    test.test_meta_ordering_not_in_group_by()
++    print("Test passed!")
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 0000000000..3cd429c6a9
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,112 @@
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',  
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'testapp',
++    ],
++    SECRET_KEY='test',
++)
++
++# Setup Django
++django.setup()
++
++# Now we can use Django ORM
++from django.db import models, connection
++from django.db.models import Count
++
++# Create app directory if it doesn't exist
++import tempfile
++temp_dir = tempfile.mkdtemp()
++sys.path.insert(0, temp_dir)
++
++# Create testapp module
++os.makedirs(os.path.join(temp_dir, 'testapp'), exist_ok=True)
++with open(os.path.join(temp_dir, 'testapp', '__init__.py'), 'w') as f:
++    f.write('')
++
++# Write models to file
++models_content = '''
++from django.db import models
++
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    age = models.IntegerField()
++    
++    class Meta:
++        ordering = ['age']
++        app_label = 'testapp'
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE, related_name='books')
++    
++    class Meta:
++        app_label = 'testapp'
++'''
++
++with open(os.path.join(temp_dir, 'testapp', 'models.py'), 'w') as f:
++    f.write(models_content)
++
++# Import models
++from testapp.models import Author, Book
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Author)
++    schema_editor.create_model(Book)
++
++# Create test data
++print("Creating test data...")
++author1 = Author.objects.create(name="John", age=25)
++author2 = Author.objects.create(name="John", age=30)
++author3 = Author.objects.create(name="Jane", age=35)
++
++Book.objects.create(title="Book 1", author=author1)
++Book.objects.create(title="Book 2", author=author1)
++Book.objects.create(title="Book 3", author=author2) 
++Book.objects.create(title="Book 4", author=author3)
++
++# Test the issue
++print("\nTesting Meta.ordering in GROUP BY issue...")
++qs = Author.objects.values('name').annotate(book_count=Count('books'))
++sql, params = qs.query.get_compiler('default').as_sql()
++print(f"\nGenerated SQL:\n{sql}")
++print(f"Params: {params}")
++
++# Check if 'age' appears in GROUP BY
++if 'age' in sql.lower().split('group by')[1].split('order by')[0]:
++    print("\nBUG CONFIRMED: Meta.ordering field 'age' is included in GROUP BY!")
++else:
++    print("\nNo 'age' field found in GROUP BY clause")
++
++result = list(qs)
++print(f"\nQuery results: {result}")
++print(f"Number of results: {len(result)}")
++
++# Expected: 2 results - John with 3 books, Jane with 1 book
++# But if age is in GROUP BY, we'll get 3 results
++if len(result) == 3:
++    print("\nBUG CONFIRMED by results: Meta.ordering field 'age' is incorrectly included in GROUP BY!")
++    print("This causes incorrect aggregation - John's books are split by age.")
++    for r in result:
++        print(f"  {r}")
++elif len(result) == 2:
++    print("\nGood: Meta.ordering is not affecting GROUP BY.")
++    john_count = sum(r['book_count'] for r in result if r['name'] == 'John')
++    jane_count = sum(r['book_count'] for r in result if r['name'] == 'Jane')
++    print(f"John has {john_count} books, Jane has {jane_count} books")

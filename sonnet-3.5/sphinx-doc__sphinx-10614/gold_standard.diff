@@ -1,0 +1,671 @@
+From 394183811fcce8f96b65574a6c60907cee685afb Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Sat, 18 Jun 2022 00:17:07 -0400
+Subject: [PATCH 01/10] Fixed path bug with links in SVG inheritance diagrams
+
+---
+ sphinx/ext/inheritance_diagram.py | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/sphinx/ext/inheritance_diagram.py b/sphinx/ext/inheritance_diagram.py
+index 6e39855123d..0ac59815fd9 100644
+--- a/sphinx/ext/inheritance_diagram.py
++++ b/sphinx/ext/inheritance_diagram.py
+@@ -33,6 +33,7 @@ class E(B): pass
+ import builtins
+ import hashlib
+ import inspect
++import pathlib
+ import re
+ from collections.abc import Iterable
+ from importlib import import_module
+@@ -54,6 +55,7 @@ class E(B): pass
+     render_dot_texinfo,
+ )
+ from sphinx.util.docutils import SphinxDirective
++from sphinx.util.osutil import canon_path, relpath
+ from sphinx.util.typing import OptionSpec
+ from sphinx.writers.html import HTML5Translator
+ from sphinx.writers.latex import LaTeXTranslator
+@@ -408,17 +410,25 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+     # Create a mapping from fully-qualified class names to URLs.
+     graphviz_output_format = self.builder.env.config.graphviz_output_format.upper()
+     current_filename = self.builder.current_docname + self.builder.out_suffix
++    current_dir = pathlib.PurePath(current_filename).parent
+     urls = {}
+     pending_xrefs = cast(Iterable[addnodes.pending_xref], node)
+     for child in pending_xrefs:
+         if child.get('refuri') is not None:
+             if graphviz_output_format == 'SVG':
+-                urls[child['reftitle']] = "../" + child.get('refuri')
++                # URI relative to src dir (typically equivalent to stripping all leading ../)
++                uri_rel_to_srcdir = (current_dir / child.get('refuri')).as_posix()
++                # URI relative to image dir (typically equivalent to prepending ../)
++                uri_rel_to_imagedir = relpath(uri_rel_to_srcdir, self.builder.imagedir)
++                urls[child['reftitle']] = canon_path(uri_rel_to_imagedir)
+             else:
+                 urls[child['reftitle']] = child.get('refuri')
+         elif child.get('refid') is not None:
+             if graphviz_output_format == 'SVG':
+-                urls[child['reftitle']] = '../' + current_filename + '#' + child.get('refid')
++                # URI relative to image dir (typically equivalent to prepending ../)
++                uri_rel_to_imagedir = relpath(current_filename, self.builder.imagedir)
++                urls[child['reftitle']] = canon_path(uri_rel_to_imagedir) +\
++                                          '#' + child.get('refid')
+             else:
+                 urls[child['reftitle']] = '#' + child.get('refid')
+ 
+
+From 81808b7ae611f0831985d31cf234a4011a356fe0 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Thu, 23 Jun 2022 11:13:03 -0400
+Subject: [PATCH 02/10] Fixed intersphinx links in inheritance diagrams
+
+---
+ sphinx/ext/inheritance_diagram.py | 15 +++++++++++----
+ 1 file changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/sphinx/ext/inheritance_diagram.py b/sphinx/ext/inheritance_diagram.py
+index 0ac59815fd9..2469129ee6c 100644
+--- a/sphinx/ext/inheritance_diagram.py
++++ b/sphinx/ext/inheritance_diagram.py
+@@ -415,14 +415,21 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+     pending_xrefs = cast(Iterable[addnodes.pending_xref], node)
+     for child in pending_xrefs:
+         if child.get('refuri') is not None:
+-            if graphviz_output_format == 'SVG':
++            # Construct the name from the URI if the reference is external via intersphinx
++            if not child.get('internal', True):
++                refname = child['refuri'].rsplit('#', 1)[-1]
++            else:
++                refname = child['reftitle']
++
++            # For SVG output, relative URIs need to be re-pathed to where the SVG file will be
++            if graphviz_output_format == 'SVG' and '://' not in child['refuri']:
+                 # URI relative to src dir (typically equivalent to stripping all leading ../)
+-                uri_rel_to_srcdir = (current_dir / child.get('refuri')).as_posix()
++                uri_rel_to_srcdir = (current_dir / child['refuri']).as_posix()
+                 # URI relative to image dir (typically equivalent to prepending ../)
+                 uri_rel_to_imagedir = relpath(uri_rel_to_srcdir, self.builder.imagedir)
+-                urls[child['reftitle']] = canon_path(uri_rel_to_imagedir)
++                urls[refname] = canon_path(uri_rel_to_imagedir)
+             else:
+-                urls[child['reftitle']] = child.get('refuri')
++                urls[refname] = child['refuri']
+         elif child.get('refid') is not None:
+             if graphviz_output_format == 'SVG':
+                 # URI relative to image dir (typically equivalent to prepending ../)
+
+From e0931db7592318025d0f87f08b31320270232dc4 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Wed, 28 Sep 2022 00:13:26 -0400
+Subject: [PATCH 03/10] Addressed comments and added changelog entry
+
+---
+ CHANGES                           |  3 +++
+ sphinx/ext/inheritance_diagram.py | 16 ++++++++--------
+ 2 files changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/CHANGES b/CHANGES
+index e054883881d..32bb71c617d 100644
+--- a/CHANGES
++++ b/CHANGES
+@@ -45,6 +45,9 @@ Bugs fixed
+ * #11529: Line Block in LaTeX builder outputs spurious empty token.
+   Patch by Adrian Vollmer.
+ * #11196: autosummary: Summary line extraction failed with "e.g."
++* #10614: Fixed a number of bugs in inheritance diagrams that resulted in
++  missing or broken links.
++  Patch by Albert Shih.
+ 
+ Testing
+ -------
+diff --git a/sphinx/ext/inheritance_diagram.py b/sphinx/ext/inheritance_diagram.py
+index 2469129ee6c..8a5ebf3061e 100644
+--- a/sphinx/ext/inheritance_diagram.py
++++ b/sphinx/ext/inheritance_diagram.py
+@@ -33,7 +33,7 @@ class E(B): pass
+ import builtins
+ import hashlib
+ import inspect
+-import pathlib
++import posixpath
+ import re
+ from collections.abc import Iterable
+ from importlib import import_module
+@@ -410,21 +410,21 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+     # Create a mapping from fully-qualified class names to URLs.
+     graphviz_output_format = self.builder.env.config.graphviz_output_format.upper()
+     current_filename = self.builder.current_docname + self.builder.out_suffix
+-    current_dir = pathlib.PurePath(current_filename).parent
++    current_dir = posixpath.dirname(current_filename)
+     urls = {}
+     pending_xrefs = cast(Iterable[addnodes.pending_xref], node)
+     for child in pending_xrefs:
+         if child.get('refuri') is not None:
+             # Construct the name from the URI if the reference is external via intersphinx
+-            if not child.get('internal', True):
+-                refname = child['refuri'].rsplit('#', 1)[-1]
+-            else:
++            if child.get('internal', True):
+                 refname = child['reftitle']
++            else:
++                refname = child['refuri'].rsplit('#', 1)[-1]
+ 
+             # For SVG output, relative URIs need to be re-pathed to where the SVG file will be
+             if graphviz_output_format == 'SVG' and '://' not in child['refuri']:
+                 # URI relative to src dir (typically equivalent to stripping all leading ../)
+-                uri_rel_to_srcdir = (current_dir / child['refuri']).as_posix()
++                uri_rel_to_srcdir = posixpath.join(current_dir, child['refuri'])
+                 # URI relative to image dir (typically equivalent to prepending ../)
+                 uri_rel_to_imagedir = relpath(uri_rel_to_srcdir, self.builder.imagedir)
+                 urls[refname] = canon_path(uri_rel_to_imagedir)
+@@ -434,8 +434,8 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+             if graphviz_output_format == 'SVG':
+                 # URI relative to image dir (typically equivalent to prepending ../)
+                 uri_rel_to_imagedir = relpath(current_filename, self.builder.imagedir)
+-                urls[child['reftitle']] = canon_path(uri_rel_to_imagedir) +\
+-                                          '#' + child.get('refid')
++                urls[child['reftitle']] = (canon_path(uri_rel_to_imagedir) +
++                                           '#' + child.get('refid'))
+             else:
+                 urls[child['reftitle']] = '#' + child.get('refid')
+ 
+
+From 39c352d537c1ad879cce051e978d86eac8d86a1b Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Fri, 24 Jun 2022 11:06:42 -0400
+Subject: [PATCH 04/10] Test for valid links in PNG and SVG inheritance
+ diagrams in multiple situations
+
+---
+ .../test-ext-inheritance_diagram/conf.py      |  2 +-
+ .../test-ext-inheritance_diagram/index.rst    | 13 ++++
+ .../subdir/index.rst                          |  5 ++
+ .../subdir/other.py                           |  5 ++
+ .../test-ext-inheritance_diagram/test.py      |  4 +
+ tests/test_ext_inheritance_diagram.py         | 75 ++++++++++++++++++-
+ 6 files changed, 101 insertions(+), 3 deletions(-)
+ create mode 100644 tests/roots/test-ext-inheritance_diagram/subdir/index.rst
+ create mode 100644 tests/roots/test-ext-inheritance_diagram/subdir/other.py
+
+diff --git a/tests/roots/test-ext-inheritance_diagram/conf.py b/tests/roots/test-ext-inheritance_diagram/conf.py
+index 9953494a59f..d3778d5cfb0 100644
+--- a/tests/roots/test-ext-inheritance_diagram/conf.py
++++ b/tests/roots/test-ext-inheritance_diagram/conf.py
+@@ -3,4 +3,4 @@
+ 
+ sys.path.insert(0, os.path.abspath('.'))
+ 
+-extensions = ['sphinx.ext.inheritance_diagram']
++extensions = ['sphinx.ext.inheritance_diagram', 'sphinx.ext.intersphinx']
+diff --git a/tests/roots/test-ext-inheritance_diagram/index.rst b/tests/roots/test-ext-inheritance_diagram/index.rst
+index 8e25eee5b65..8c6344cbe31 100644
+--- a/tests/roots/test-ext-inheritance_diagram/index.rst
++++ b/tests/roots/test-ext-inheritance_diagram/index.rst
+@@ -8,3 +8,16 @@ test-ext-inheritance_diagram
+    :caption: Test Foo!
+ 
+ .. inheritance-diagram:: test.Baz
++
++.. py:class:: test.Bar
++
++.. py:class:: test.Baz
++
++.. py:class:: test.Qux
++
++.. inheritance-diagram:: subdir.other.Bob
++
++.. py:class:: test.Alice
++
++.. toctree::
++   subdir/index
+diff --git a/tests/roots/test-ext-inheritance_diagram/subdir/index.rst b/tests/roots/test-ext-inheritance_diagram/subdir/index.rst
+new file mode 100644
+index 00000000000..50be30f38e6
+--- /dev/null
++++ b/tests/roots/test-ext-inheritance_diagram/subdir/index.rst
+@@ -0,0 +1,5 @@
++=========================================
++test-ext-inheritance_diagram subdirectory
++=========================================
++
++.. inheritance-diagram:: test.Qux
+diff --git a/tests/roots/test-ext-inheritance_diagram/subdir/other.py b/tests/roots/test-ext-inheritance_diagram/subdir/other.py
+new file mode 100644
+index 00000000000..a4ce8a75260
+--- /dev/null
++++ b/tests/roots/test-ext-inheritance_diagram/subdir/other.py
+@@ -0,0 +1,5 @@
++from test import Alice
++
++
++class Bob(Alice):
++    pass
+diff --git a/tests/roots/test-ext-inheritance_diagram/test.py b/tests/roots/test-ext-inheritance_diagram/test.py
+index 4f73c4707d5..8101b467311 100644
+--- a/tests/roots/test-ext-inheritance_diagram/test.py
++++ b/tests/roots/test-ext-inheritance_diagram/test.py
+@@ -12,3 +12,7 @@ class Baz(Bar):
+ 
+ class Qux(Foo):
+     pass
++
++
++class Alice(object):
++    pass
+diff --git a/tests/test_ext_inheritance_diagram.py b/tests/test_ext_inheritance_diagram.py
+index 16581b07541..97142d4bb2c 100644
+--- a/tests/test_ext_inheritance_diagram.py
++++ b/tests/test_ext_inheritance_diagram.py
+@@ -11,6 +11,7 @@
+     InheritanceException,
+     import_classes,
+ )
++from sphinx.ext.intersphinx import load_mappings, normalize_intersphinx_mapping
+ 
+ 
+ @pytest.mark.sphinx(buildername="html", testroot="inheritance")
+@@ -135,12 +136,31 @@ def new_run(self):
+         ]
+ 
+ 
++# An external inventory to test intersphinx links in inheritance diagrams
++subdir_inventory = b'''\
++# Sphinx inventory version 1
++# Project: subdir
++# Version: 1.0
++subdir.other.Bob class foo.html
++'''
++
++
+ @pytest.mark.sphinx('html', testroot='ext-inheritance_diagram')
+ @pytest.mark.usefixtures('if_graphviz_found')
+-def test_inheritance_diagram_png_html(app, status, warning):
++def test_inheritance_diagram_png_html(tempdir, app, status, warning):
++    inv_file = tempdir / 'inventory'
++    inv_file.write_bytes(subdir_inventory)
++    app.config.intersphinx_mapping = {
++        'https://example.org': inv_file,
++    }
++    app.config.intersphinx_cache_limit = 0
++    normalize_intersphinx_mapping(app, app.config)
++    load_mappings(app)
++
+     app.builder.build_all()
+ 
+     content = (app.outdir / 'index.html').read_text(encoding='utf8')
++    base_maps = re.findall('<map .+\n.+\n</map>', content)
+ 
+     pattern = ('<figure class="align-default" id="id1">\n'
+                '<div class="graphviz">'
+@@ -150,14 +170,44 @@ def test_inheritance_diagram_png_html(app, status, warning):
+                'title="Permalink to this image">\xb6</a></p>\n</figcaption>\n</figure>\n')
+     assert re.search(pattern, content, re.M)
+ 
++    subdir_content = (app.outdir / 'subdir/index.html').read_text(encoding='utf8')
++    subdir_maps = re.findall('<map .+\n.+\n</map>', subdir_content)
++    subdir_maps = [re.sub('href="(\\S+)"', 'href="subdir/\\g<1>"', s) for s in subdir_maps]
++
++    # Go through the clickmap for every PNG inheritance diagram
++    for diagram_content in base_maps + subdir_maps:
++        # Verify that an intersphinx link was created via the external inventory
++        if 'subdir.' in diagram_content:
++            assert "https://example.org" in diagram_content
++
++        # Extract every link in the inheritance diagram
++        for href in re.findall('href="(\\S+?)"', diagram_content):
++            if '://' in href:
++                # Verify that absolute URLs are not prefixed with ../
++                assert href.startswith("https://example.org/")
++            else:
++                # Verify that relative URLs point to existing documents
++                reluri = href.rsplit('#', 1)[0]  # strip the anchor at the end
++                assert (app.outdir / reluri).exists()
++
+ 
+ @pytest.mark.sphinx('html', testroot='ext-inheritance_diagram',
+                     confoverrides={'graphviz_output_format': 'svg'})
+ @pytest.mark.usefixtures('if_graphviz_found')
+-def test_inheritance_diagram_svg_html(app, status, warning):
++def test_inheritance_diagram_svg_html(tempdir, app, status, warning):
++    inv_file = tempdir / 'inventory'
++    inv_file.write_bytes(subdir_inventory)
++    app.config.intersphinx_mapping = {
++        "subdir": ('https://example.org', inv_file),
++    }
++    app.config.intersphinx_cache_limit = 0
++    normalize_intersphinx_mapping(app, app.config)
++    load_mappings(app)
++
+     app.builder.build_all()
+ 
+     content = (app.outdir / 'index.html').read_text(encoding='utf8')
++    base_svgs = re.findall('<object data="(_images/inheritance-\\w+.svg?)"', content)
+ 
+     pattern = ('<figure class="align-default" id="id1">\n'
+                '<div class="graphviz">'
+@@ -170,6 +220,27 @@ def test_inheritance_diagram_svg_html(app, status, warning):
+ 
+     assert re.search(pattern, content, re.M)
+ 
++    subdir_content = (app.outdir / 'subdir/index.html').read_text(encoding='utf8')
++    subdir_svgs = re.findall('<object data="../(_images/inheritance-\\w+.svg?)"', subdir_content)
++
++    # Go through every SVG inheritance diagram
++    for diagram in base_svgs + subdir_svgs:
++        diagram_content = (app.outdir / diagram).read_text(encoding='utf8')
++
++        # Verify that an intersphinx link was created via the external inventory
++        if 'subdir.' in diagram_content:
++            assert "https://example.org" in diagram_content
++
++        # Extract every link in the inheritance diagram
++        for href in re.findall('href="(\\S+?)"', diagram_content):
++            if '://' in href:
++                # Verify that absolute URLs are not prefixed with ../
++                assert href.startswith("https://example.org/")
++            else:
++                # Verify that relative URLs point to existing documents
++                reluri = href.rsplit('#', 1)[0]  # strip the anchor at the end
++                assert (app.outdir / app.builder.imagedir / reluri).exists()
++
+ 
+ @pytest.mark.sphinx('latex', testroot='ext-inheritance_diagram')
+ @pytest.mark.usefixtures('if_graphviz_found')
+
+From 9c101fadc4b94539ac0d659bb4feea10cfe42d75 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Fri, 30 Sep 2022 23:17:08 -0400
+Subject: [PATCH 05/10] Removed the toctree because it causes a test failure
+
+---
+ tests/roots/test-ext-inheritance_diagram/index.rst | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/tests/roots/test-ext-inheritance_diagram/index.rst b/tests/roots/test-ext-inheritance_diagram/index.rst
+index 8c6344cbe31..3d099cbe4c7 100644
+--- a/tests/roots/test-ext-inheritance_diagram/index.rst
++++ b/tests/roots/test-ext-inheritance_diagram/index.rst
+@@ -18,6 +18,3 @@ test-ext-inheritance_diagram
+ .. inheritance-diagram:: subdir.other.Bob
+ 
+ .. py:class:: test.Alice
+-
+-.. toctree::
+-   subdir/index
+
+From 587f6b5d3c10ca5951ca600613733016b5b6e6d1 Mon Sep 17 00:00:00 2001
+From: Adam Turner <9087854+aa-turner@users.noreply.github.com>
+Date: Fri, 28 Jul 2023 18:06:04 +0100
+Subject: [PATCH 06/10] Update tests
+
+---
+ tests/test_ext_inheritance_diagram.py | 24 ++++++++++++++----------
+ 1 file changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/tests/test_ext_inheritance_diagram.py b/tests/test_ext_inheritance_diagram.py
+index 97142d4bb2c..57b2ef47b45 100644
+--- a/tests/test_ext_inheritance_diagram.py
++++ b/tests/test_ext_inheritance_diagram.py
+@@ -3,6 +3,7 @@
+ import os
+ import re
+ import sys
++import zlib
+ 
+ import pytest
+ 
+@@ -138,20 +139,22 @@ def new_run(self):
+ 
+ # An external inventory to test intersphinx links in inheritance diagrams
+ subdir_inventory = b'''\
+-# Sphinx inventory version 1
++# Sphinx inventory version 2
+ # Project: subdir
+ # Version: 1.0
+-subdir.other.Bob class foo.html
+-'''
++# The remainder of this file is compressed using zlib.
++''' + zlib.compress(b'''\
++subdir.other.Bob class 1 foo.html -
++''')
+ 
+ 
+ @pytest.mark.sphinx('html', testroot='ext-inheritance_diagram')
+ @pytest.mark.usefixtures('if_graphviz_found')
+-def test_inheritance_diagram_png_html(tempdir, app, status, warning):
+-    inv_file = tempdir / 'inventory'
++def test_inheritance_diagram_png_html(tmp_path, app):
++    inv_file = tmp_path / 'inventory'
+     inv_file.write_bytes(subdir_inventory)
+     app.config.intersphinx_mapping = {
+-        'https://example.org': inv_file,
++        'https://example.org': str(inv_file),
+     }
+     app.config.intersphinx_cache_limit = 0
+     normalize_intersphinx_mapping(app, app.config)
+@@ -194,11 +197,11 @@ def test_inheritance_diagram_png_html(tempdir, app, status, warning):
+ @pytest.mark.sphinx('html', testroot='ext-inheritance_diagram',
+                     confoverrides={'graphviz_output_format': 'svg'})
+ @pytest.mark.usefixtures('if_graphviz_found')
+-def test_inheritance_diagram_svg_html(tempdir, app, status, warning):
+-    inv_file = tempdir / 'inventory'
++def test_inheritance_diagram_svg_html(tmp_path, app):
++    inv_file = tmp_path / 'inventory'
+     inv_file.write_bytes(subdir_inventory)
+     app.config.intersphinx_mapping = {
+-        "subdir": ('https://example.org', inv_file),
++        "subdir": ('https://example.org', str(inv_file)),
+     }
+     app.config.intersphinx_cache_limit = 0
+     normalize_intersphinx_mapping(app, app.config)
+@@ -239,7 +242,8 @@ def test_inheritance_diagram_svg_html(tempdir, app, status, warning):
+             else:
+                 # Verify that relative URLs point to existing documents
+                 reluri = href.rsplit('#', 1)[0]  # strip the anchor at the end
+-                assert (app.outdir / app.builder.imagedir / reluri).exists()
++                abs_uri = (app.outdir / app.builder.imagedir / reluri).resolve()
++                assert abs_uri.exists()
+ 
+ 
+ @pytest.mark.sphinx('latex', testroot='ext-inheritance_diagram')
+
+From 94e9adb08f562c88f500eb299d240160b40c5f87 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Mon, 31 Jul 2023 00:02:18 -0400
+Subject: [PATCH 07/10] Fixed links in inheritance diagrams given changes to
+ graphviz writer
+
+---
+ sphinx/ext/inheritance_diagram.py | 18 ++----------------
+ 1 file changed, 2 insertions(+), 16 deletions(-)
+
+diff --git a/sphinx/ext/inheritance_diagram.py b/sphinx/ext/inheritance_diagram.py
+index 8a5ebf3061e..100c2e697e0 100644
+--- a/sphinx/ext/inheritance_diagram.py
++++ b/sphinx/ext/inheritance_diagram.py
+@@ -33,7 +33,6 @@ class E(B): pass
+ import builtins
+ import hashlib
+ import inspect
+-import posixpath
+ import re
+ from collections.abc import Iterable
+ from importlib import import_module
+@@ -55,7 +54,6 @@ class E(B): pass
+     render_dot_texinfo,
+ )
+ from sphinx.util.docutils import SphinxDirective
+-from sphinx.util.osutil import canon_path, relpath
+ from sphinx.util.typing import OptionSpec
+ from sphinx.writers.html import HTML5Translator
+ from sphinx.writers.latex import LaTeXTranslator
+@@ -410,7 +408,6 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+     # Create a mapping from fully-qualified class names to URLs.
+     graphviz_output_format = self.builder.env.config.graphviz_output_format.upper()
+     current_filename = self.builder.current_docname + self.builder.out_suffix
+-    current_dir = posixpath.dirname(current_filename)
+     urls = {}
+     pending_xrefs = cast(Iterable[addnodes.pending_xref], node)
+     for child in pending_xrefs:
+@@ -421,21 +418,10 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+             else:
+                 refname = child['refuri'].rsplit('#', 1)[-1]
+ 
+-            # For SVG output, relative URIs need to be re-pathed to where the SVG file will be
+-            if graphviz_output_format == 'SVG' and '://' not in child['refuri']:
+-                # URI relative to src dir (typically equivalent to stripping all leading ../)
+-                uri_rel_to_srcdir = posixpath.join(current_dir, child['refuri'])
+-                # URI relative to image dir (typically equivalent to prepending ../)
+-                uri_rel_to_imagedir = relpath(uri_rel_to_srcdir, self.builder.imagedir)
+-                urls[refname] = canon_path(uri_rel_to_imagedir)
+-            else:
+-                urls[refname] = child['refuri']
++            urls[refname] = child.get('refuri')
+         elif child.get('refid') is not None:
+             if graphviz_output_format == 'SVG':
+-                # URI relative to image dir (typically equivalent to prepending ../)
+-                uri_rel_to_imagedir = relpath(current_filename, self.builder.imagedir)
+-                urls[child['reftitle']] = (canon_path(uri_rel_to_imagedir) +
+-                                           '#' + child.get('refid'))
++                urls[child['reftitle']] = current_filename + '#' + child.get('refid')
+             else:
+                 urls[child['reftitle']] = '#' + child.get('refid')
+ 
+
+From bb89ffbcdaca8a53bef3fac34af2be88dcaf5d99 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Mon, 31 Jul 2023 10:13:18 -0400
+Subject: [PATCH 08/10] Improved the unit test to cover one more kind of link
+ and renamed class names for clarity
+
+---
+ tests/roots/test-ext-inheritance_diagram/index.rst        | 8 +++-----
+ tests/roots/test-ext-inheritance_diagram/subdir/index.rst | 4 +++-
+ tests/roots/test-ext-inheritance_diagram/test.py          | 6 +++---
+ tests/test_ext_inheritance_diagram.py                     | 4 ++--
+ 4 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/tests/roots/test-ext-inheritance_diagram/index.rst b/tests/roots/test-ext-inheritance_diagram/index.rst
+index 3d099cbe4c7..2e9283b7ad9 100644
+--- a/tests/roots/test-ext-inheritance_diagram/index.rst
++++ b/tests/roots/test-ext-inheritance_diagram/index.rst
+@@ -7,13 +7,11 @@ test-ext-inheritance_diagram
+ .. inheritance-diagram:: test.Foo
+    :caption: Test Foo!
+ 
+-.. inheritance-diagram:: test.Baz
++.. inheritance-diagram:: test.DocLowerLevel
+ 
+-.. py:class:: test.Bar
++.. py:class:: test.DocHere
+ 
+-.. py:class:: test.Baz
+-
+-.. py:class:: test.Qux
++.. py:class:: test.DocMainLevel
+ 
+ .. inheritance-diagram:: subdir.other.Bob
+ 
+diff --git a/tests/roots/test-ext-inheritance_diagram/subdir/index.rst b/tests/roots/test-ext-inheritance_diagram/subdir/index.rst
+index 50be30f38e6..bfd4aa88a2d 100644
+--- a/tests/roots/test-ext-inheritance_diagram/subdir/index.rst
++++ b/tests/roots/test-ext-inheritance_diagram/subdir/index.rst
+@@ -2,4 +2,6 @@
+ test-ext-inheritance_diagram subdirectory
+ =========================================
+ 
+-.. inheritance-diagram:: test.Qux
++.. inheritance-diagram:: test.DocMainLevel
++
++.. py:class:: test.DocLowerLevel
+diff --git a/tests/roots/test-ext-inheritance_diagram/test.py b/tests/roots/test-ext-inheritance_diagram/test.py
+index 8101b467311..dde7b21d1c4 100644
+--- a/tests/roots/test-ext-inheritance_diagram/test.py
++++ b/tests/roots/test-ext-inheritance_diagram/test.py
+@@ -2,15 +2,15 @@ class Foo:
+     pass
+ 
+ 
+-class Bar(Foo):
++class DocHere(Foo):
+     pass
+ 
+ 
+-class Baz(Bar):
++class DocLowerLevel(DocHere):
+     pass
+ 
+ 
+-class Qux(Foo):
++class DocMainLevel(Foo):
+     pass
+ 
+ 
+diff --git a/tests/test_ext_inheritance_diagram.py b/tests/test_ext_inheritance_diagram.py
+index 57b2ef47b45..1442a6de84c 100644
+--- a/tests/test_ext_inheritance_diagram.py
++++ b/tests/test_ext_inheritance_diagram.py
+@@ -269,8 +269,8 @@ def test_inheritance_diagram_latex_alias(app, status, warning):
+     doc = app.env.get_and_resolve_doctree('index', app)
+     aliased_graph = doc.children[0].children[3]['graph'].class_info
+     assert len(aliased_graph) == 3
+-    assert ('test.Baz', 'test.Baz', ['test.Bar'], None) in aliased_graph
+-    assert ('test.Bar', 'test.Bar', ['alias.Foo'], None) in aliased_graph
++    assert ('test.DocLowerLevel', 'test.DocLowerLevel', ['test.DocHere'], None) in aliased_graph
++    assert ('test.DocHere', 'test.DocHere', ['alias.Foo'], None) in aliased_graph
+     assert ('alias.Foo', 'alias.Foo', [], None) in aliased_graph
+ 
+     content = (app.outdir / 'index.html').read_text(encoding='utf8')
+
+From 7ec28845c791ab744e97941b59ab83cd5c1e2c39 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Mon, 31 Jul 2023 10:34:00 -0400
+Subject: [PATCH 09/10] Fixed the v2 inventory for the unit test
+
+---
+ tests/test_ext_inheritance_diagram.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/test_ext_inheritance_diagram.py b/tests/test_ext_inheritance_diagram.py
+index 1442a6de84c..3d02854c5b3 100644
+--- a/tests/test_ext_inheritance_diagram.py
++++ b/tests/test_ext_inheritance_diagram.py
+@@ -144,7 +144,7 @@ def new_run(self):
+ # Version: 1.0
+ # The remainder of this file is compressed using zlib.
+ ''' + zlib.compress(b'''\
+-subdir.other.Bob class 1 foo.html -
++subdir.other.Bob py:class 1 foo.html#subdir.other.Bob -
+ ''')
+ 
+ 
+
+From 65ff8c07a9e5e5ffe12c0bd9fdb6f7f3c2266a68 Mon Sep 17 00:00:00 2001
+From: "Albert Y. Shih" <ayshih@gmail.com>
+Date: Tue, 8 Aug 2023 09:03:05 -0400
+Subject: [PATCH 10/10] Flip the logical branching
+
+---
+ sphinx/ext/inheritance_diagram.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/sphinx/ext/inheritance_diagram.py b/sphinx/ext/inheritance_diagram.py
+index 100c2e697e0..ca9acf3c5b1 100644
+--- a/sphinx/ext/inheritance_diagram.py
++++ b/sphinx/ext/inheritance_diagram.py
+@@ -413,10 +413,10 @@ def html_visit_inheritance_diagram(self: HTML5Translator, node: inheritance_diag
+     for child in pending_xrefs:
+         if child.get('refuri') is not None:
+             # Construct the name from the URI if the reference is external via intersphinx
+-            if child.get('internal', True):
+-                refname = child['reftitle']
+-            else:
++            if not child.get('internal', True):
+                 refname = child['refuri'].rsplit('#', 1)[-1]
++            else:
++                refname = child['reftitle']
+ 
+             urls[refname] = child.get('refuri')
+         elif child.get('refid') is not None:

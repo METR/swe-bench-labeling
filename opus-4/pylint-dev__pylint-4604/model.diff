@@ -1,0 +1,63 @@
+diff --git a/pylint/checkers/variables.py b/pylint/checkers/variables.py
+index 3ddafd599..dbd885dab 100644
+--- a/pylint/checkers/variables.py
++++ b/pylint/checkers/variables.py
+@@ -1826,6 +1826,14 @@ class VariablesChecker(BaseChecker):
+             self._type_annotation_names.append(type_annotation.name)
+             return
+ 
++        if isinstance(type_annotation, astroid.Attribute):
++            # Handle attribute access like abc.ABC
++            if isinstance(type_annotation.expr, astroid.Name):
++                self._type_annotation_names.append(type_annotation.expr.name)
++            # Continue processing to handle nested attributes
++            self._store_type_annotation_node(type_annotation.expr)
++            return
++
+         if not isinstance(type_annotation, astroid.Subscript):
+             return
+ 
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..194d34075
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,25 @@
++"""Test various type comment scenarios."""
++
++import abc
++from abc import ABC
++import typing
++from typing import Dict, List
++import collections.abc
++
++# Test case 1: Module.Attribute type comment
++X = ...  # type: abc.ABC
++
++# Test case 2: Direct imported class 
++Y = ...  # type: ABC
++
++# Test case 3: Nested attributes 
++Z = ...  # type: collections.abc.Mapping
++
++# Test case 4: typing module
++T = ...  # type: typing.Dict[str, int]
++
++# Test case 5: imported from typing
++U = ...  # type: Dict[str, List[int]]
++
++# Test case 6: Multiple levels of attributes (even though this might not be valid in practice)
++# V = ...  # type: some.deep.module.Class
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..0df881939
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,7 @@
++"""Docstring."""
++
++import abc
++from abc import ABC
++
++X = ...  # type: abc.ABC
++Y = ...  # type: ABC

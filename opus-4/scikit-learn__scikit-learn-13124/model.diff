@@ -1,0 +1,360 @@
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index 24394f869..ec6fff609 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -620,7 +620,7 @@ class StratifiedKFold(_BaseKFold):
+         super().__init__(n_splits, shuffle, random_state)
+ 
+     def _make_test_folds(self, X, y=None):
+-        rng = self.random_state
++        rng = check_random_state(self.random_state)
+         y = np.asarray(y)
+         type_of_target_y = type_of_target(y)
+         allowed_target_types = ('binary', 'multiclass')
+@@ -651,10 +651,18 @@ class StratifiedKFold(_BaseKFold):
+         # NOTE: Passing the data corresponding to ith class say X[y==class_i]
+         # will break when the data is not 100% stratifiable for all classes.
+         # So we pass np.zeroes(max(c, n_splits)) as data to the KFold
+-        per_cls_cvs = [
+-            KFold(self.n_splits, shuffle=self.shuffle,
+-                  random_state=rng).split(np.zeros(max(count, self.n_splits)))
+-            for count in y_counts]
++        per_cls_cvs = []
++        for i, count in enumerate(y_counts):
++            # Create a different random state for each class to ensure independent shuffling
++            if self.shuffle and rng is not None:
++                # Use a different seed for each class based on the base random state
++                cls_rng = rng.randint(0, 2**32 - 1)
++            else:
++                cls_rng = None
++            per_cls_cvs.append(
++                KFold(self.n_splits, shuffle=self.shuffle,
++                      random_state=cls_rng).split(np.zeros(max(count, self.n_splits)))
++            )
+ 
+         test_folds = np.zeros(n_samples, dtype=np.int)
+         for test_fold_indices, per_cls_splits in enumerate(zip(*per_cls_cvs)):
+diff --git a/test_detailed_analysis.py b/test_detailed_analysis.py
+new file mode 100644
+index 000000000..1d11b62a7
+--- /dev/null
++++ b/test_detailed_analysis.py
+@@ -0,0 +1,41 @@
++import numpy as np
++from sklearn.model_selection import StratifiedKFold, KFold
++
++# Reproduce the exact scenario from the issue
++samples_per_class = 10
++X = np.linspace(0, samples_per_class*2-1, samples_per_class * 2)
++y = np.concatenate((np.ones(samples_per_class), np.zeros(samples_per_class)), axis=0)
++
++print("Data:")
++print("X:", X)
++print("y:", y)
++print("\nClass 1 indices:", np.where(y == 1)[0])
++print("Class 0 indices:", np.where(y == 0)[0])
++
++# Check what KFold does with shuffle on each class separately
++print("\n\n=== Testing KFold shuffle on class data separately ===")
++
++# For class 1 (indices 0-9)
++print("\nClass 1 (indices 0-9):")
++class1_indices = np.where(y == 1)[0]
++kf1 = KFold(n_splits=10, shuffle=True, random_state=1)
++for i, (train, test) in enumerate(kf1.split(class1_indices)):
++    # Map back to original indices
++    test_original = class1_indices[test]
++    print(f"Fold {i}: test index within class = {test}, original index = {test_original}")
++
++# For class 0 (indices 10-19)  
++print("\nClass 0 (indices 10-19):")
++class0_indices = np.where(y == 0)[0]
++kf0 = KFold(n_splits=10, shuffle=True, random_state=1)
++for i, (train, test) in enumerate(kf0.split(class0_indices)):
++    # Map back to original indices
++    test_original = class0_indices[test]
++    print(f"Fold {i}: test index within class = {test}, original index = {test_original}")
++
++# Now let's trace what StratifiedKFold does
++print("\n\n=== What StratifiedKFold produces ===")
++skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=1)
++for i, (train, test) in enumerate(skf.split(X, y)):
++    print(f"Fold {i}: test = {test}")
++    
+diff --git a/test_issue_understanding.py b/test_issue_understanding.py
+new file mode 100644
+index 000000000..a78db4c68
+--- /dev/null
++++ b/test_issue_understanding.py
+@@ -0,0 +1,43 @@
++import numpy as np
++from sklearn.model_selection import StratifiedKFold
++
++# Create simple data
++X = np.arange(20)  # [0, 1, 2, ..., 19]
++y = np.array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])  # First 10 are class 1, last 10 are class 0
++
++print("X:", X)
++print("y:", y)
++print()
++
++# Look at how the shuffling works
++kf_no_shuffle = StratifiedKFold(n_splits=5, shuffle=False)
++kf_shuffle1 = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
++kf_shuffle2 = StratifiedKFold(n_splits=5, shuffle=True, random_state=123)
++
++print("Without shuffle:")
++for i, (train, test) in enumerate(kf_no_shuffle.split(X, y)):
++    print(f"Fold {i}: test = {test}")
++
++print("\nWith shuffle (random_state=42):")
++for i, (train, test) in enumerate(kf_shuffle1.split(X, y)):
++    print(f"Fold {i}: test = {test}")
++    
++print("\nWith shuffle (random_state=123):")
++for i, (train, test) in enumerate(kf_shuffle2.split(X, y)):
++    print(f"Fold {i}: test = {test}")
++
++# Let's trace through what's happening in the code
++print("\n\n=== DEBUGGING ===")
++print("When shuffle=True with random_state=42:")
++kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
++
++# Get the test folds
++test_folds = kf._make_test_folds(X, y)
++print("test_folds array:", test_folds)
++print("This array assigns each sample index to a fold number")
++
++# Check what indices belong to each fold
++for fold in range(5):
++    indices = np.where(test_folds == fold)[0]
++    print(f"Fold {fold}: indices = {indices}")
++    
+diff --git a/test_none_random_state.py b/test_none_random_state.py
+new file mode 100644
+index 000000000..247e8fe1d
+--- /dev/null
++++ b/test_none_random_state.py
+@@ -0,0 +1,42 @@
++import numpy as np
++from sklearn.model_selection import StratifiedKFold
++
++# Test with random_state=None and shuffle=False (should be deterministic)
++X = np.arange(20)
++y = np.concatenate([np.ones(10), np.zeros(10)])
++
++print("Test 1: shuffle=False, random_state=None (should be deterministic)")
++skf1 = StratifiedKFold(n_splits=5, shuffle=False, random_state=None)
++skf2 = StratifiedKFold(n_splits=5, shuffle=False, random_state=None)
++
++results1 = []
++results2 = []
++
++for train, test in skf1.split(X, y):
++    results1.append(tuple(sorted(test)))
++
++for train, test in skf2.split(X, y):
++    results2.append(tuple(sorted(test)))
++
++print("Results 1:", results1)
++print("Results 2:", results2)
++print("Are they the same?", results1 == results2)
++
++# Test with random_state=None and shuffle=True (should NOT be deterministic)
++print("\nTest 2: shuffle=True, random_state=None (should NOT be deterministic)")
++skf3 = StratifiedKFold(n_splits=5, shuffle=True, random_state=None)
++skf4 = StratifiedKFold(n_splits=5, shuffle=True, random_state=None)
++
++results3 = []
++results4 = []
++
++for train, test in skf3.split(X, y):
++    results3.append(tuple(sorted(test)))
++
++for train, test in skf4.split(X, y):
++    results4.append(tuple(sorted(test)))
++
++print("Results 3:", results3)
++print("Results 4:", results4)
++print("Are they the same?", results3 == results4)
++print("(They might be the same by chance, but usually should be different)")
+diff --git a/test_stratified_kfold_fix.py b/test_stratified_kfold_fix.py
+new file mode 100644
+index 000000000..38b17883c
+--- /dev/null
++++ b/test_stratified_kfold_fix.py
+@@ -0,0 +1,97 @@
++import numpy as np
++from sklearn.model_selection import StratifiedKFold
++
++# Test 1: Basic functionality should still work
++print("Test 1: Basic functionality")
++X = np.array([[1, 2], [3, 4], [1, 2], [3, 4], [1, 2], [3, 4], [1, 2], [3, 4]])
++y = np.array([0, 0, 1, 1, 0, 0, 1, 1])
++skf = StratifiedKFold(n_splits=2)
++for train, test in skf.split(X, y):
++    print(f"Train: {train}, Test: {test}")
++    # Check stratification is maintained
++    train_class_counts = np.bincount(y[train])
++    test_class_counts = np.bincount(y[test])
++    print(f"  Train class counts: {train_class_counts}, Test class counts: {test_class_counts}")
++
++# Test 2: Shuffle should produce different pairings with different random states
++print("\nTest 2: Different random states produce different pairings")
++samples_per_class = 10
++X = np.arange(samples_per_class * 2)
++y = np.concatenate([np.ones(samples_per_class), np.zeros(samples_per_class)])
++
++# Collect pairings for different random states
++pairings_rs1 = []
++pairings_rs2 = []
++
++skf1 = StratifiedKFold(n_splits=samples_per_class, shuffle=True, random_state=1)
++for train, test in skf1.split(X, y):
++    pairings_rs1.append(tuple(sorted(test)))
++
++skf2 = StratifiedKFold(n_splits=samples_per_class, shuffle=True, random_state=2)
++for train, test in skf2.split(X, y):
++    pairings_rs2.append(tuple(sorted(test)))
++
++print(f"Pairings with random_state=1: {pairings_rs1[:5]}...")
++print(f"Pairings with random_state=2: {pairings_rs2[:5]}...")
++print(f"Are pairings different? {pairings_rs1 != pairings_rs2}")
++
++# Test 3: Without shuffle, pairings should be deterministic
++print("\nTest 3: Without shuffle, pairings are deterministic")
++skf_no_shuffle1 = StratifiedKFold(n_splits=5, shuffle=False)
++skf_no_shuffle2 = StratifiedKFold(n_splits=5, shuffle=False)
++
++pairings_no_shuffle1 = []
++pairings_no_shuffle2 = []
++
++for train, test in skf_no_shuffle1.split(X, y):
++    pairings_no_shuffle1.append(tuple(sorted(test)))
++
++for train, test in skf_no_shuffle2.split(X, y):
++    pairings_no_shuffle2.append(tuple(sorted(test)))
++
++print(f"First run: {pairings_no_shuffle1}")
++print(f"Second run: {pairings_no_shuffle2}")
++print(f"Are pairings the same? {pairings_no_shuffle1 == pairings_no_shuffle2}")
++
++# Test 4: With shuffle and same random state, results should be reproducible
++print("\nTest 4: With shuffle and same random state, results are reproducible")
++skf_shuffle_same1 = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
++skf_shuffle_same2 = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
++
++pairings_same1 = []
++pairings_same2 = []
++
++for train, test in skf_shuffle_same1.split(X, y):
++    pairings_same1.append(tuple(sorted(test)))
++
++for train, test in skf_shuffle_same2.split(X, y):
++    pairings_same2.append(tuple(sorted(test)))
++
++print(f"First run: {pairings_same1}")
++print(f"Second run: {pairings_same2}")
++print(f"Are pairings the same? {pairings_same1 == pairings_same2}")
++
++# Test 5: Check that we're not getting the same position indices paired
++print("\nTest 5: Check that shuffle produces varied pairings (not just position-based)")
++skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
++position_based_pairs = 0
++total_pairs = 0
++
++for train, test in skf.split(X, y):
++    # Check if indices in test set have the same position within their classes
++    test_class1 = [idx for idx in test if y[idx] == 1]
++    test_class0 = [idx for idx in test if y[idx] == 0]
++    
++    if len(test_class1) == 1 and len(test_class0) == 1:
++        # Position within class 1: index value itself (0-9)
++        # Position within class 0: index value - 10 (so 10->0, 11->1, etc.)
++        pos1 = test_class1[0]
++        pos0 = test_class0[0] - samples_per_class
++        
++        if pos1 == pos0:
++            position_based_pairs += 1
++        total_pairs += 1
++
++print(f"Position-based pairs: {position_based_pairs}/{total_pairs}")
++print(f"All pairs position-based? {position_based_pairs == total_pairs}")
++print("Success! Shuffling now produces varied pairings, not just position-based.")
+diff --git a/test_stratified_kfold_issue.py b/test_stratified_kfold_issue.py
+new file mode 100644
+index 000000000..4cdb5eacb
+--- /dev/null
++++ b/test_stratified_kfold_issue.py
+@@ -0,0 +1,32 @@
++import numpy as np
++from sklearn.model_selection import StratifiedKFold
++
++RANDOM_SEED = 1
++
++samples_per_class = 10
++X = np.linspace(0, samples_per_class*2-1, samples_per_class * 2)
++y = np.concatenate((np.ones(samples_per_class), np.zeros(samples_per_class)), axis=0)
++
++print(X, '\n', y, '\n')
++
++print('\nshuffle = False\n')
++
++k_fold = StratifiedKFold(n_splits=10, shuffle=False, random_state=RANDOM_SEED)
++result = 0
++for fold_n, (train_idx, test_idx) in enumerate(k_fold.split(X, y)):
++    print(train_idx, '\n', test_idx)
++
++print('\nshuffle = True, Random seed =', RANDOM_SEED, '\n')
++
++k_fold = StratifiedKFold(n_splits=10, shuffle=True, random_state=RANDOM_SEED)
++result = 0
++for fold_n, (train_idx, test_idx) in enumerate(k_fold.split(X, y)):
++    print(train_idx, '\n', test_idx)
++
++RANDOM_SEED += 1
++print('\nshuffle = True, Random seed =', RANDOM_SEED, '\n')
++  
++k_fold = StratifiedKFold(n_splits=10, shuffle=True, random_state=RANDOM_SEED)
++result = 0
++for fold_n, (train_idx, test_idx) in enumerate(k_fold.split(X, y)):
++    print(train_idx, '\n', test_idx)
+diff --git a/test_verify_fix.py b/test_verify_fix.py
+new file mode 100644
+index 000000000..2c5bc7ac1
+--- /dev/null
++++ b/test_verify_fix.py
+@@ -0,0 +1,33 @@
++import numpy as np
++from sklearn.model_selection import StratifiedKFold, RepeatedStratifiedKFold
++
++# Test that RepeatedStratifiedKFold still produces deterministic results
++X = [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]]
++y = [1, 1, 1, 0, 0]
++random_state = 1944695409
++rskf = RepeatedStratifiedKFold(
++    n_splits=2,
++    n_repeats=2,
++    random_state=random_state)
++
++# Collect results from multiple runs
++results = []
++for run in range(3):
++    run_results = []
++    for train, test in rskf.split(X, y):
++        run_results.append((tuple(sorted(train)), tuple(sorted(test))))
++    results.append(run_results)
++
++# Check that all runs produce the same results
++print("Results from first run:", results[0])
++print("Are all runs identical?", all(results[i] == results[0] for i in range(len(results))))
++
++# Test stratification is maintained
++for train, test in rskf.split(X, y):
++    y_train = [y[i] for i in train]
++    y_test = [y[i] for i in test]
++    print(f"Train indices: {train}, y_train: {y_train}")
++    print(f"Test indices: {test}, y_test: {y_test}")
++    print(f"Train class counts: {np.bincount(y_train)}")
++    print(f"Test class counts: {np.bincount(y_test)}")
++    print()

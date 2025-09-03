@@ -1,0 +1,182 @@
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 0cdead923..e9fed0b49 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1084,6 +1084,11 @@ def roc_curve(
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+     thresholds = np.r_[thresholds[0] + 1, thresholds]
++    
++    # When y_score contains probability estimates (all values in [0, 1]),
++    # clip the artificial first threshold to 1 to maintain semantic meaning
++    if len(thresholds) > 1 and np.all((thresholds[1:] >= 0) & (thresholds[1:] <= 1)):
++        thresholds[0] = np.clip(thresholds[0], None, 1)
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+diff --git a/sklearn/metrics/tests/test_ranking.py b/sklearn/metrics/tests/test_ranking.py
+index f38f118c3..3f21356b8 100644
+--- a/sklearn/metrics/tests/test_ranking.py
++++ b/sklearn/metrics/tests/test_ranking.py
+@@ -418,13 +418,24 @@ def test_roc_curve_drop_intermediate():
+     y_true = [0, 0, 0, 0, 1, 1]
+     y_score = [0.0, 0.2, 0.5, 0.6, 0.7, 1.0]
+     tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
+-    assert_array_almost_equal(thresholds, [2.0, 1.0, 0.7, 0.0])
++    # When y_score contains probability estimates (all in [0,1]), 
++    # the first threshold is capped at 1.0
++    assert_array_almost_equal(thresholds, [1.0, 1.0, 0.7, 0.0])
+ 
+     # Test dropping thresholds with repeating scores
+     y_true = [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
+     y_score = [0.0, 0.1, 0.6, 0.6, 0.7, 0.8, 0.9, 0.6, 0.7, 0.8, 0.9, 0.9, 1.0]
+     tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
+-    assert_array_almost_equal(thresholds, [2.0, 1.0, 0.9, 0.7, 0.6, 0.0])
++    # When y_score contains probability estimates (all in [0,1]), 
++    # the first threshold is capped at 1.0
++    assert_array_almost_equal(thresholds, [1.0, 1.0, 0.9, 0.7, 0.6, 0.0])
++    
++    # Test with scores outside [0, 1] range (e.g., decision function output)
++    y_true = [0, 0, 1, 1]
++    y_score = [-2.0, -1.0, 1.0, 2.0]
++    tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
++    # When y_score contains non-probability values, no capping occurs
++    assert_array_almost_equal(thresholds, [3.0, 2.0, 1.0, -2.0])
+ 
+ 
+ def test_roc_curve_fpr_tpr_increasing():
+@@ -439,6 +450,23 @@ def test_roc_curve_fpr_tpr_increasing():
+     assert (np.diff(tpr) < 0).sum() == 0
+ 
+ 
++def test_roc_curve_with_probability_estimates():
++    # Test that thresholds do not exceed 1 when y_score contains probabilities
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)  # Probability estimates in [0, 1]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    # All thresholds should be <= 1 when y_score are probabilities
++    assert thresholds.max() <= 1, (
++        f"Thresholds exceed 1 with probability estimates: max={thresholds.max()}"
++    )
++    # Also check that all thresholds are non-negative
++    assert thresholds.min() >= 0, (
++        f"Thresholds are negative: min={thresholds.min()}"
++    )
++
++
+ def test_auc():
+     # Test Area Under Curve (AUC) computation
+     x = [0, 1]
+diff --git a/test_comprehensive_roc_fix.py b/test_comprehensive_roc_fix.py
+new file mode 100644
+index 000000000..63c6415c1
+--- /dev/null
++++ b/test_comprehensive_roc_fix.py
+@@ -0,0 +1,71 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_comprehensive_roc_fix():
++    """Test that the fix correctly handles various cases"""
++    
++    # Case 1: Probability estimates in [0, 1] - should be capped at 1
++    print("Case 1: Probability estimates")
++    y_true = [0, 0, 1, 1]
++    y_score = [0.1, 0.4, 0.35, 0.8]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    print(f"  y_score: {y_score}")
++    print(f"  thresholds: {thresholds}")
++    print(f"  max threshold: {thresholds.max()}")
++    assert thresholds.max() <= 1, f"Expected max threshold <= 1, got {thresholds.max()}"
++    
++    # Case 2: Decision function scores outside [0, 1] - should NOT be capped
++    print("\nCase 2: Decision function scores")
++    y_true = [0, 0, 1, 1]
++    y_score = [-0.5, 0.5, 1.5, 2.5]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    print(f"  y_score: {y_score}")
++    print(f"  thresholds: {thresholds}")
++    print(f"  max threshold: {thresholds.max()}")
++    assert thresholds.max() > 1, f"Expected max threshold > 1, got {thresholds.max()}"
++    
++    # Case 3: Edge case - all scores are 0
++    print("\nCase 3: All scores are 0")
++    y_true = [0, 0, 1, 1]
++    y_score = [0.0, 0.0, 0.0, 0.0]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    print(f"  y_score: {y_score}")
++    print(f"  thresholds: {thresholds}")
++    print(f"  max threshold: {thresholds.max()}")
++    assert thresholds.max() <= 1, f"Expected max threshold <= 1, got {thresholds.max()}"
++    
++    # Case 4: Edge case - all scores are 1
++    print("\nCase 4: All scores are 1")
++    y_true = [0, 0, 1, 1]
++    y_score = [1.0, 1.0, 1.0, 1.0]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    print(f"  y_score: {y_score}")
++    print(f"  thresholds: {thresholds}")
++    print(f"  max threshold: {thresholds.max()}")
++    # In this case, the first threshold would be 1 + 1 = 2, but should be capped at 1
++    assert thresholds.max() <= 1, f"Expected max threshold <= 1, got {thresholds.max()}"
++    
++    # Case 5: Mixed but still in [0, 1]
++    print("\nCase 5: Mixed probability scores")
++    y_true = [1, 0, 0, 1, 0, 1, 0, 1]
++    y_score = [0.9, 0.1, 0.2, 0.8, 0.3, 0.7, 0.4, 0.6]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    print(f"  y_score: {y_score}")
++    print(f"  thresholds: {thresholds}")
++    print(f"  max threshold: {thresholds.max()}")
++    assert thresholds.max() <= 1, f"Expected max threshold <= 1, got {thresholds.max()}"
++    
++    # Case 6: Some scores exactly at boundaries
++    print("\nCase 6: Scores at boundaries")
++    y_true = [0, 1, 0, 1]
++    y_score = [0.0, 1.0, 0.5, 0.5]
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    print(f"  y_score: {y_score}")
++    print(f"  thresholds: {thresholds}")
++    print(f"  max threshold: {thresholds.max()}")
++    assert thresholds.max() <= 1, f"Expected max threshold <= 1, got {thresholds.max()}"
++    
++    print("\nAll tests passed!")
++
++if __name__ == "__main__":
++    test_comprehensive_roc_fix()
+diff --git a/test_roc_curve_correctness.py b/test_roc_curve_correctness.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/test_roc_curve_correctness.py
+@@ -0,0 +1 @@
++
+diff --git a/test_roc_threshold_issue.py b/test_roc_threshold_issue.py
+new file mode 100644
+index 000000000..ccbf0869b
+--- /dev/null
++++ b/test_roc_threshold_issue.py
+@@ -0,0 +1,21 @@
++import numpy as np
++from sklearn.metrics import roc_curve
++
++def test_roc_curve_with_probability_estimates():
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    fpr, tpr, thresholds = roc_curve(y_true, y_score)
++    
++    print("y_true:", y_true)
++    print("y_score:", y_score)
++    print("thresholds:", thresholds)
++    print("max threshold:", thresholds.max())
++    print("min threshold:", thresholds.min())
++    
++    # Check if thresholds are within [0, 1] range
++    assert np.logical_and(thresholds <= 1, thresholds >= 0).all(), \
++        f"Thresholds out of range [0, 1]: min={thresholds.min()}, max={thresholds.max()}"
++
++if __name__ == "__main__":
++    test_roc_curve_with_probability_estimates()

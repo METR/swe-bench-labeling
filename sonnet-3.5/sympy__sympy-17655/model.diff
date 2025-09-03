@@ -1,0 +1,36 @@
+diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
+index 7c978c47be..dfa8565c5e 100644
+--- a/sympy/geometry/point.py
++++ b/sympy/geometry/point.py
+@@ -213,6 +213,20 @@ def __add__(self, other):
+         sympy.geometry.point.Point.translate
+ 
+         """
++        from sympy import Mul
++        if isinstance(other, Mul):
++            # If other is a Mul, we assume it's a scaled Point
++            # We extract the scale factor and the Point
++            scale_factor = 1
++            point = None
++            for arg in other.args:
++                if isinstance(arg, Point):
++                    point = arg
++                else:
++                    scale_factor *= arg
++            if point is not None:
++                return self + scale_factor * point
++
+         try:
+             s, o = Point._normalize_dimension(self, Point(other, evaluate=False))
+         except TypeError:
+@@ -221,6 +235,10 @@ def __add__(self, other):
+         coords = [simplify(a + b) for a, b in zip(s, o)]
+         return Point(coords, evaluate=False)
+ 
++    def __radd__(self, other):
++        """Reverse add method."""
++        return self.__add__(other)
++
+     def __contains__(self, item):
+         return item in self.args
+ 

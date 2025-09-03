@@ -1,0 +1,65 @@
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index 696bfd7742..f0f5e3c814 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -780,6 +780,15 @@ class BaseDatabaseSchemaEditor:
+             and old_field.remote_field
+             and old_field.db_constraint
+         ):
++            # Include collation in the new_type if it's specified
++            if new_field.db_collation:
++                new_type = f"{new_type} COLLATE {new_field.db_collation}"
++            # Propagate the collation to related fields
++            for rel in model._meta.related_objects:
++                if rel.field.remote_field.model == model:
++                    rel_new_field = rel.field.clone()
++                    rel_new_field.db_collation = new_field.db_collation
++                    self.alter_field(rel.model, rel.field, rel_new_field)
+             fk_names = self._constraint_names(
+                 model, [old_field.column], foreign_key=True
+             )
+diff --git a/django/db/backends/mysql/schema.py b/django/db/backends/mysql/schema.py
+index 562b209eef..e25791766b 100644
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -8,7 +8,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+ 
+     sql_alter_column_null = "MODIFY %(column)s %(type)s NULL"
+     sql_alter_column_not_null = "MODIFY %(column)s %(type)s NOT NULL"
+-    sql_alter_column_type = "MODIFY %(column)s %(type)s"
++    sql_alter_column_type = "MODIFY %(column)s %(type)s%(collation)s"
+     sql_alter_column_collate = "MODIFY %(column)s %(type)s%(collation)s"
+     sql_alter_column_no_default_null = "ALTER COLUMN %(column)s SET DEFAULT NULL"
+ 
+@@ -154,6 +154,31 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+                 )
+         return super()._delete_composed_index(model, fields, *args)
+ 
++    def _alter_column_collation(self, model, old_field, new_field, new_type):
++        if new_field.db_collation:
++            # Update the column type SQL with the new collation
++            new_type = f"{new_type} COLLATE {new_field.db_collation}"
++        return new_type
++
++    def alter_field(self, model, old_field, new_field, strict=False):
++        old_db_params = old_field.db_parameters(connection=self.connection)
++        new_db_params = new_field.db_parameters(connection=self.connection)
++        old_type = old_db_params['type']
++        new_type = new_db_params['type']
++
++        if new_type is not None:
++            new_type = self._alter_column_collation(model, old_field, new_field, new_type)
++
++        super().alter_field(model, old_field, new_field, strict)
++
++        # Propagate the collation to related fields
++        if new_field.db_collation:
++            for rel in model._meta.related_objects:
++                if rel.field.remote_field.model == model:
++                    rel_new_field = rel.field.clone()
++                    rel_new_field.db_collation = new_field.db_collation
++                    self.alter_field(rel.model, rel.field, rel_new_field)
++
+     def _set_field_new_type_null_status(self, field, new_type):
+         """
+         Keep the null property of the old field. If it has changed, it will be

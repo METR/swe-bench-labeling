@@ -1,0 +1,150 @@
+From 7fce03e84b41526c55e07ce9a1c6b8298f9809b3 Mon Sep 17 00:00:00 2001
+From: Thomas A Caswell <tcaswell@gmail.com>
+Date: Fri, 17 Jun 2022 21:29:36 -0400
+Subject: [PATCH 1/4] FIX/API: Do not reset rcParams['backend'] in rc_context
+
+The motivating issue is that if the backend was the auto backend sentinel and
+the backend was first fully resolved in an `rc_context` block, then we would
+reset back to the sentinel an exit which would lead to strange behavior with
+figures being erroneously closed.
+
+This special cases the 'backend' key to not be reset on `__exit__`
+
+Closes #23298
+---
+ doc/api/next_api_changes/behavior/23299-TAC.rst | 9 +++++++++
+ lib/matplotlib/__init__.py                      | 5 ++++-
+ lib/matplotlib/tests/test_rcparams.py           | 7 +++++++
+ 3 files changed, 20 insertions(+), 1 deletion(-)
+ create mode 100644 doc/api/next_api_changes/behavior/23299-TAC.rst
+
+diff --git a/doc/api/next_api_changes/behavior/23299-TAC.rst b/doc/api/next_api_changes/behavior/23299-TAC.rst
+new file mode 100644
+index 000000000000..95116f65c553
+--- /dev/null
++++ b/doc/api/next_api_changes/behavior/23299-TAC.rst
+@@ -0,0 +1,9 @@
++mpl.rc_context no longer resests the `'backend'` key
++~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++
++If you want to rest :rc:`backend` after the context, you must use
++`matplotlib.use` to change the backend.  Previously the key would be reset, but
++it would have any of the expected side-effects because internally
++`matplotlib.rc_context` side-steps the custom logic in the
++`~matplotlib.RcParams` class (because we copied the values from ``rcParamms``
++so it does not need to be re-validated.
+diff --git a/lib/matplotlib/__init__.py b/lib/matplotlib/__init__.py
+index c268a56724c9..528be266ffac 100644
+--- a/lib/matplotlib/__init__.py
++++ b/lib/matplotlib/__init__.py
+@@ -1059,6 +1059,8 @@ def rc_context(rc=None, fname=None):
+     """
+     Return a context manager for temporarily changing rcParams.
+ 
++    The :rc:`backend` will not be reset by the context manager.
++
+     Parameters
+     ----------
+     rc : dict
+@@ -1087,7 +1089,8 @@ def rc_context(rc=None, fname=None):
+              plt.plot(x, y)  # uses 'print.rc'
+ 
+     """
+-    orig = rcParams.copy()
++    orig = dict(rcParams.copy())
++    del orig['backend']
+     try:
+         if fname:
+             rc_file(fname)
+diff --git a/lib/matplotlib/tests/test_rcparams.py b/lib/matplotlib/tests/test_rcparams.py
+index 99856b344255..d5f316f54595 100644
+--- a/lib/matplotlib/tests/test_rcparams.py
++++ b/lib/matplotlib/tests/test_rcparams.py
+@@ -496,6 +496,13 @@ def test_keymaps():
+         assert isinstance(mpl.rcParams[k], list)
+ 
+ 
++def test_no_backend_reset_rccontext():
++    assert mpl.rcParams['backend'] != 'module://aardvark'
++    with mpl.rc_context():
++        mpl.rcParams['backend'] = 'module://aardvark'
++    assert mpl.rcParams['backend'] == 'module://aardvark'
++
++
+ def test_rcparams_reset_after_fail():
+     # There was previously a bug that meant that if rc_context failed and
+     # raised an exception due to issues in the supplied rc parameters, the
+
+From da15745b530daf6cc5b92e660066f48cb7b47429 Mon Sep 17 00:00:00 2001
+From: Thomas A Caswell <tcaswell@gmail.com>
+Date: Wed, 22 Jun 2022 14:24:13 -0400
+Subject: [PATCH 2/4] DOC: Simplify API note text
+
+Co-authored-by: Tim Hoffmann <2836374+timhoffm@users.noreply.github.com>
+---
+ doc/api/next_api_changes/behavior/23299-TAC.rst | 11 ++++-------
+ 1 file changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/doc/api/next_api_changes/behavior/23299-TAC.rst b/doc/api/next_api_changes/behavior/23299-TAC.rst
+index 95116f65c553..530912929d6f 100644
+--- a/doc/api/next_api_changes/behavior/23299-TAC.rst
++++ b/doc/api/next_api_changes/behavior/23299-TAC.rst
+@@ -1,9 +1,6 @@
+-mpl.rc_context no longer resests the `'backend'` key
++mpl.rc_context no longer resests the value of `rcParams['backend']`
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+-If you want to rest :rc:`backend` after the context, you must use
+-`matplotlib.use` to change the backend.  Previously the key would be reset, but
+-it would have any of the expected side-effects because internally
+-`matplotlib.rc_context` side-steps the custom logic in the
+-`~matplotlib.RcParams` class (because we copied the values from ``rcParamms``
+-so it does not need to be re-validated.
++`matplotlib.rc_context` did incorrectly reset the value of `rcParams['backend']` if backend
++resolution was triggered in the context. This affected only the value. The actual backend
++was not reset. Now, `matpotlib.rc_context` dose not modify `rcParams['backend']` anymore.
+
+From 545fff0b35a9448900802360ffb6093ef83eb2ed Mon Sep 17 00:00:00 2001
+From: Thomas A Caswell <tcaswell@gmail.com>
+Date: Wed, 22 Jun 2022 14:25:19 -0400
+Subject: [PATCH 3/4] DOC: minor re-wording of API note
+
+---
+ doc/api/next_api_changes/behavior/23299-TAC.rst | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/doc/api/next_api_changes/behavior/23299-TAC.rst b/doc/api/next_api_changes/behavior/23299-TAC.rst
+index 530912929d6f..6602f15e4fc3 100644
+--- a/doc/api/next_api_changes/behavior/23299-TAC.rst
++++ b/doc/api/next_api_changes/behavior/23299-TAC.rst
+@@ -1,6 +1,6 @@
+-mpl.rc_context no longer resests the value of `rcParams['backend']`
+-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++mpl.rc_context no longer resets the value of :rc:`backend`
++~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+-`matplotlib.rc_context` did incorrectly reset the value of `rcParams['backend']` if backend
++`matplotlib.rc_context` incorrectly reset the value of :rc:`backend` if backend
+ resolution was triggered in the context. This affected only the value. The actual backend
+-was not reset. Now, `matpotlib.rc_context` dose not modify `rcParams['backend']` anymore.
++was not changed. Now, `matplotlib.rc_context` does not reset  :rc:`backend` anymore.
+
+From 4d6bab4cfd74d8c13dfd2321cc0ad1cb3eaecd9f Mon Sep 17 00:00:00 2001
+From: Thomas A Caswell <tcaswell@gmail.com>
+Date: Mon, 27 Jun 2022 21:24:38 -0400
+Subject: [PATCH 4/4] DOC: make title shorter
+
+---
+ doc/api/next_api_changes/behavior/23299-TAC.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/doc/api/next_api_changes/behavior/23299-TAC.rst b/doc/api/next_api_changes/behavior/23299-TAC.rst
+index 6602f15e4fc3..745bd47d6c6b 100644
+--- a/doc/api/next_api_changes/behavior/23299-TAC.rst
++++ b/doc/api/next_api_changes/behavior/23299-TAC.rst
+@@ -1,4 +1,4 @@
+-mpl.rc_context no longer resets the value of :rc:`backend`
++mpl.rc_context no longer resets the value of ``'backend'``
+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+ `matplotlib.rc_context` incorrectly reset the value of :rc:`backend` if backend

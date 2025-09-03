@@ -1,0 +1,179 @@
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..c2f781b311
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,105 @@
++import numpy as np
++import matplotlib.pyplot as plt
++from matplotlib import colors
++import matplotlib.scale as scale
++import matplotlib.cbook as cbook
++
++# Test the issue
++data = np.full((5, 5), -1, dtype=np.float64)
++data[0:2, :] = 1E20
++
++print(f"data.max() = {data.max()}")
++print(f"data type = {data.dtype}")
++
++# Create a LogNorm instance
++norm = colors.LogNorm(vmin=100, vmax=data.max())
++print(f"\nLogNorm created with vmin={norm.vmin}, vmax={norm.vmax}")
++
++# Simulate what happens in image.py _make_image
++A = np.ma.masked_less_equal(data, 0, copy=False)
++scaled_dtype = np.float64
++
++# Simulate the vrange calculation from image.py
++a_min = A.min()
++a_max = A.max()
++print(f"\na_min = {a_min}, a_max = {a_max}")
++print(f"a_min == a_max: {a_min == a_max}")
++
++# The offset and frac values used in image.py
++offset = .1
++frac = .8
++
++# This is what happens in image.py
++vmin, vmax = norm.vmin, norm.vmax
++vrange = np.array([vmin, vmax], dtype=scaled_dtype)
++print(f"\nOriginal vrange = {vrange}")
++
++# The issue: when a_min == a_max, the scaling operations cause problems
++# Let's trace through step by step
++vrange_scaled = vrange.copy()
++vrange_scaled -= a_min
++print(f"After subtracting a_min: vrange_scaled = {vrange_scaled}")
++
++# When a_min == a_max, the division is skipped, but offset is still added
++if a_min != a_max:
++    vrange_scaled /= ((a_max - a_min) / frac)
++    print(f"After division: vrange_scaled = {vrange_scaled}")
++else:
++    print("Skipping division because a_min == a_max")
++
++vrange_scaled += offset
++print(f"After adding offset: vrange_scaled = {vrange_scaled}")
++
++# Then later it's reversed...
++vrange_unscaled = vrange_scaled.copy()
++vrange_unscaled -= offset
++# When a_min == a_max, the multiplication is also skipped
++if a_min != a_max:
++    vrange_unscaled *= ((a_max - a_min) / frac)
++else:
++    print("Skipping multiplication because a_min == a_max")
++vrange_unscaled += a_min
++
++print(f"\nAfter unscaling: vrange_unscaled = {vrange_unscaled}")
++print(f"Original vrange was: {vrange}")
++print(f"PROBLEM: vmin changed from {vmin} to {vrange_unscaled[0]}!")
++
++# Now test different data where min != max
++print("\n\n" + "="*60)
++print("Testing with data where min != max...")
++data2 = np.full((5, 5), -1, dtype=np.float64)
++data2[0:2, :] = 1E20
++data2[2, 2] = 1E19  # Add a different value
++
++A2 = np.ma.masked_less_equal(data2, 0, copy=False) 
++a_min2 = A2.min()
++a_max2 = A2.max()
++print(f"a_min2 = {a_min2}, a_max2 = {a_max2}")
++print(f"a_min2 == a_max2: {a_min2 == a_max2}")
++
++vrange2 = np.array([vmin, vmax], dtype=scaled_dtype)
++print(f"Original vrange2 = {vrange2}")
++vrange2_scaled = vrange2.copy()
++vrange2_scaled -= a_min2
++print(f"After subtracting a_min2: vrange2_scaled = {vrange2_scaled}")
++if a_min2 != a_max2:
++    vrange2_scaled /= ((a_max2 - a_min2) / frac)
++    print(f"After division: vrange2_scaled = {vrange2_scaled}")
++vrange2_scaled += offset
++print(f"After adding offset: vrange2_scaled = {vrange2_scaled}")
++
++vrange2_unscaled = vrange2_scaled.copy()
++vrange2_unscaled -= offset
++if a_min2 != a_max2:
++    vrange2_unscaled *= ((a_max2 - a_min2) / frac)
++    print(f"After multiplication: vrange2_unscaled = {vrange2_unscaled}")
++vrange2_unscaled += a_min2
++
++print(f"After adding a_min2: vrange2_unscaled = {vrange2_unscaled}")
++print(f"PROBLEM: vmin changed from {vmin} to {vrange2_unscaled[0]}!")
++
++# The real issue: when vmin is much smaller than a_min, 
++# the subtraction and division cause precision loss
++print(f"\nThe issue is: vmin={vmin} << a_min2={a_min2}")
++print(f"vmin - a_min2 = {vmin - a_min2}")
++print(f"This gets normalized to a very small negative number that rounds to 0")
+diff --git a/test_fix_verification.py b/test_fix_verification.py
+new file mode 100644
+index 0000000000..3a1f4975b3
+--- /dev/null
++++ b/test_fix_verification.py
+@@ -0,0 +1,62 @@
++import numpy as np
++import matplotlib.pyplot as plt
++from matplotlib import colors
++
++print("Testing LogNorm with huge range data...")
++
++# Test case 1: All values are the same huge value (original failing case)
++data1 = np.full((5, 5), -1, dtype=np.float64)
++data1[0:2, :] = 1E20
++
++fig1, ax1 = plt.subplots()
++try:
++    im1 = ax1.imshow(data1, norm=colors.LogNorm(vmin=100, vmax=data1.max()),
++                     interpolation='nearest', cmap='viridis')
++    fig1.canvas.draw()
++    print("✓ Test 1 passed: All values same huge value")
++except Exception as e:
++    print(f"✗ Test 1 failed: {e}")
++
++# Test case 2: Mix of huge values 
++data2 = np.full((5, 5), -1, dtype=np.float64)
++data2[0:2, :] = 1E20
++data2[2, 2] = 1E19
++
++fig2, ax2 = plt.subplots()
++try:
++    im2 = ax2.imshow(data2, norm=colors.LogNorm(vmin=100, vmax=data2.max()),
++                     interpolation='nearest', cmap='viridis')
++    fig2.canvas.draw()
++    print("✓ Test 2 passed: Mix of huge values")
++except Exception as e:
++    print(f"✗ Test 2 failed: {e}")
++
++# Test case 3: Very small vmin with huge data
++data3 = np.full((5, 5), -1, dtype=np.float64)
++data3[0:2, :] = 1E100
++
++fig3, ax3 = plt.subplots()
++try:
++    im3 = ax3.imshow(data3, norm=colors.LogNorm(vmin=1e-10, vmax=data3.max()),
++                     interpolation='nearest', cmap='viridis')
++    fig3.canvas.draw()
++    print("✓ Test 3 passed: Very small vmin with huge data")
++except Exception as e:
++    print(f"✗ Test 3 failed: {e}")
++
++# Test case 4: Edge case with zeros that should be masked
++data4 = np.array([[1E20, 1E20], [0, 1E20]])
++
++fig4, ax4 = plt.subplots()
++try:
++    im4 = ax4.imshow(data4, norm=colors.LogNorm(vmin=100, vmax=data4.max()),
++                     interpolation='nearest', cmap='viridis')
++    fig4.canvas.draw()
++    print("✓ Test 4 passed: Data with zeros")
++except Exception as e:
++    print(f"✗ Test 4 failed: {e}")
++
++# Clean up
++plt.close('all')
++
++print("\nAll tests completed!")

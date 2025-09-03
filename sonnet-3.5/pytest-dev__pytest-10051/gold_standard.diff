@@ -1,0 +1,214 @@
+From c7e784f95d6ff7dc1e9d1a1dbc234a39c0125816 Mon Sep 17 00:00:00 2001
+From: "zx.qiu" <zx.qiu@trip.com>
+Date: Wed, 15 Jun 2022 23:11:55 +0800
+Subject: [PATCH 1/4] Fix stage caplog records not clear
+
+Closes #9877
+---
+ AUTHORS                         |  1 +
+ changelog/9877.bugfix.rst       |  1 +
+ src/_pytest/logging.py          | 12 ++++++++++++
+ testing/logging/test_fixture.py | 13 +++++++++++++
+ 4 files changed, 27 insertions(+)
+ create mode 100644 changelog/9877.bugfix.rst
+
+diff --git a/AUTHORS b/AUTHORS
+index d1f1b5503f2..7d27f5adadf 100644
+--- a/AUTHORS
++++ b/AUTHORS
+@@ -363,5 +363,6 @@ Yuval Shimon
+ Zac Hatfield-Dodds
+ Zachary Kneupper
+ Zachary OBrien
++Zhouxin Qiu
+ Zoltán Máté
+ Zsolt Cserna
+diff --git a/changelog/9877.bugfix.rst b/changelog/9877.bugfix.rst
+new file mode 100644
+index 00000000000..ace3a4385a4
+--- /dev/null
++++ b/changelog/9877.bugfix.rst
+@@ -0,0 +1 @@
++Fixed ``caplog.get_records(when)`` still get the stage records after ``caplog.clear()``
+diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py
+index a4f4214b137..96709ae93cf 100644
+--- a/src/_pytest/logging.py
++++ b/src/_pytest/logging.py
+@@ -335,6 +335,16 @@ def __init__(self) -> None:
+         """Create a new log handler."""
+         super().__init__(StringIO())
+         self.records: List[logging.LogRecord] = []
++        self.set_when(None)
++
++    def set_when(self, when: Optional[str]) -> None:
++        """Prepare for the given test phase (setup/call/teardown)."""
++        self._when = when
++
++    def get_when(self) -> Optional[str]:
++        return self._when
++
++    when = property(get_when, set_when)
+ 
+     def emit(self, record: logging.LogRecord) -> None:
+         """Keep the log records in a list in addition to the log text."""
+@@ -441,6 +451,7 @@ def messages(self) -> List[str]:
+     def clear(self) -> None:
+         """Reset the list of log records and the captured log text."""
+         self.handler.reset()
++        self._item.stash[caplog_records_key][self.handler.when] = self.records
+ 
+     def set_level(self, level: Union[int, str], logger: Optional[str] = None) -> None:
+         """Set the level of a logger for the duration of a test.
+@@ -695,6 +706,7 @@ def _runtest_for(self, item: nodes.Item, when: str) -> Generator[None, None, Non
+             level=self.log_level,
+         ) as report_handler:
+             caplog_handler.reset()
++            caplog_handler.set_when(when)
+             report_handler.reset()
+             item.stash[caplog_records_key][when] = caplog_handler.records
+             item.stash[caplog_handler_key] = caplog_handler
+diff --git a/testing/logging/test_fixture.py b/testing/logging/test_fixture.py
+index bcb20de5805..6b85ce60a63 100644
+--- a/testing/logging/test_fixture.py
++++ b/testing/logging/test_fixture.py
+@@ -172,6 +172,19 @@ def test_caplog_captures_for_all_stages(caplog, logging_during_setup_and_teardow
+     assert set(caplog._item.stash[caplog_records_key]) == {"setup", "call"}
+ 
+ 
++def test_clear_for_call_stage(caplog, logging_during_setup_and_teardown):
++    logger.info("a_call_log")
++    assert [x.message for x in caplog.get_records("call")] == ["a_call_log"]
++    assert [x.message for x in caplog.get_records("setup")] == ["a_setup_log"]
++    assert set(caplog._item.stash[caplog_records_key]) == {"setup", "call"}
++
++    caplog.clear()
++
++    assert caplog.get_records("call") == []
++    assert [x.message for x in caplog.get_records("setup")] == ["a_setup_log"]
++    assert set(caplog._item.stash[caplog_records_key]) == {"setup", "call"}
++
++
+ def test_ini_controls_global_log_level(pytester: Pytester) -> None:
+     pytester.makepyfile(
+         """
+
+From f29f79e39f698d33ec773b24a06b38c38ee0cdaa Mon Sep 17 00:00:00 2001
+From: "zx.qiu" <zx.qiu@trip.com>
+Date: Fri, 24 Jun 2022 19:17:55 +0800
+Subject: [PATCH 2/4] Use records.clear() in LogCaptureHandler when
+ caplog.clear()
+
+---
+ src/_pytest/logging.py          | 19 +++++--------------
+ testing/logging/test_fixture.py |  5 +++++
+ 2 files changed, 10 insertions(+), 14 deletions(-)
+
+diff --git a/src/_pytest/logging.py b/src/_pytest/logging.py
+index 96709ae93cf..2eb69fdbfb4 100644
+--- a/src/_pytest/logging.py
++++ b/src/_pytest/logging.py
+@@ -40,7 +40,6 @@
+ else:
+     logging_StreamHandler = logging.StreamHandler
+ 
+-
+ DEFAULT_LOG_FORMAT = "%(levelname)-8s %(name)s:%(filename)s:%(lineno)d %(message)s"
+ DEFAULT_LOG_DATE_FORMAT = "%H:%M:%S"
+ _ANSI_ESCAPE_SEQ = re.compile(r"\x1b\[[\d;]+m")
+@@ -335,16 +334,6 @@ def __init__(self) -> None:
+         """Create a new log handler."""
+         super().__init__(StringIO())
+         self.records: List[logging.LogRecord] = []
+-        self.set_when(None)
+-
+-    def set_when(self, when: Optional[str]) -> None:
+-        """Prepare for the given test phase (setup/call/teardown)."""
+-        self._when = when
+-
+-    def get_when(self) -> Optional[str]:
+-        return self._when
+-
+-    when = property(get_when, set_when)
+ 
+     def emit(self, record: logging.LogRecord) -> None:
+         """Keep the log records in a list in addition to the log text."""
+@@ -355,6 +344,10 @@ def reset(self) -> None:
+         self.records = []
+         self.stream = StringIO()
+ 
++    def clear(self) -> None:
++        self.records.clear()
++        self.stream = StringIO()
++
+     def handleError(self, record: logging.LogRecord) -> None:
+         if logging.raiseExceptions:
+             # Fail the test if the log message is bad (emit failed).
+@@ -450,8 +443,7 @@ def messages(self) -> List[str]:
+ 
+     def clear(self) -> None:
+         """Reset the list of log records and the captured log text."""
+-        self.handler.reset()
+-        self._item.stash[caplog_records_key][self.handler.when] = self.records
++        self.handler.clear()
+ 
+     def set_level(self, level: Union[int, str], logger: Optional[str] = None) -> None:
+         """Set the level of a logger for the duration of a test.
+@@ -706,7 +698,6 @@ def _runtest_for(self, item: nodes.Item, when: str) -> Generator[None, None, Non
+             level=self.log_level,
+         ) as report_handler:
+             caplog_handler.reset()
+-            caplog_handler.set_when(when)
+             report_handler.reset()
+             item.stash[caplog_records_key][when] = caplog_handler.records
+             item.stash[caplog_handler_key] = caplog_handler
+diff --git a/testing/logging/test_fixture.py b/testing/logging/test_fixture.py
+index 6b85ce60a63..e9e73d05f98 100644
+--- a/testing/logging/test_fixture.py
++++ b/testing/logging/test_fixture.py
+@@ -184,6 +184,11 @@ def test_clear_for_call_stage(caplog, logging_during_setup_and_teardown):
+     assert [x.message for x in caplog.get_records("setup")] == ["a_setup_log"]
+     assert set(caplog._item.stash[caplog_records_key]) == {"setup", "call"}
+ 
++    logging.info("a_call_log_after_clear")
++    assert [x.message for x in caplog.get_records("call")] == ["a_call_log_after_clear"]
++    assert [x.message for x in caplog.get_records("setup")] == ["a_setup_log"]
++    assert set(caplog._item.stash[caplog_records_key]) == {"setup", "call"}
++
+ 
+ def test_ini_controls_global_log_level(pytester: Pytester) -> None:
+     pytester.makepyfile(
+
+From aa83fa353c58c8b9f6b6afecbc5a223e9731d720 Mon Sep 17 00:00:00 2001
+From: EmptyRabbit <32815055+EmptyRabbit@users.noreply.github.com>
+Date: Thu, 7 Jul 2022 19:29:50 +0800
+Subject: [PATCH 3/4] Update changelog/9877.bugfix.rst
+
+Co-authored-by: Ronny Pfannschmidt <opensource@ronnypfannschmidt.de>
+---
+ changelog/9877.bugfix.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/changelog/9877.bugfix.rst b/changelog/9877.bugfix.rst
+index ace3a4385a4..77b1b8c38ff 100644
+--- a/changelog/9877.bugfix.rst
++++ b/changelog/9877.bugfix.rst
+@@ -1 +1 @@
+-Fixed ``caplog.get_records(when)`` still get the stage records after ``caplog.clear()``
++ensure ``caplog.get_records(when)`` returns current/correct data after invoking ``caplog.clear()``
+
+From 87265973218e37bf7839bfbbd25fe69f1fe50a15 Mon Sep 17 00:00:00 2001
+From: Bruno Oliveira <nicoddemus@gmail.com>
+Date: Thu, 7 Jul 2022 09:39:57 -0300
+Subject: [PATCH 4/4] Update changelog/9877.bugfix.rst
+
+---
+ changelog/9877.bugfix.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/changelog/9877.bugfix.rst b/changelog/9877.bugfix.rst
+index 77b1b8c38ff..1d2264c6157 100644
+--- a/changelog/9877.bugfix.rst
++++ b/changelog/9877.bugfix.rst
+@@ -1 +1 @@
+-ensure ``caplog.get_records(when)`` returns current/correct data after invoking ``caplog.clear()``
++Ensure ``caplog.get_records(when)`` returns current/correct data after invoking ``caplog.clear()``.

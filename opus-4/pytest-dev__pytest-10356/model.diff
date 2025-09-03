@@ -1,0 +1,175 @@
+diff --git a/pytest_test.ini b/pytest_test.ini
+new file mode 100644
+index 000000000..5720dae4c
+--- /dev/null
++++ b/pytest_test.ini
+@@ -0,0 +1,6 @@
++[pytest]
++markers =
++    foo: foo marker
++    bar: bar marker
++    baz: baz marker
++    qux: qux marker
+diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py
+index 800a25c92..95da2fd8e 100644
+--- a/src/_pytest/mark/structures.py
++++ b/src/_pytest/mark/structures.py
+@@ -360,6 +360,28 @@ def get_unpacked_marks(obj: object) -> Iterable[Mark]:
+     mark_list = getattr(obj, "pytestmark", [])
+     if not isinstance(mark_list, list):
+         mark_list = [mark_list]
++    
++    # If obj is a class, we need to collect markers from all classes in MRO
++    # but without duplicates from the direct pytestmark attribute
++    if inspect.isclass(obj):
++        # First check if obj has its own pytestmark that's not inherited
++        own_mark_list = []
++        if "pytestmark" in obj.__dict__:
++            own_mark_list = mark_list
++        
++        # Now collect from all parent classes in MRO (excluding object)
++        mro_marks = []
++        for cls in obj.__mro__[1:-1]:  # Skip self (obj) and object
++            # Only get marks that are directly on the class
++            if "pytestmark" in cls.__dict__:
++                cls_marks = getattr(cls, "pytestmark", [])
++                if not isinstance(cls_marks, list):
++                    cls_marks = [cls_marks]
++                mro_marks.extend(cls_marks)
++        
++        # Combine MRO marks with own marks
++        mark_list = mro_marks + own_mark_list
++    
+     return normalize_mark_list(mark_list)
+ 
+ 
+diff --git a/test_issue_scenario.py b/test_issue_scenario.py
+new file mode 100644
+index 000000000..2ca0ddb1e
+--- /dev/null
++++ b/test_issue_scenario.py
+@@ -0,0 +1,32 @@
++# This is the exact test scenario from the issue
++import pytest
++
++@pytest.mark.foo
++class Foo:
++    pass
++
++@pytest.mark.bar
++class Bar:
++    pass
++
++class TestDings(Foo, Bar):
++    def test_dings(self):
++        # This test should have both markers, foo and bar.
++        # In practice markers are resolved using MRO (so foo wins), unless the
++        # metaclass is applied
++        pass
++
++# Let's verify it works by checking markers programmatically
++def test_verify_markers():
++    """Verify that TestDings.test_dings has both foo and bar markers"""
++    from _pytest.mark.structures import get_unpacked_marks
++    
++    # Get marks from the test class
++    marks = list(get_unpacked_marks(TestDings))
++    mark_names = [m.name for m in marks]
++    
++    print(f"Marks on TestDings: {mark_names}")
++    
++    # Both foo and bar should be present
++    assert "foo" in mark_names
++    assert "bar" in mark_names
+diff --git a/test_mark_inheritance.py b/test_mark_inheritance.py
+new file mode 100644
+index 000000000..3be51c9a2
+--- /dev/null
++++ b/test_mark_inheritance.py
+@@ -0,0 +1,24 @@
++import pytest
++
++@pytest.mark.foo
++class Foo:
++    pass
++
++@pytest.mark.bar
++class Bar:
++    pass
++
++class TestDings(Foo, Bar):
++    def test_dings(self):
++        # This test should have both markers, foo and bar.
++        # In practice markers are resolved using MRO (so foo wins)
++        pass
++
++# Let's also test the markers directly
++if __name__ == "__main__":
++    # Check what markers are on the test
++    import inspect
++    test_func = TestDings.test_dings
++    print("Direct pytestmark on TestDings:", getattr(TestDings, 'pytestmark', None))
++    print("Direct pytestmark on Foo:", getattr(Foo, 'pytestmark', None))
++    print("Direct pytestmark on Bar:", getattr(Bar, 'pytestmark', None))
+diff --git a/test_mark_inheritance_detailed.py b/test_mark_inheritance_detailed.py
+new file mode 100644
+index 000000000..c154aaad3
+--- /dev/null
++++ b/test_mark_inheritance_detailed.py
+@@ -0,0 +1,36 @@
++import pytest
++
++@pytest.mark.foo
++class Foo:
++    pass
++
++@pytest.mark.bar
++class Bar:
++    pass
++
++class TestDings(Foo, Bar):
++    def test_dings(self, request):
++        # Get all markers on this test
++        markers = [m.name for m in request.node.iter_markers()]
++        print(f"Markers on test: {markers}")
++        assert "foo" in markers
++        assert "bar" in markers
++
++# Test with single inheritance too
++@pytest.mark.baz
++class TestSingleInheritance(Foo):
++    def test_single(self, request):
++        markers = [m.name for m in request.node.iter_markers()]
++        print(f"Markers on test: {markers}")
++        assert "foo" in markers
++        assert "baz" in markers
++
++# Test deep inheritance
++@pytest.mark.qux
++class TestDeepInheritance(TestDings):
++    def test_deep(self, request):
++        markers = [m.name for m in request.node.iter_markers()]
++        print(f"Markers on test: {markers}")
++        assert "foo" in markers
++        assert "bar" in markers
++        assert "qux" in markers
+diff --git a/test_mark_mro_simple.py b/test_mark_mro_simple.py
+new file mode 100644
+index 000000000..13eb06964
+--- /dev/null
++++ b/test_mark_mro_simple.py
+@@ -0,0 +1,14 @@
++import pytest
++
++@pytest.mark.foo
++class Foo:
++    pass
++
++@pytest.mark.bar
++class Bar:
++    pass
++
++class TestDings(Foo, Bar):
++    def test_dings(self):
++        # This test should have both markers, foo and bar.
++        pass

@@ -1,0 +1,45 @@
+From b2442878e8df11cf72f8b5307795485dcaae3eb0 Mon Sep 17 00:00:00 2001
+From: Arun sanganal <74652697+ArunSanganal@users.noreply.github.com>
+Date: Mon, 14 Jun 2021 09:49:43 +0530
+Subject: [PATCH 1/2] Update str.py
+
+---
+ sympy/printing/str.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/printing/str.py b/sympy/printing/str.py
+index c3fdcdd4358f..3e4b7d1b19e3 100644
+--- a/sympy/printing/str.py
++++ b/sympy/printing/str.py
+@@ -333,7 +333,7 @@ def apow(i):
+                     b.append(apow(item))
+                 else:
+                     if (len(item.args[0].args) != 1 and
+-                            isinstance(item.base, Mul)):
++                            isinstance(item.base, (Mul, Pow))):
+                         # To avoid situations like #14160
+                         pow_paren.append(item)
+                     b.append(item.base)
+
+From 305d1300055245c26c0261ffaf77575fb2e9f9d9 Mon Sep 17 00:00:00 2001
+From: Arun sanganal <74652697+ArunSanganal@users.noreply.github.com>
+Date: Mon, 14 Jun 2021 09:55:55 +0530
+Subject: [PATCH 2/2] Update test_str.py
+
+---
+ sympy/printing/tests/test_str.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/sympy/printing/tests/test_str.py b/sympy/printing/tests/test_str.py
+index 690b1a8bbfb6..68c7d63769f4 100644
+--- a/sympy/printing/tests/test_str.py
++++ b/sympy/printing/tests/test_str.py
+@@ -252,6 +252,8 @@ def test_Mul():
+     # For issue 14160
+     assert str(Mul(-2, x, Pow(Mul(y,y,evaluate=False), -1, evaluate=False),
+                                                 evaluate=False)) == '-2*x/(y*y)'
++    # issue 21537
++    assert str(Mul(x, Pow(1/y, -1, evaluate=False), evaluate=False)) == 'x/(1/y)'
+ 
+ 
+     class CustomClass1(Expr):

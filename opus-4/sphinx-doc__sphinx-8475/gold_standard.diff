@@ -1,0 +1,157 @@
+From 33732a31477bba2c91b2f072c50085b15d8c976f Mon Sep 17 00:00:00 2001
+From: Sebastien Besson <seb.besson@gmail.com>
+Date: Mon, 17 Aug 2020 09:23:37 +0100
+Subject: [PATCH 1/5] Extend linkchecker GET fallback logic to handle Too Many
+ Redirects
+
+Some websites will enter infinite redirect loops with HEAD requests. In this
+case, the GET fallback is ignored as the exception is of type TooManyRedirects
+and the link is reported as broken.
+This extends the except clause to retry with a GET request for such scenarios.
+---
+ sphinx/builders/linkcheck.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 9b54afc7ca7..735e1738dfe 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -20,7 +20,7 @@
+ 
+ from docutils import nodes
+ from docutils.nodes import Node
+-from requests.exceptions import HTTPError
++from requests.exceptions import HTTPError, TooManyRedirects
+ 
+ from sphinx.application import Sphinx
+ from sphinx.builders import Builder
+@@ -177,7 +177,7 @@ def check_uri() -> Tuple[str, str, int]:
+                         response = requests.head(req_url, config=self.app.config,
+                                                  auth=auth_info, **kwargs)
+                         response.raise_for_status()
+-                    except HTTPError:
++                    except (HTTPError, TooManyRedirects):
+                         # retry with GET request if that fails, some servers
+                         # don't like HEAD requests.
+                         response = requests.get(req_url, stream=True, config=self.app.config,
+
+From 37f06cfba9339fea4929239ff5a79fc34c849244 Mon Sep 17 00:00:00 2001
+From: Takeshi KOMIYA <i.tkomiya@gmail.com>
+Date: Mon, 23 Nov 2020 01:45:43 +0900
+Subject: [PATCH 2/5] Fix #8131: linkcheck: Too Many Redirects on HEAD request
+ is treated as broken
+
+---
+ CHANGES | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/CHANGES b/CHANGES
+index b17c7b20235..2c13d8f6f34 100644
+--- a/CHANGES
++++ b/CHANGES
+@@ -54,6 +54,7 @@ Bugs fixed
+   set to "description"
+ * #8419: html search: Do not load ``language_data.js`` in non-search pages
+ * #8454: graphviz: The layout option for graph and digraph directives don't work
++* #8131: linkcheck: Too Many Redirects on HEAD request is treated as broken
+ * #8437: Makefile: ``make clean`` with empty BUILDDIR is dangerous
+ 
+ Testing
+
+From 046c289f76392432e9f402bf5757d664212bce6b Mon Sep 17 00:00:00 2001
+From: Takeshi KOMIYA <i.tkomiya@gmail.com>
+Date: Mon, 23 Nov 2020 01:52:44 +0900
+Subject: [PATCH 3/5] linkcheck: Add a testcase for infinite redirect loop on
+ HEAD request
+
+---
+ tests/test_build_linkcheck.py | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/tests/test_build_linkcheck.py b/tests/test_build_linkcheck.py
+index c09c81fe08c..e6102e2a3c4 100644
+--- a/tests/test_build_linkcheck.py
++++ b/tests/test_build_linkcheck.py
+@@ -382,3 +382,31 @@ def test_connect_to_selfsigned_nonexistent_cert_file(app):
+         "uri": "https://localhost:7777/",
+         "info": "Could not find a suitable TLS CA certificate bundle, invalid path: does/not/exist",
+     }
++
++
++@pytest.mark.sphinx('linkcheck', testroot='linkcheck-localserver', freshenv=True)
++def test_TooManyRedirects_on_HEAD(app):
++    class InfiniteRedirectOnHeadHandler(http.server.BaseHTTPRequestHandler):
++        def do_HEAD(self):
++            self.send_response(302, "Found")
++            self.send_header("Location", "http://localhost:7777/")
++            self.end_headers()
++
++        def do_GET(self):
++            self.send_response(200, "OK")
++            self.end_headers()
++            self.wfile.write(b"ok\n")
++
++    with http_server(InfiniteRedirectOnHeadHandler):
++        app.builder.build_all()
++
++    with open(app.outdir / 'output.json') as fp:
++        content = json.load(fp)
++    assert content == {
++        "code": 0,
++        "status": "working",
++        "filename": "index.rst",
++        "lineno": 1,
++        "uri": "http://localhost:7777/",
++        "info": "",
++    }
+
+From 7a0605ade1a3eb0e9f17206e347422c54c81b905 Mon Sep 17 00:00:00 2001
+From: Takeshi KOMIYA <i.tkomiya@gmail.com>
+Date: Mon, 23 Nov 2020 16:57:45 +0900
+Subject: [PATCH 4/5] Update CHANGES
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-authored-by: François Freitag <mail@franek.fr>
+---
+ CHANGES | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CHANGES b/CHANGES
+index 2c13d8f6f34..936a0657507 100644
+--- a/CHANGES
++++ b/CHANGES
+@@ -54,7 +54,7 @@ Bugs fixed
+   set to "description"
+ * #8419: html search: Do not load ``language_data.js`` in non-search pages
+ * #8454: graphviz: The layout option for graph and digraph directives don't work
+-* #8131: linkcheck: Too Many Redirects on HEAD request is treated as broken
++* #8131: linkcheck: Use GET when HEAD requests cause Too Many Redirects, to accommodate infinite redirect loops on HEAD
+ * #8437: Makefile: ``make clean`` with empty BUILDDIR is dangerous
+ 
+ Testing
+
+From bffa44670ec26a43d426a92b151ca1d02ee580f8 Mon Sep 17 00:00:00 2001
+From: Takeshi KOMIYA <i.tkomiya@gmail.com>
+Date: Mon, 23 Nov 2020 17:00:48 +0900
+Subject: [PATCH 5/5] CHANGES: Fix line length
+
+---
+ CHANGES | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/CHANGES b/CHANGES
+index 936a0657507..0ab7ca4621f 100644
+--- a/CHANGES
++++ b/CHANGES
+@@ -54,7 +54,8 @@ Bugs fixed
+   set to "description"
+ * #8419: html search: Do not load ``language_data.js`` in non-search pages
+ * #8454: graphviz: The layout option for graph and digraph directives don't work
+-* #8131: linkcheck: Use GET when HEAD requests cause Too Many Redirects, to accommodate infinite redirect loops on HEAD
++* #8131: linkcheck: Use GET when HEAD requests cause Too Many Redirects, to
++  accommodate infinite redirect loops on HEAD
+ * #8437: Makefile: ``make clean`` with empty BUILDDIR is dangerous
+ 
+ Testing

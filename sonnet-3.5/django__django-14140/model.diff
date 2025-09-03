@@ -1,0 +1,72 @@
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index ae0f886107..14b452f065 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -87,11 +87,14 @@ class Q(tree.Node):
+         args, kwargs = (), {}
+         if len(self.children) == 1 and not isinstance(self.children[0], Q):
+             child = self.children[0]
+-            kwargs = {child[0]: child[1]}
++            if isinstance(child, tuple) and len(child) == 2:
++                kwargs = {child[0]: child[1]}
++            else:
++                args = (child,)
+         else:
+             args = tuple(self.children)
+-            if self.connector != self.default:
+-                kwargs = {'_connector': self.connector}
++        if self.connector != self.default:
++            kwargs['_connector'] = self.connector
+         if self.negated:
+             kwargs['_negated'] = True
+         return path, args, kwargs
+diff --git a/test_q_deconstruct.py b/test_q_deconstruct.py
+new file mode 100644
+index 0000000000..f4566bda69
+--- /dev/null
++++ b/test_q_deconstruct.py
+@@ -0,0 +1,44 @@
++import os
++import django
++from django.conf import settings
++from django.db.models import Q, Exists
++from django.contrib.auth import get_user_model
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++        ],
++    )
++    django.setup()
++
++def test_q_deconstruct():
++    # Test case 1: Single key-value pair
++    q1 = Q(x=1)
++    path, args, kwargs = q1.deconstruct()
++    assert kwargs == {'x': 1}, f"Expected {{'x': 1}}, got {kwargs}"
++
++    # Test case 2: Multiple key-value pairs
++    q2 = Q(x=1, y=2)
++    path, args, kwargs = q2.deconstruct()
++    assert args == (('x', 1), ('y', 2)), f"Expected (('x', 1), ('y', 2)), got {args}"
++
++    # Test case 3: Non-subscriptable object (Exists)
++    User = get_user_model()
++    exists_condition = Exists(User.objects.filter(username='jim'))
++    q3 = Q(exists_condition)
++    path, args, kwargs = q3.deconstruct()
++    assert args == (exists_condition,), f"Expected ({exists_condition},), got {args}"
++
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_q_deconstruct()

@@ -1,0 +1,14 @@
+diff --git a/sympy/utilities/lambdify.py b/sympy/utilities/lambdify.py
+index f71bea25f5..6e7c541671 100644
+--- a/sympy/utilities/lambdify.py
++++ b/sympy/utilities/lambdify.py
+@@ -162,6 +162,9 @@ def _import(module, reload="False"):
+ # linecache.
+ _lambdify_generated_counter = 1
+ 
++def _mpmath_rational(p, q):
++    from mpmath import mpf
++    return mpf(p) / mpf(q)
+ @doctest_depends_on(modules=('numpy'))
+ def lambdify(args, expr, modules=None, printer=None, use_imps=True,
+              dummify=False):

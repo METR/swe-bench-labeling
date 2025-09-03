@@ -1,0 +1,165 @@
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 5f9fe73c5c..6ddad48022 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -340,7 +340,7 @@ def real_root(arg, n=None, evaluate=None):
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+         if not args:
+-            raise ValueError("The Max/Min functions must have arguments.")
++            return cls.identity
+ 
+         args = (sympify(arg) for arg in args)
+ 
+@@ -646,6 +646,9 @@ class Max(MinMaxBase, Application):
+     """
+     Return, if possible, the maximum value of the list.
+ 
++    When called with no arguments, returns negative infinity (-oo), 
++    which is the identity element for maximum over extended real numbers.
++
+     When number of arguments is equal one, then
+     return this argument.
+ 
+@@ -691,6 +694,8 @@ class Max(MinMaxBase, Application):
+     Max(8, p)
+     >>> Max (1, x, oo)
+     oo
++    >>> Max()
++    -oo
+ 
+     * Algorithm
+ 
+@@ -765,6 +770,10 @@ def _eval_is_negative(self):
+ class Min(MinMaxBase, Application):
+     """
+     Return, if possible, the minimum value of the list.
++    
++    When called with no arguments, returns positive infinity (oo), 
++    which is the identity element for minimum over extended real numbers.
++    
+     It is named ``Min`` and not ``min`` to avoid conflicts
+     with the built-in function ``min``.
+ 
+@@ -786,6 +795,8 @@ class Min(MinMaxBase, Application):
+     Min(x, y)
+     >>> Min(n, 8, p, -7, p, oo)     #doctest: +SKIP
+     Min(n, -7)
++    >>> Min()
++    oo
+ 
+     See Also
+     ========
+diff --git a/sympy/functions/elementary/tests/test_miscellaneous.py b/sympy/functions/elementary/tests/test_miscellaneous.py
+index 00dc946005..9181c64bce 100644
+--- a/sympy/functions/elementary/tests/test_miscellaneous.py
++++ b/sympy/functions/elementary/tests/test_miscellaneous.py
+@@ -85,7 +85,7 @@ def test_Min():
+     assert Min(p, p_).func is Min
+ 
+     # lists
+-    raises(ValueError, lambda: Min())
++    assert Min() == oo
+     assert Min(x, y) == Min(y, x)
+     assert Min(x, y, z) == Min(z, y, x)
+     assert Min(x, Min(y, z)) == Min(z, y, x)
+@@ -156,7 +156,7 @@ def test_Max():
+ 
+     # lists
+ 
+-    raises(ValueError, lambda: Max())
++    assert Max() == -oo
+     assert Max(x, y) == Max(y, x)
+     assert Max(x, y, z) == Max(z, y, x)
+     assert Max(x, Max(y, z)) == Max(z, y, x)
+diff --git a/test_minmax_edge_cases.py b/test_minmax_edge_cases.py
+new file mode 100644
+index 0000000000..9b11c139a7
+--- /dev/null
++++ b/test_minmax_edge_cases.py
+@@ -0,0 +1,47 @@
++#!/usr/bin/env python
++"""Test edge cases for Min/Max changes"""
++
++from sympy import Min, Max, oo, S, Symbol
++
++# Test that Min() returns oo and Max() returns -oo
++print("Test 1: Empty arguments")
++print(f"Min() = {Min()}, should be oo")
++print(f"Max() = {Max()}, should be -oo")
++assert Min() == oo
++assert Max() == -oo
++
++# Test that Min/Max with identity elements work correctly
++print("\nTest 2: Identity elements")
++print(f"Min(oo) = {Min(oo)}")
++print(f"Max(-oo) = {Max(-oo)}")
++assert Min(oo) == oo
++assert Max(-oo) == -oo
++
++# Test Min/Max with mix of finite and infinite values
++print("\nTest 3: Mix of finite and infinite values")
++print(f"Min(1, 2, oo) = {Min(1, 2, oo)}")
++print(f"Max(1, 2, -oo) = {Max(1, 2, -oo)}")
++assert Min(1, 2, oo) == 1
++assert Max(1, 2, -oo) == 2
++
++# Test Min/Max with symbolic arguments
++print("\nTest 4: Symbolic arguments")
++x = Symbol('x')
++print(f"Min(x, oo) = {Min(x, oo)}")
++print(f"Max(x, -oo) = {Max(x, -oo)}")
++assert Min(x, oo) == x
++assert Max(x, -oo) == x
++
++# Test Min/Max still work correctly for normal cases
++print("\nTest 5: Normal cases")
++print(f"Min(3, 1, 4, 1, 5, 9) = {Min(3, 1, 4, 1, 5, 9)}")
++print(f"Max(3, 1, 4, 1, 5, 9) = {Max(3, 1, 4, 1, 5, 9)}")
++assert Min(3, 1, 4, 1, 5, 9) == 1
++assert Max(3, 1, 4, 1, 5, 9) == 9
++
++# Test mathematical consistency: Min() >= Max() should be True when both are empty
++print("\nTest 6: Mathematical consistency")
++print(f"Min() >= Max() = {Min() >= Max()}, should be True (oo >= -oo)")
++assert Min() >= Max()
++
++print("\nAll tests passed!")
+diff --git a/test_minmax_empty.py b/test_minmax_empty.py
+new file mode 100644
+index 0000000000..551dbfa4a0
+--- /dev/null
++++ b/test_minmax_empty.py
+@@ -0,0 +1,32 @@
++#!/usr/bin/env python
++"""Test script to verify Min() and Max() with no arguments"""
++
++from sympy import Min, Max, oo, S
++
++# Test Min with no arguments
++try:
++    result = Min()
++    print(f"Min() = {result}")
++    print(f"Min() == oo: {result == oo}")
++    print(f"Min() is S.Infinity: {result is S.Infinity}")
++except Exception as e:
++    print(f"Min() raised exception: {type(e).__name__}: {e}")
++
++print()
++
++# Test Max with no arguments  
++try:
++    result = Max()
++    print(f"Max() = {result}")
++    print(f"Max() == -oo: {result == -oo}")
++    print(f"Max() is S.NegativeInfinity: {result is S.NegativeInfinity}")
++except Exception as e:
++    print(f"Max() raised exception: {type(e).__name__}: {e}")
++
++print()
++
++# Test that Min and Max still work with arguments
++print(f"Min(1, 2, 3) = {Min(1, 2, 3)}")
++print(f"Max(1, 2, 3) = {Max(1, 2, 3)}")
++print(f"Min(5) = {Min(5)}")
++print(f"Max(5) = {Max(5)}")

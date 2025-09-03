@@ -1,0 +1,90 @@
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index 79d7e4f46..a4d6d455c 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -78,7 +78,7 @@ ModuleEntry = NamedTuple('ModuleEntry', [('docname', str),
+                                          ('deprecated', bool)])
+ 
+ 
+-def type_to_xref(text: str, env: BuildEnvironment = None) -> addnodes.pending_xref:
++def type_to_xref(text: str, env: BuildEnvironment = None, current_module: str = None) -> addnodes.pending_xref:
+     """Convert a type string to a cross reference node."""
+     if text == 'None':
+         reftype = 'obj'
+@@ -91,8 +91,14 @@ def type_to_xref(text: str, env: BuildEnvironment = None) -> addnodes.pending_xr
+     else:
+         kwargs = {}
+ 
++    # Qualify unqualified names with the current module
++    if current_module and '.' not in text:
++        qualified_text = f"{current_module}.{text}"
++    else:
++        qualified_text = text
++
+     return pending_xref('', nodes.Text(text),
+-                        refdomain='py', reftype=reftype, reftarget=text, **kwargs)
++                        refdomain='py', reftype=reftype, reftarget=qualified_text, **kwargs)
+ 
+ 
+ def _parse_annotation(annotation: str, env: BuildEnvironment = None) -> List[Node]:
+@@ -159,10 +165,10 @@ def _parse_annotation(annotation: str, env: BuildEnvironment = None) -> List[Nod
+         result = unparse(tree)
+         for i, node in enumerate(result):
+             if isinstance(node, nodes.Text):
+-                result[i] = type_to_xref(str(node), env)
++                result[i] = type_to_xref(str(node), env, env.ref_context.get('py:module'))
+         return result
+     except SyntaxError:
+-        return [type_to_xref(annotation, env)]
++        return [type_to_xref(annotation, env, env.ref_context.get('py:module'))]
+ 
+ 
+ def _parse_arglist(arglist: str, env: BuildEnvironment = None) -> addnodes.desc_parameterlist:
+diff --git a/tox.ini b/tox.ini
+index dbb705a3a..9f4fc3a32 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

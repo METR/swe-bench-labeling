@@ -1,0 +1,38 @@
+diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
+index bfec61de64..4cd9be52f8 100644
+--- a/sympy/polys/polytools.py
++++ b/sympy/polys/polytools.py
+@@ -4394,9 +4394,16 @@ def _parallel_poly_from_expr(exprs, opt):
+     if not opt.gens:
+         raise PolificationFailed(opt, origs, exprs, True)
+ 
++    # Handle Piecewise generators by converting them to their underlying expressions
++    # This allows for proper substitution and evaluation of Piecewise functions in polynomials
++    new_gens = []
+     for k in opt.gens:
+         if isinstance(k, Piecewise):
+-            raise PolynomialError("Piecewise generators do not make sense")
++            # Convert Piecewise to its underlying expression
++            new_gens.append(k.as_expr())
++        else:
++            new_gens.append(k)
++    opt.gens = tuple(new_gens)
+ 
+     coeffs_list, lengths = [], []
+ 
+diff --git a/sympy/polys/tests/test_polytools.py b/sympy/polys/tests/test_polytools.py
+index 8f7e464148..952d4b254a 100644
+--- a/sympy/polys/tests/test_polytools.py
++++ b/sympy/polys/tests/test_polytools.py
+@@ -3477,4 +3477,11 @@ def test_issue_20985():
+     from sympy import symbols
+     w, R = symbols('w R')
+     poly = Poly(1.0 + I*w/R, w, 1/R)
++
++def test_piecewise_poly():
++    from sympy import Piecewise
++    p = Poly(Piecewise((x, x > 0), (x**2, True)))
++    assert p.as_expr() == Piecewise((x, x > 0), (x**2, True))
++    assert p.subs({x: 2}) == 2
++    assert p.subs({x: -2}) == 4
+     assert poly.degree() == S(1)

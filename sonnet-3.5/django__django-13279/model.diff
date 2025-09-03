@@ -1,0 +1,34 @@
+diff --git a/django/contrib/sessions/backends/base.py b/django/contrib/sessions/backends/base.py
+index b5453160a5..a2d3ba5215 100644
+--- a/django/contrib/sessions/backends/base.py
++++ b/django/contrib/sessions/backends/base.py
+@@ -108,12 +108,25 @@ class SessionBase:
+ 
+     def encode(self, session_dict):
+         "Return the given session dictionary serialized and encoded as a string."
+-        return signing.dumps(
+-            session_dict, salt=self.key_salt, serializer=self.serializer,
+-            compress=True,
+-        )
++        if settings.DEFAULT_HASHING_ALGORITHM == 'sha1':
++            # Use legacy encoding
++            serialized = self.serializer().dumps(session_dict)
++            hash = self._hash(serialized)
++            return base64.b64encode(hash.encode() + b':' + serialized).decode('ascii')
++        else:
++            # Use new encoding
++            return signing.dumps(
++                session_dict, salt=self.key_salt, serializer=self.serializer,
++                compress=True,
++            )
+ 
+     def decode(self, session_data):
++        """
++        Decode the given session data.
++        This method attempts to decode using the new format first.
++        If that fails, it falls back to the legacy format.
++        This allows for backward compatibility during the transition to Django 3.1.
++        """
+         try:
+             return signing.loads(session_data, salt=self.key_salt, serializer=self.serializer)
+         # RemovedInDjango40Warning: when the deprecation ends, handle here

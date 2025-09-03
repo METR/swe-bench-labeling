@@ -1,0 +1,171 @@
+diff --git a/run_test_coth.py b/run_test_coth.py
+new file mode 100644
+index 0000000000..4320a4cd2c
+--- /dev/null
++++ b/run_test_coth.py
+@@ -0,0 +1,37 @@
++from sympy import *
++from sympy.functions.elementary.hyperbolic import coth
++from sympy.core.singleton import S
++from sympy.core.symbol import Symbol
++from sympy.core.numbers import I, pi, zoo, nan, oo, Rational, E
++from sympy.functions.elementary.trigonometric import cot, cos, sin, tan
++from sympy.functions.elementary.exponential import exp
++from sympy.functions.elementary.miscellaneous import sqrt
++
++# Running tests from test_coth
++x = Symbol('x')
++k = Symbol('k', integer=True)
++
++# Basic tests
++assert coth(nan) == nan
++assert coth(zoo) == nan
++assert coth(oo) == 1
++assert coth(-oo) == -1
++assert coth(0) == zoo
++assert coth(-x) == -coth(x)
++
++# Tests with imaginary unit
++assert coth(pi*I) == -I*cot(pi)
++assert coth(-pi*I) == I*cot(pi)
++assert coth(pi*I/2) == 0
++assert coth(-pi*I/2) == 0
++
++# Test the specific case from the issue
++x = Symbol('x')
++e = coth(log(tan(x)))
++try:
++    result = e.subs(x, 2)
++    print(f"✓ coth(log(tan(2))) = {result}")
++except Exception as ex:
++    print(f"✗ Error evaluating coth(log(tan(2))): {ex}")
++    
++print("All basic coth tests passed!")
+diff --git a/sympy/functions/elementary/hyperbolic.py b/sympy/functions/elementary/hyperbolic.py
+index 2a4555d919..5fbb73c786 100644
+--- a/sympy/functions/elementary/hyperbolic.py
++++ b/sympy/functions/elementary/hyperbolic.py
+@@ -587,7 +587,7 @@ def eval(cls, arg):
+                 x, m = _peeloff_ipi(arg)
+                 if m:
+                     cothm = coth(m)
+-                    if cotm is S.ComplexInfinity:
++                    if cothm is S.ComplexInfinity:
+                         return coth(x)
+                     else: # cothm == 0
+                         return tanh(x)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..702b48aa33
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,41 @@
++from sympy import *
++from sympy.abc import x, y, z
++
++# Test various coth expressions
++test_cases = [
++    coth(0),  # Should be zoo
++    coth(x + y),  # Add expression
++    coth(x*y),  # Mul expression
++    coth(log(x)),  # Log expression
++    coth(exp(x)),  # Exp expression
++    coth(sin(x)),  # Trig expression
++    coth(x + I*pi),  # Complex add with I*pi
++    coth(x + 2*I*pi),  # Complex add with 2*I*pi
++    coth(asinh(x)),  # With inverse hyperbolic
++    coth(acosh(x)),  # With inverse hyperbolic
++    coth(atanh(x)),  # With inverse hyperbolic
++    coth(acoth(x)),  # With inverse hyperbolic
++]
++
++print("Testing various coth expressions:")
++for i, expr in enumerate(test_cases):
++    try:
++        # Just evaluate to make sure no errors
++        str(expr)  # Force evaluation
++        print(f"✓ Test {i+1}: {expr}")
++    except Exception as ex:
++        print(f"✗ Test {i+1}: {expr} - ERROR: {ex}")
++
++# Test the specific problematic case with different values
++print("\nTesting coth(log(tan(x))) with various x values:")
++e = coth(log(tan(x)))
++test_values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
++
++for val in test_values:
++    try:
++        result = e.subs(x, val)
++        print(f"✓ x={val}: {result}")
++    except Exception as ex:
++        print(f"✗ x={val}: ERROR - {type(ex).__name__}: {ex}")
++
++print("\nAll tests completed!")
+diff --git a/test_coth_issue.py b/test_coth_issue.py
+new file mode 100644
+index 0000000000..86c43e28ed
+--- /dev/null
++++ b/test_coth_issue.py
+@@ -0,0 +1,15 @@
++from sympy import *
++
++x = Symbol('x')
++e = coth(log(tan(x)))
++
++# Test the problematic values
++test_values = [2, 3, 5, 6, 8, 9, 11, 12, 13, 15, 18]
++
++print("Testing coth(log(tan(x))) for various values:")
++for val in test_values:
++    try:
++        result = e.subs(x, val)
++        print(f"x={val}: {result}")
++    except Exception as ex:
++        print(f"x={val}: ERROR - {type(ex).__name__}: {ex}")
+diff --git a/test_peeloff.py b/test_peeloff.py
+new file mode 100644
+index 0000000000..6ff5d385bf
+--- /dev/null
++++ b/test_peeloff.py
+@@ -0,0 +1,31 @@
++from sympy import *
++from sympy.functions.elementary.hyperbolic import _peeloff_ipi
++
++# Test that the coth function properly handles expressions with I*pi components
++x = Symbol('x')
++
++# Test expressions that will trigger the _peeloff_ipi code path
++test_exprs = [
++    x + I*pi/2,  # Should have m = I*pi/2
++    x + I*pi,    # Should have m = I*pi
++    x + 3*I*pi/2, # Should have m = 3*I*pi/2
++    x + 2*I*pi,   # Should have m = 2*I*pi
++]
++
++print("Testing coth with expressions containing I*pi:")
++for expr in test_exprs:
++    try:
++        x_part, m_part = _peeloff_ipi(expr)
++        result = coth(expr)
++        print(f"✓ coth({expr}) = {result}")
++        print(f"  Peeled off: x={x_part}, m={m_part}")
++    except Exception as ex:
++        print(f"✗ coth({expr}) - ERROR: {ex}")
++        
++# Test the original issue expressions more directly
++print("\nTesting the original issue case:")
++try:
++    result = coth(log(tan(2)))
++    print(f"✓ coth(log(tan(2))) = {result}")
++except Exception as ex:
++    print(f"✗ coth(log(tan(2))) - ERROR: {ex}")
+diff --git a/test_specific_case.py b/test_specific_case.py
+new file mode 100644
+index 0000000000..f405c055ed
+--- /dev/null
++++ b/test_specific_case.py
+@@ -0,0 +1,4 @@
++from sympy import *
++x = Symbol('x')
++e = coth(log(tan(x)))
++print(e.subs(x, 2))

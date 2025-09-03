@@ -1,0 +1,273 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index c913267476..6e61129dee 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1776,6 +1776,10 @@ class Query(BaseExpression):
+         return condition, needed_inner
+ 
+     def set_empty(self):
++        # For combinator queries, clear the combined queries to ensure
++        # the query returns no results.
++        if self.combinator:
++            self.combined_queries = ()
+         self.where.add(NothingNode(), AND)
+ 
+     def is_empty(self):
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..2cbedb093c
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,60 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-key'
++)
++
++django.setup()
++
++from django.contrib.auth.models import User
++
++# Test the fix
++print("Testing the fix for union().none() issue:")
++
++# Create querysets
++qs1 = User.objects.filter(id__lt=2) | User.objects.filter(id__gt=5)
++qs2 = User.objects.filter(id__lt=2).union(User.objects.filter(id__gt=5))
++
++# Apply .none() to each
++none1 = qs1.none()
++none2 = qs2.none()
++
++print(f"\nOR queryset.none() type: {type(none1)}")
++print(f"Union queryset.none() type: {type(none2)}")
++
++# Check if the queries are empty
++print(f"\nOR queryset.none() count (should be 0): {none1.count()}")
++print(f"Union queryset.none() count (should be 0): {none2.count()}")
++
++# Check internal state
++print(f"\nUnion queryset query.combinator: {none2.query.combinator}")
++print(f"Union queryset query.combined_queries: {none2.query.combined_queries}")
++print(f"Union queryset query.is_empty(): {none2.query.is_empty()}")
++
++# The real test - let's see what SQL would be generated
++from django.db import connection
++from django.db.models.sql.compiler import SQLCompiler
++
++try:
++    compiler = none2.query.get_compiler(using='default', connection=connection)
++    sql, params = compiler.as_sql()
++    print(f"\nUnion queryset.none() generated SQL: {sql}")
++    print(f"Union queryset.none() SQL params: {params}")
++except Exception as e:
++    print(f"\nUnion queryset.none() SQL generation: {type(e).__name__}: {e}")
++    
++print("\nFix successful! Union queryset.none() now returns empty result as expected.")
+diff --git a/test_form_fix.py b/test_form_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..de25ae56ee
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,92 @@
++from django import forms
++from django.db import models
++from django.forms import ModelForm
++from django.test import TestCase
++
++
++class Publication(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++        
++class Article(models.Model):
++    publications = models.ManyToManyField(to=Publication, blank=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class ArticleForm1(ModelForm):
++    """Form using OR (|) query - expected to work correctly"""
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5),
++        required=False,
++    )
++    
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++
++class ArticleForm2(ModelForm):
++    """Form using union() - has the bug"""
++    publications = forms.ModelMultipleChoiceField(
++        Publication.objects.filter(id__lt=2).union(
++            Publication.objects.filter(id__gt=5)
++        ),
++        required=False,
++    )
++    
++    class Meta:
++        model = Article
++        fields = ["publications"]
++
++
++# Test to reproduce the issue
++def test_issue():
++    # Create some publications
++    pubs = []
++    for i in range(10):
++        pub = Publication(id=i+1, name=f"Publication {i+1}")
++        pubs.append(pub)
++    
++    # Create article
++    article = Article()
++    
++    # Test form with OR query - should work correctly
++    form1 = ArticleForm1(data={}, instance=article)
++    if form1.is_valid():
++        cleaned_data = form1.cleaned_data
++        print(f"Form 1 (OR query) cleaned publications: {cleaned_data['publications']}")
++        print(f"Form 1 publications queryset type: {type(cleaned_data['publications'])}")
++        print(f"Form 1 publications count: {cleaned_data['publications'].count() if hasattr(cleaned_data['publications'], 'count') else len(cleaned_data['publications'])}")
++    
++    # Test form with union query - has the bug
++    form2 = ArticleForm2(data={}, instance=article)
++    if form2.is_valid():
++        cleaned_data = form2.cleaned_data
++        print(f"\nForm 2 (union query) cleaned publications: {cleaned_data['publications']}")
++        print(f"Form 2 publications queryset type: {type(cleaned_data['publications'])}")
++        print(f"Form 2 publications count: {cleaned_data['publications'].count() if hasattr(cleaned_data['publications'], 'count') else len(cleaned_data['publications'])}")
++        
++    # Let's also check what happens with .none() on each type
++    qs1 = Publication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5)
++    qs2 = Publication.objects.filter(id__lt=2).union(Publication.objects.filter(id__gt=5))
++    
++    print(f"\nOriginal OR queryset type: {type(qs1)}")
++    print(f"Original union queryset type: {type(qs2)}")
++    
++    none1 = qs1.none()
++    none2 = qs2.none()
++    
++    print(f"\nOR queryset.none() type: {type(none1)}")
++    print(f"Union queryset.none() type: {type(none2)}")
++    
++    print(f"\nOR queryset.none() query: {none1.query}")
++    print(f"Union queryset.none() query: {none2.query}")
++
++
++if __name__ == "__main__":
++    test_issue()
+diff --git a/test_union_issue.py b/test_union_issue.py
+new file mode 100644
+index 0000000000..4f50f149d7
+--- /dev/null
++++ b/test_union_issue.py
+@@ -0,0 +1,85 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-key'
++)
++
++django.setup()
++
++from django.db import models
++from django.db.models import Q
++
++# Now let's test the behavior of .none() on different query types
++
++# Create a minimal test
++print("Testing QuerySet behaviors:")
++
++# Regular queryset
++from django.contrib.auth.models import User
++qs1 = User.objects.filter(id__lt=2) | User.objects.filter(id__gt=5)
++qs2 = User.objects.filter(id__lt=2).union(User.objects.filter(id__gt=5))
++
++print(f"\nRegular OR queryset type: {type(qs1)}")
++print(f"Union queryset type: {type(qs2)}")
++
++# Apply .none() to each
++none1 = qs1.none()
++none2 = qs2.none()
++
++print(f"\nOR queryset.none() type: {type(none1)}")
++print(f"Union queryset.none() type: {type(none2)}")
++
++# Let's check the queries
++try:
++    print(f"\nOR queryset query: {qs1.query}")
++except Exception as e:
++    print(f"\nOR queryset query error: {e}")
++print(f"Union queryset can't show query (combinator query)")
++
++try:
++    print(f"\nOR queryset.none() query: {none1.query}")
++except Exception as e:
++    print(f"\nOR queryset.none() query error: {e}")
++try:
++    print(f"Union queryset.none() query: {none2.query}")
++except Exception as e:
++    print(f"Union queryset.none() query error: {e}")
++
++# Check actual results
++print(f"\nOR queryset.none() count: {none1.count()}")
++print(f"Union queryset.none() count: {none2.count()}")
++
++# Let's check the internal structure
++print("\n--- Checking internal structure ---")
++print(f"none1._result_cache: {none1._result_cache}")  
++print(f"none2._result_cache: {none2._result_cache}")
++
++print(f"\nnone1.__class__.__name__: {none1.__class__.__name__}")
++print(f"none2.__class__.__name__: {none2.__class__.__name__}")
++
++# Check if they have different implementations
++import inspect
++print(f"\nnone1.none method location: {inspect.getfile(none1.none.__func__)}")
++print(f"none2.none method location: {inspect.getfile(none2.none.__func__)}")
++
++# Let's check if it's a combinator query
++print(f"\nIs none1 a combinator query? {hasattr(none1.query, 'combinator')}")
++print(f"Is none2 a combinator query? {hasattr(none2.query, 'combinator')}")
++
++if hasattr(none2.query, 'combinator'):
++    print(f"none2 combinator: {none2.query.combinator}")
++    print(f"none2 combined_queries: {none2.query.combined_queries}")

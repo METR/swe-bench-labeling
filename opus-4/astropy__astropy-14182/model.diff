@@ -1,0 +1,245 @@
+diff --git a/astropy/io/ascii/rst.py b/astropy/io/ascii/rst.py
+index abdeba8efb..673bd343b0 100644
+--- a/astropy/io/ascii/rst.py
++++ b/astropy/io/ascii/rst.py
+@@ -57,10 +57,31 @@ class RST(FixedWidth):
+     data_class = SimpleRSTData
+     header_class = SimpleRSTHeader
+ 
+-    def __init__(self):
+-        super().__init__(delimiter_pad=None, bookend=False)
++    def __init__(self, header_rows=None):
++        super().__init__(delimiter_pad=None, bookend=False, header_rows=header_rows)
++        # Adjust data start line for RST format: separator + header rows + separator
++        if header_rows is None:
++            header_rows = ['name']
++        self.data.start_line = len(header_rows) + 2  # +2 for top and middle separators
+ 
+     def write(self, lines):
+-        lines = super().write(lines)
+-        lines = [lines[1]] + lines + [lines[1]]
++        lines_orig = super().write(lines)
++        
++        # Count header rows
++        header_rows = getattr(self.data, 'header_rows', ['name'])
++        n_header_rows = len(header_rows)
++        
++        # The position line contains the separator, which is after the header rows
++        # Find where the position line is (it contains the position_char)
++        position_line_index = n_header_rows
++        separator_line = lines_orig[position_line_index]
++        
++        # Reconstruct the lines in RST format:
++        # separator, header rows, separator, data rows, separator
++        lines = [separator_line]  # Top separator
++        lines.extend(lines_orig[:n_header_rows])  # Header rows
++        lines.append(separator_line)  # Middle separator
++        lines.extend(lines_orig[n_header_rows + 1:])  # Data rows (skip the position line)
++        lines.append(separator_line)  # Bottom separator
++        
+         return lines
+diff --git a/debug_rst.py b/debug_rst.py
+new file mode 100644
+index 0000000000..3e61087a4a
+--- /dev/null
++++ b/debug_rst.py
+@@ -0,0 +1,26 @@
++#!/usr/bin/env python
++"""Debug script to understand RST writer behavior."""
++
++from astropy.table import QTable
++import astropy.units as u
++from astropy.io import ascii
++from io import StringIO
++
++# Create a test table
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++# Test 1: Get lines with no header_rows
++print("=== Test 1: No header_rows ===")
++output = StringIO()
++tbl.write(output, format="ascii.rst")
++lines = output.getvalue().strip().split('\n')
++for i, line in enumerate(lines):
++    print(f"{i}: '{line}'")
++
++# Test 2: Get lines with header_rows
++print("\n=== Test 2: With header_rows ===")
++output = StringIO()
++tbl.write(output, format="ascii.rst", header_rows=["name", "unit"])
++lines = output.getvalue().strip().split('\n')
++for i, line in enumerate(lines):
++    print(f"{i}: '{line}'")
+diff --git a/pyproject.toml b/pyproject.toml
+index 0d1ee66ab9..ec234472e2 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/test_rst_header_rows.py b/test_rst_header_rows.py
+new file mode 100644
+index 0000000000..73d45c3604
+--- /dev/null
++++ b/test_rst_header_rows.py
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python
++"""Test script to verify RST header_rows functionality."""
++
++from astropy.table import QTable
++import astropy.units as u
++import sys
++
++# Create a test table
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("Testing basic RST output:")
++tbl.write(sys.stdout, format="ascii.rst")
++print()
++
++print("\nTesting fixed_width with header_rows:")
++tbl.write(sys.stdout, format="ascii.fixed_width", header_rows=["name", "unit"])
++print()
++
++print("\nTesting RST with header_rows (before fix):")
++try:
++    tbl.write(sys.stdout, format="ascii.rst", header_rows=["name", "unit"])
++except TypeError as e:
++    print(f"Error: {e}")
+diff --git a/test_rst_header_rows2.py b/test_rst_header_rows2.py
+new file mode 100644
+index 0000000000..cd378042f4
+--- /dev/null
++++ b/test_rst_header_rows2.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++"""Test script to verify RST header_rows functionality."""
++
++from astropy.table import QTable
++import astropy.units as u
++import sys
++
++# Create a test table
++tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++
++print("Testing basic RST output:")
++tbl.write(sys.stdout, format="ascii.rst")
++print()
++
++print("\nTesting fixed_width with header_rows:")
++tbl.write(sys.stdout, format="ascii.fixed_width", header_rows=["name", "unit"])
++print()
++
++print("\nTesting RST with header_rows (after fix - initial):")
++tbl.write(sys.stdout, format="ascii.rst", header_rows=["name", "unit"])
++print()
++
++print("\nExpected RST output with header_rows would be:")
++print("===== ========")
++print(" wave response")
++print("   nm       ct")
++print("===== ========")
++print("350.0      0.7")
++print("950.0      1.2")
++print("===== ========")
+diff --git a/test_rst_header_rows_unit.py b/test_rst_header_rows_unit.py
+new file mode 100644
+index 0000000000..2929cd3a8a
+--- /dev/null
++++ b/test_rst_header_rows_unit.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++"""Unit test for RST header_rows functionality."""
++
++from io import StringIO
++from astropy.table import QTable
++import astropy.units as u
++from astropy.io import ascii
++
++
++def test_rst_write_with_header_rows():
++    """Test writing RST table with multiple header rows (name and unit)."""
++    # Create a test table with units
++    tbl = QTable({'wave': [350, 950]*u.nm, 'response': [0.7, 1.2]*u.count})
++    
++    # Write to string
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=["name", "unit"])
++    result = output.getvalue()
++    
++    # Expected output
++    expected = """===== ========
++ wave response
++   nm       ct
++===== ========
++350.0      0.7
++950.0      1.2
++===== ========
++"""
++    
++    assert result == expected, f"Expected:\n{expected}\nGot:\n{result}"
++    print("Test passed!")
++
++
++def test_rst_write_default_behavior():
++    """Test that default RST writing behavior is not affected."""
++    # Create a test table
++    tbl = QTable({'Col1': [1.2, 2.4], 'Col2': ['hello', 'world']})
++    
++    # Write to string
++    output = StringIO()
++    tbl.write(output, format="ascii.rst")
++    result = output.getvalue()
++    
++    # Expected output
++    expected = """==== =====
++Col1  Col2
++==== =====
++ 1.2 hello
++ 2.4 world
++==== =====
++"""
++    
++    assert result == expected, f"Expected:\n{expected}\nGot:\n{result}"
++    print("Default behavior test passed!")
++
++
++def test_rst_write_three_header_rows():
++    """Test writing RST table with three header rows."""
++    # For now, just test that it doesn't crash with three header rows
++    # The actual description functionality would need to be implemented separately
++    tbl = QTable({
++        'wave': [350, 950]*u.nm, 
++        'response': [0.7, 1.2]*u.count
++    })
++    
++    # Write to string with three header rows
++    output = StringIO()
++    tbl.write(output, format="ascii.rst", header_rows=["name", "unit", "format"])
++    result = output.getvalue()
++    
++    # Verify it has the right structure (3 header rows + 3 separator lines + 2 data rows)
++    lines = result.strip().split('\n')
++    assert len(lines) == 8, f"Expected 8 lines, got {len(lines)}"
++    assert lines[0] == lines[4] == lines[7], "Separator lines should be identical"
++    assert lines[0].startswith("====="), "Separator lines should contain '=' characters"
++    
++    print("Three header rows test passed!")
++
++
++if __name__ == "__main__":
++    test_rst_write_with_header_rows()
++    test_rst_write_default_behavior()
++    test_rst_write_three_header_rows()
++    print("\nAll tests passed!")
+diff --git a/test_rst_new.py b/test_rst_new.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_rst_new.py
+@@ -0,0 +1 @@
++

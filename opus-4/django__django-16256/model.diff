@@ -1,0 +1,454 @@
+diff --git a/django/db/models/fields/related_descriptors.py b/django/db/models/fields/related_descriptors.py
+index c5d87f647a..d8c7a91cf7 100644
+--- a/django/db/models/fields/related_descriptors.py
++++ b/django/db/models/fields/related_descriptors.py
+@@ -63,6 +63,8 @@ and two directions (forward and reverse) for a total of six combinations.
+    ``ReverseManyToManyDescriptor``, use ``ManyToManyDescriptor`` instead.
+ """
+ 
++from asgiref.sync import sync_to_async
++
+ from django.core.exceptions import FieldError
+ from django.db import (
+     DEFAULT_DB_ALIAS,
+@@ -793,6 +795,11 @@ def create_reverse_many_to_one_manager(superclass, rel):
+ 
+         create.alters_data = True
+ 
++        async def acreate(self, **kwargs):
++            return await sync_to_async(self.create)(**kwargs)
++
++        acreate.alters_data = True
++
+         def get_or_create(self, **kwargs):
+             self._check_fk_val()
+             kwargs[self.field.name] = self.instance
+@@ -801,6 +808,11 @@ def create_reverse_many_to_one_manager(superclass, rel):
+ 
+         get_or_create.alters_data = True
+ 
++        async def aget_or_create(self, **kwargs):
++            return await sync_to_async(self.get_or_create)(**kwargs)
++
++        aget_or_create.alters_data = True
++
+         def update_or_create(self, **kwargs):
+             self._check_fk_val()
+             kwargs[self.field.name] = self.instance
+@@ -809,6 +821,11 @@ def create_reverse_many_to_one_manager(superclass, rel):
+ 
+         update_or_create.alters_data = True
+ 
++        async def aupdate_or_create(self, **kwargs):
++            return await sync_to_async(self.update_or_create)(**kwargs)
++
++        aupdate_or_create.alters_data = True
++
+         # remove() and clear() are only provided if the ForeignKey can have a
+         # value of null.
+         if rel.field.null:
+@@ -1191,6 +1208,14 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
+ 
+         create.alters_data = True
+ 
++        async def acreate(self, *, through_defaults=None, **kwargs):
++            return await sync_to_async(self.create)(
++                through_defaults=through_defaults,
++                **kwargs
++            )
++
++        acreate.alters_data = True
++
+         def get_or_create(self, *, through_defaults=None, **kwargs):
+             db = router.db_for_write(self.instance.__class__, instance=self.instance)
+             obj, created = super(ManyRelatedManager, self.db_manager(db)).get_or_create(
+@@ -1204,6 +1229,14 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
+ 
+         get_or_create.alters_data = True
+ 
++        async def aget_or_create(self, *, through_defaults=None, **kwargs):
++            return await sync_to_async(self.get_or_create)(
++                through_defaults=through_defaults,
++                **kwargs
++            )
++
++        aget_or_create.alters_data = True
++
+         def update_or_create(self, *, through_defaults=None, **kwargs):
+             db = router.db_for_write(self.instance.__class__, instance=self.instance)
+             obj, created = super(
+@@ -1217,6 +1250,14 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
+ 
+         update_or_create.alters_data = True
+ 
++        async def aupdate_or_create(self, *, through_defaults=None, **kwargs):
++            return await sync_to_async(self.update_or_create)(
++                through_defaults=through_defaults,
++                **kwargs
++            )
++
++        aupdate_or_create.alters_data = True
++
+         def _get_target_ids(self, target_field_name, objs):
+             """
+             Return the set of ids of `objs` that the target field references.
+diff --git a/test_async_related_managers.py b/test_async_related_managers.py
+new file mode 100644
+index 0000000000..0ed70cc542
+--- /dev/null
++++ b/test_async_related_managers.py
+@@ -0,0 +1,151 @@
++import asyncio
++import django
++from django.db import models
++from django.test import TestCase
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++        ],
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++    django.setup()
++
++
++# Define test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        app_label = 'test_app'
++
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE, related_name='books')
++
++    class Meta:
++        app_label = 'test_app'
++
++
++class Tag(models.Model):
++    name = models.CharField(max_length=50)
++    books = models.ManyToManyField(Book, related_name='tags')
++
++    class Meta:
++        app_label = 'test_app'
++
++
++async def test_reverse_many_to_one_async_methods():
++    """Test async methods on reverse many-to-one related managers."""
++    print("Testing reverse many-to-one async methods...")
++    
++    # Create an author
++    author = await Author.objects.acreate(name="Test Author")
++    
++    # Test acreate on related manager
++    book1 = await author.books.acreate(title="Book 1")
++    print(f"Created book via acreate: {book1.title}")
++    assert book1.author_id == author.id
++    
++    # Test aget_or_create on related manager
++    book2, created = await author.books.aget_or_create(title="Book 2")
++    print(f"Created book via aget_or_create: {book2.title}, created={created}")
++    assert book2.author_id == author.id
++    assert created is True
++    
++    # Test aget_or_create when object already exists
++    book2_again, created = await author.books.aget_or_create(title="Book 2")
++    print(f"Got existing book via aget_or_create: {book2_again.title}, created={created}")
++    assert book2_again.id == book2.id
++    assert created is False
++    
++    # Test aupdate_or_create on related manager
++    book3, created = await author.books.aupdate_or_create(
++        title="Book 3",
++        defaults={"title": "Book 3 Updated"}
++    )
++    print(f"Created book via aupdate_or_create: {book3.title}, created={created}")
++    assert book3.author_id == author.id
++    assert created is True
++    
++    # Verify the books are correctly associated
++    book_count = await author.books.acount()
++    print(f"Total books for author: {book_count}")
++    assert book_count == 3
++
++
++async def test_many_to_many_async_methods():
++    """Test async methods on many-to-many related managers."""
++    print("\nTesting many-to-many async methods...")
++    
++    # Create a book
++    book = await Book.objects.acreate(title="Test Book", author_id=1)
++    
++    # Test acreate on many-to-many related manager
++    tag1 = await book.tags.acreate(name="Fiction")
++    print(f"Created tag via acreate: {tag1.name}")
++    
++    # Verify relationship was created
++    tag_count = await book.tags.acount()
++    assert tag_count == 1
++    
++    # Test aget_or_create on many-to-many related manager
++    tag2, created = await book.tags.aget_or_create(name="Science")
++    print(f"Created tag via aget_or_create: {tag2.name}, created={created}")
++    assert created is True
++    
++    # Test aget_or_create when object already exists
++    tag2_again, created = await book.tags.aget_or_create(name="Science")
++    print(f"Got existing tag via aget_or_create: {tag2_again.name}, created={created}")
++    assert tag2_again.id == tag2.id
++    assert created is False
++    
++    # Test aupdate_or_create on many-to-many related manager
++    tag3, created = await book.tags.aupdate_or_create(
++        name="Adventure",
++        defaults={"name": "Adventure Updated"}
++    )
++    print(f"Created tag via aupdate_or_create: {tag3.name}, created={created}")
++    assert created is True
++    
++    # Verify all tags are associated
++    tag_count = await book.tags.acount()
++    print(f"Total tags for book: {tag_count}")
++    assert tag_count == 3
++
++
++async def main():
++    # Create the database tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Author)
++        schema_editor.create_model(Book)
++        schema_editor.create_model(Tag)
++        # Create the through table for many-to-many
++        through_model = Tag.books.through
++        schema_editor.create_model(through_model)
++    
++    try:
++        await test_reverse_many_to_one_async_methods()
++        await test_many_to_many_async_methods()
++        print("\nAll tests passed!")
++    except Exception as e:
++        print(f"\nTest failed with error: {e}")
++        import traceback
++        traceback.print_exc()
++
++
++if __name__ == "__main__":
++    asyncio.run(main())
+diff --git a/test_related_async.py b/test_related_async.py
+new file mode 100644
+index 0000000000..d693adb70e
+--- /dev/null
++++ b/test_related_async.py
+@@ -0,0 +1,97 @@
++#!/usr/bin/env python
++"""Test that async methods are present on related managers."""
++import inspect
++import django
++from django.conf import settings
++
++# Minimal Django setup
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    SECRET_KEY='test'
++)
++django.setup()
++
++from django.db import models
++from django.db.models.fields.related_descriptors import (
++    create_reverse_many_to_one_manager,
++    create_forward_many_to_many_manager
++)
++
++print("Testing that async methods are properly added to related managers...\n")
++
++# Test RelatedManager (reverse many-to-one)
++print("1. Testing RelatedManager (reverse many-to-one):")
++
++# Create a dummy relationship
++class DummyRel:
++    def __init__(self):
++        self.field = type('field', (), {'name': 'test_field', 'null': False})()
++        self.related_model = type('Model', (models.Model,), {
++            '__module__': 'test', 
++            'Meta': type('Meta', (), {'app_label': 'test_app'})
++        })
++
++dummy_rel = DummyRel()
++RelatedManager = create_reverse_many_to_one_manager(models.Manager, dummy_rel)
++
++# Check if async methods exist
++async_methods = ['acreate', 'aget_or_create', 'aupdate_or_create']
++for method_name in async_methods:
++    if hasattr(RelatedManager, method_name):
++        method = getattr(RelatedManager, method_name)
++        if inspect.iscoroutinefunction(method):
++            print(f"  ✓ {method_name} exists and is async")
++        else:
++            print(f"  ✗ {method_name} exists but is not async")
++    else:
++        print(f"  ✗ {method_name} does not exist")
++
++# Test ManyRelatedManager (many-to-many)
++print("\n2. Testing ManyRelatedManager (many-to-many):")
++
++# Create a dummy many-to-many relationship
++class DummyM2MRel:
++    def __init__(self):
++        self.model = type('Model', (models.Model,), {
++            '__module__': 'test',
++            'Meta': type('Meta', (), {'app_label': 'test_app'})
++        })
++        self.related_model = type('RelatedModel', (models.Model,), {
++            '__module__': 'test',
++            'Meta': type('Meta', (), {'app_label': 'test_app'})
++        })
++        self.through = type('Through', (models.Model,), {
++            '__module__': 'test', 
++            'Meta': type('Meta', (), {'app_label': 'test_app'}),
++            '_meta': type('Meta', (), {'auto_created': True})()
++        })
++        self.field = type('field', (), {
++            'name': 'test_field',
++            'related_query_name': lambda: 'test_related',
++            'm2m_field_name': lambda: 'from_field', 
++            'm2m_reverse_field_name': lambda: 'to_field'
++        })()
++        self.symmetrical = False
++
++dummy_m2m_rel = DummyM2MRel()
++ManyRelatedManager = create_forward_many_to_many_manager(models.Manager, dummy_m2m_rel, reverse=False)
++
++# Check if async methods exist
++for method_name in async_methods:
++    if hasattr(ManyRelatedManager, method_name):
++        method = getattr(ManyRelatedManager, method_name)
++        if inspect.iscoroutinefunction(method):
++            print(f"  ✓ {method_name} exists and is async")
++        else:
++            print(f"  ✗ {method_name} exists but is not async")
++    else:
++        print(f"  ✗ {method_name} does not exist")
++
++print("\nAll tests completed!")
+diff --git a/test_simple_async.py b/test_simple_async.py
+new file mode 100644
+index 0000000000..c91809f220
+--- /dev/null
++++ b/test_simple_async.py
+@@ -0,0 +1,87 @@
++"""Test that the async methods work correctly on related managers."""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++from django.conf import settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-key'
++)
++django.setup()
++
++# Import Django components after setup
++from django.db import models, connection
++from django.test import TestCase
++import asyncio
++
++# Create test models
++class Parent(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Child(models.Model):
++    name = models.CharField(max_length=100)
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE, related_name='children')
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables synchronously
++with connection.schema_editor() as editor:
++    editor.create_model(Parent)
++    editor.create_model(Child)
++
++# Test the async methods
++async def test_async_methods():
++    print("Testing async methods on related managers...")
++    
++    # Create a parent
++    parent = await Parent.objects.acreate(name="Test Parent")
++    print(f"Created parent: {parent.name}")
++    
++    # Test that acreate exists and works on the related manager
++    print("\nTesting acreate on related manager...")
++    try:
++        child1 = await parent.children.acreate(name="Child 1")
++        print(f"✓ acreate worked! Created child: {child1.name}, parent_id: {child1.parent_id}")
++    except AttributeError as e:
++        print(f"✗ acreate failed with AttributeError: {e}")
++        
++    # Test aget_or_create
++    print("\nTesting aget_or_create on related manager...")
++    try:
++        child2, created = await parent.children.aget_or_create(name="Child 2")
++        print(f"✓ aget_or_create worked! Created child: {child2.name}, created={created}")
++    except AttributeError as e:
++        print(f"✗ aget_or_create failed with AttributeError: {e}")
++        
++    # Test aupdate_or_create  
++    print("\nTesting aupdate_or_create on related manager...")
++    try:
++        child3, created = await parent.children.aupdate_or_create(
++            name="Child 3",
++            defaults={"name": "Child 3"}
++        )
++        print(f"✓ aupdate_or_create worked! Created child: {child3.name}, created={created}")
++    except AttributeError as e:
++        print(f"✗ aupdate_or_create failed with AttributeError: {e}")
++
++# Run the test
++if __name__ == "__main__":
++    asyncio.run(test_async_methods())
+diff --git a/test_verify_async.py b/test_verify_async.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_verify_async.py
+@@ -0,0 +1 @@
++

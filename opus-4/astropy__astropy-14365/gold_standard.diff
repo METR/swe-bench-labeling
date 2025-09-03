@@ -1,0 +1,122 @@
+From 1b1194def2a10f44d61856ddd681538710885d7a Mon Sep 17 00:00:00 2001
+From: Jamie Kennea <jak51@psu.edu>
+Date: Mon, 6 Feb 2023 14:15:37 -0500
+Subject: [PATCH 1/3] Make ascii.qdp case insensitive
+
+---
+ astropy/io/ascii/qdp.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/astropy/io/ascii/qdp.py b/astropy/io/ascii/qdp.py
+index 83a4f004aa37..a3cb35972008 100644
+--- a/astropy/io/ascii/qdp.py
++++ b/astropy/io/ascii/qdp.py
+@@ -72,7 +72,7 @@ def _line_type(line, delimiter=None):
+     line = line.strip()
+     if not line:
+         return "comment"
+-    match = _line_type_re.match(line)
++    match = _line_type_re.match(line.upper())
+ 
+     if match is None:
+         raise ValueError(f"Unrecognized QDP line: {line}")
+
+From ba74c89a4ccb3d118059691aa5abb753f14317ac Mon Sep 17 00:00:00 2001
+From: Tom Aldcroft <taldcroft@gmail.com>
+Date: Tue, 18 Apr 2023 09:53:13 -0400
+Subject: [PATCH 2/3] Add a test and fix code to pass and add change log
+
+---
+ astropy/io/ascii/qdp.py                |  6 +++---
+ astropy/io/ascii/tests/test_qdp.py     | 15 ++++++++++++++-
+ docs/changes/io.ascii/14365.bugfix.rst |  2 ++
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+ create mode 100644 docs/changes/io.ascii/14365.bugfix.rst
+
+diff --git a/astropy/io/ascii/qdp.py b/astropy/io/ascii/qdp.py
+index a3cb35972008..5324dc81ccae 100644
+--- a/astropy/io/ascii/qdp.py
++++ b/astropy/io/ascii/qdp.py
+@@ -68,11 +68,11 @@ def _line_type(line, delimiter=None):
+     _new_re = rf"NO({sep}NO)+"
+     _data_re = rf"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)"
+     _type_re = rf"^\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\s*(\!(?P<comment>.*))?\s*$"
+-    _line_type_re = re.compile(_type_re)
++    _line_type_re = re.compile(_type_re, re.IGNORECASE)
+     line = line.strip()
+     if not line:
+         return "comment"
+-    match = _line_type_re.match(line.upper())
++    match = _line_type_re.match(line)
+ 
+     if match is None:
+         raise ValueError(f"Unrecognized QDP line: {line}")
+@@ -306,7 +306,7 @@ def _get_tables_from_qdp_file(qdp_file, input_colnames=None, delimiter=None):
+ 
+             values = []
+             for v in line.split(delimiter):
+-                if v == "NO":
++                if v.upper() == "NO":
+                     values.append(np.ma.masked)
+                 else:
+                     # Understand if number is int or float
+diff --git a/astropy/io/ascii/tests/test_qdp.py b/astropy/io/ascii/tests/test_qdp.py
+index ef24e6f6a375..487eda854f2c 100644
+--- a/astropy/io/ascii/tests/test_qdp.py
++++ b/astropy/io/ascii/tests/test_qdp.py
+@@ -43,7 +43,18 @@ def test_get_tables_from_qdp_file(tmp_path):
+     assert np.isclose(table2["MJD_nerr"][0], -2.37847222222222e-05)
+ 
+ 
+-def test_roundtrip(tmp_path):
++def lowercase_header(value):
++    """Make every non-comment line lower case."""
++    lines = []
++    for line in value.splitlines():
++        if not line.startswith("!"):
++            line = line.lower()
++        lines.append(line)
++    return "\n".join(lines)
++
++
++@pytest.mark.parametrize("lowercase", [False, True])
++def test_roundtrip(tmp_path, lowercase):
+     example_qdp = """
+     ! Swift/XRT hardness ratio of trigger: XXXX, name: BUBU X-2
+     ! Columns are as labelled
+@@ -70,6 +81,8 @@ def test_roundtrip(tmp_path):
+     53000.123456 2.37847222222222e-05    -2.37847222222222e-05   -0.292553       -0.374935
+     NO 1.14467592592593e-05    -1.14467592592593e-05   0.000000        NO
+     """
++    if lowercase:
++        example_qdp = lowercase_header(example_qdp)
+ 
+     path = str(tmp_path / "test.qdp")
+     path2 = str(tmp_path / "test2.qdp")
+diff --git a/docs/changes/io.ascii/14365.bugfix.rst b/docs/changes/io.ascii/14365.bugfix.rst
+new file mode 100644
+index 000000000000..ea6b8c151607
+--- /dev/null
++++ b/docs/changes/io.ascii/14365.bugfix.rst
+@@ -0,0 +1,2 @@
++Fix an issue in the `io.ascii` QDP format reader to allow lower-case commands in the
++table data file. Previously it required all upper case in order to parse QDP files.
+
+From e8fa8b32a5971bde4268a07dc1f781359306b677 Mon Sep 17 00:00:00 2001
+From: Tom Aldcroft <taldcroft@gmail.com>
+Date: Tue, 18 Apr 2023 12:41:22 -0400
+Subject: [PATCH 3/3] Update docs/changes/io.ascii/14365.bugfix.rst
+
+Co-authored-by: P. L. Lim <2090236+pllim@users.noreply.github.com>
+---
+ docs/changes/io.ascii/14365.bugfix.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/docs/changes/io.ascii/14365.bugfix.rst b/docs/changes/io.ascii/14365.bugfix.rst
+index ea6b8c151607..dd0ac5a3666a 100644
+--- a/docs/changes/io.ascii/14365.bugfix.rst
++++ b/docs/changes/io.ascii/14365.bugfix.rst
+@@ -1,2 +1,2 @@
+-Fix an issue in the `io.ascii` QDP format reader to allow lower-case commands in the
++Fix an issue in the ``io.ascii`` QDP format reader to allow lower-case commands in the
+ table data file. Previously it required all upper case in order to parse QDP files.

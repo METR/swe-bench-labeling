@@ -1,0 +1,158 @@
+diff --git a/lib/matplotlib/axes/_axes.py b/lib/matplotlib/axes/_axes.py
+index 4b73d52293..bc5461ad9f 100644
+--- a/lib/matplotlib/axes/_axes.py
++++ b/lib/matplotlib/axes/_axes.py
+@@ -6686,7 +6686,7 @@ optional.
+ 
+         density = bool(density) or bool(normed)
+         if density and not stacked:
+-            hist_kwargs = dict(density=density)
++            hist_kwargs['density'] = density
+ 
+         # List to store all the top coordinates of the histograms
+         tops = []
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..1b68ac87bc
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,56 @@
++import matplotlib.pyplot as plt
++import numpy as np
++
++# Set random seed for reproducibility
++np.random.seed(42)
++
++# Test various combinations
++test_cases = [
++    {"density": True, "stacked": False, "desc": "density=True, stacked=False"},
++    {"density": False, "stacked": False, "desc": "density=False, stacked=False"},
++    {"density": True, "stacked": True, "desc": "density=True, stacked=True"},
++    {"density": False, "stacked": True, "desc": "density=False, stacked=True"},
++]
++
++# Single dataset tests
++print("=== Single dataset tests ===")
++for test in test_cases:
++    if "stacked" in test and test["stacked"]:
++        continue  # Skip stacked for single dataset
++    print(f"\nTest: {test['desc']}")
++    _, bins, _ = plt.hist(np.random.rand(10), "auto", range=(0, 1), density=test.get("density", False))
++    print(f"First bin: {bins[0]:.6f}, Last bin: {bins[-1]:.6f}")
++    assert bins[0] == 0, f"First bin should be 0, got {bins[0]}"
++    assert bins[-1] == 1, f"Last bin should be 1, got {bins[-1]}"
++    print("✓ PASSED")
++
++# Multiple dataset tests
++print("\n=== Multiple dataset tests ===")
++data = [np.random.rand(10), np.random.rand(10)]
++for test in test_cases:
++    print(f"\nTest: {test['desc']}")
++    _, bins, _ = plt.hist(data, "auto", range=(0, 1), **{k: v for k, v in test.items() if k != "desc"})
++    print(f"First bin: {bins[0]:.6f}, Last bin: {bins[-1]:.6f}")
++    assert bins[0] == 0, f"First bin should be 0, got {bins[0]}"
++    assert bins[-1] == 1, f"Last bin should be 1, got {bins[-1]}"
++    print("✓ PASSED")
++
++# Test with custom bins
++print("\n=== Custom bins test ===")
++custom_bins = [0, 0.25, 0.5, 0.75, 1.0]
++_, bins, _ = plt.hist(np.random.rand(10), bins=custom_bins, range=(0, 1), density=True)
++print(f"Bins: {bins}")
++assert np.array_equal(bins, custom_bins), "Custom bins should be preserved"
++print("✓ PASSED")
++
++# Test with weights (need to specify bins manually since auto doesn't work with weights)
++print("\n=== Weights test ===")
++data = np.random.rand(10)
++weights = np.ones_like(data)
++_, bins, _ = plt.hist(data, bins=10, range=(0, 1), density=True, weights=weights)
++print(f"First bin: {bins[0]:.6f}, Last bin: {bins[-1]:.6f}")
++assert bins[0] == 0, f"First bin should be 0, got {bins[0]}"
++assert bins[-1] == 1, f"Last bin should be 1, got {bins[-1]}"
++print("✓ PASSED")
++
++print("\n=== All tests passed! ===")
+diff --git a/test_hist_bug.py b/test_hist_bug.py
+new file mode 100644
+index 0000000000..98e2fbabf2
+--- /dev/null
++++ b/test_hist_bug.py
+@@ -0,0 +1,17 @@
++import matplotlib.pyplot as plt
++import numpy as np
++
++# Test case 1: density=True (should fail - bins won't respect range)
++print("Test 1: density=True")
++_, bins1, _ = plt.hist(np.random.rand(10), "auto", range=(0, 1), density=True)
++print("bins:", bins1)
++print("First bin:", bins1[0], "Last bin:", bins1[-1])
++print("Expected: First bin = 0, Last bin = 1")
++print()
++
++# Test case 2: density=False (should work - bins respect range)
++print("Test 2: density=False")
++_, bins2, _ = plt.hist(np.random.rand(10), "auto", range=(0, 1), density=False)
++print("bins:", bins2)
++print("First bin:", bins2[0], "Last bin:", bins2[-1])
++print("Expected: First bin = 0, Last bin = 1")
+diff --git a/test_hist_range_density.py b/test_hist_range_density.py
+new file mode 100644
+index 0000000000..94bf4c65d0
+--- /dev/null
++++ b/test_hist_range_density.py
+@@ -0,0 +1,54 @@
++"""Test for regression in hist() where range parameter is ignored when density=True"""
++import matplotlib.pyplot as plt
++import numpy as np
++import pytest
++
++
++def test_hist_range_with_density():
++    """Test that hist() respects range parameter when density=True"""
++    np.random.seed(42)
++    data = np.random.rand(10)
++    
++    # Test with density=True
++    _, bins, _ = plt.hist(data, "auto", range=(0, 1), density=True)
++    assert bins[0] == 0, f"With density=True, first bin should be 0, got {bins[0]}"
++    assert bins[-1] == 1, f"With density=True, last bin should be 1, got {bins[-1]}"
++    
++    # Test with density=False (control)
++    _, bins, _ = plt.hist(data, "auto", range=(0, 1), density=False)
++    assert bins[0] == 0, f"With density=False, first bin should be 0, got {bins[0]}"
++    assert bins[-1] == 1, f"With density=False, last bin should be 1, got {bins[-1]}"
++    
++    # Test with custom range
++    _, bins, _ = plt.hist(data, "auto", range=(0.2, 0.8), density=True)
++    assert bins[0] == 0.2, f"With custom range, first bin should be 0.2, got {bins[0]}"
++    assert bins[-1] == 0.8, f"With custom range, last bin should be 0.8, got {bins[-1]}"
++
++
++def test_hist_range_with_density_multiple_datasets():
++    """Test that hist() respects range parameter when density=True with multiple datasets"""
++    np.random.seed(42)
++    data = [np.random.rand(10), np.random.rand(10)]
++    
++    # Test with density=True
++    _, bins, _ = plt.hist(data, "auto", range=(0, 1), density=True)
++    assert bins[0] == 0, f"With density=True, first bin should be 0, got {bins[0]}"
++    assert bins[-1] == 1, f"With density=True, last bin should be 1, got {bins[-1]}"
++    
++
++def test_hist_range_with_density_stacked():
++    """Test that hist() respects range parameter when density=True and stacked=True"""
++    np.random.seed(42)
++    data = [np.random.rand(10), np.random.rand(10)]
++    
++    # Test with density=True and stacked=True
++    _, bins, _ = plt.hist(data, "auto", range=(0, 1), density=True, stacked=True)
++    assert bins[0] == 0, f"With density=True and stacked=True, first bin should be 0, got {bins[0]}"
++    assert bins[-1] == 1, f"With density=True and stacked=True, last bin should be 1, got {bins[-1]}"
++
++
++if __name__ == "__main__":
++    test_hist_range_with_density()
++    test_hist_range_with_density_multiple_datasets()
++    test_hist_range_with_density_stacked()
++    print("All tests passed!")

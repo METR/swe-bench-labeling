@@ -1,0 +1,22 @@
+diff --git a/django/core/validators.py b/django/core/validators.py
+index 92394a7eae..51f191812d 100644
+--- a/django/core/validators.py
++++ b/django/core/validators.py
+@@ -536,3 +536,17 @@ class ProhibitNullCharactersValidator:
+             self.message == other.message and
+             self.code == other.code
+         )
++
++    def validate_auth_characters(self, url):
++        """
++        Validate that the username and password in the URL do not contain invalid characters.
++        """
++        import re
++        auth_part = re.match(r'^(?:[a-z0-9\.\-\+]*)://(?:([^@]+)@)?', url, re.IGNORECASE)
++        if auth_part and auth_part.group(1):
++            if re.search(r'[/:@]', auth_part.group(1)):
++                raise ValidationError(self.message, code=self.code)
++
++    def __call__(self, value):
++        super().__call__(value)
++        self.validate_auth_characters(value)

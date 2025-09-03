@@ -1,0 +1,32 @@
+diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
+index 52f7ea45ad..c863af16f7 100644
+--- a/sympy/core/numbers.py
++++ b/sympy/core/numbers.py
+@@ -1625,6 +1625,12 @@ def __new__(cls, p, q=None, gcd=None):
+             q = 1
+             gcd = 1
+ 
++        # Handle the case when both p and q are strings
++        if isinstance(p, str) and isinstance(q, str):
++            fp = fractions.Fraction(p)
++            fq = fractions.Fraction(q)
++            return Rational(fp.numerator * fq.denominator, fp.denominator * fq.numerator, 1)
++
+         if not isinstance(p, SYMPY_INTS):
+             p = Rational(p)
+             q *= p.q
+diff --git a/sympy/core/tests/test_numbers.py b/sympy/core/tests/test_numbers.py
+index 8baf408933..37edf96135 100644
+--- a/sympy/core/tests/test_numbers.py
++++ b/sympy/core/tests/test_numbers.py
+@@ -1583,6 +1583,10 @@ def test_Rational_gcd_lcm_cofactors():
+     assert Rational(4, 3).gcd(Rational(2, 9)) == Rational(2, 9)
+     assert Rational(4, 3).lcm(Rational(2, 9)) == Rational(4, 3)
+     assert Rational(4, 5).gcd(Rational(2, 9)) == Rational(2, 45)
++def test_Rational_string_input():
++    assert Rational('0.5', '100') == Rational(1, 200)
++    assert Rational('0.5', '100') != Rational(1, 100100)
++    assert Rational(0.5, 100) == Rational(1, 200)
+     assert Rational(4, 5).lcm(Rational(2, 9)) == Integer(4)
+     assert Rational(5, 9).lcm(Rational(3, 7)) == Rational(Integer(5).lcm(3),Integer(9).gcd(7))
+ 

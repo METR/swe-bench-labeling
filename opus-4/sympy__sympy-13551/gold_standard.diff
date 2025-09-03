@@ -1,0 +1,116 @@
+From 85577f36da679eb50c3db8e70da381ee90dfb152 Mon Sep 17 00:00:00 2001
+From: ethankward <ethanward@email.arizona.edu>
+Date: Sun, 29 Oct 2017 13:45:26 -0700
+Subject: [PATCH 1/3] Remove incorrect expression and instead convert to sum
+
+---
+ sympy/concrete/products.py | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/sympy/concrete/products.py b/sympy/concrete/products.py
+index 66aafde2d60b..e29045a6e7c7 100644
+--- a/sympy/concrete/products.py
++++ b/sympy/concrete/products.py
+@@ -239,7 +239,7 @@ def _eval_product(self, term, limits):
+         from sympy.functions import KroneckerDelta, RisingFactorial
+ 
+         (k, a, n) = limits
+-
++        #print(term, limits)
+         if k not in term.free_symbols:
+             if (term - 1).is_zero:
+                 return S.One
+@@ -252,6 +252,7 @@ def _eval_product(self, term, limits):
+             return deltaproduct(term, limits)
+ 
+         dif = n - a
++
+         if dif.is_Integer:
+             return Mul(*[term.subs(k, a + i) for i in range(dif + 1)])
+ 
+@@ -275,6 +276,7 @@ def _eval_product(self, term, limits):
+             return poly.LC()**(n - a + 1) * A * B
+ 
+         elif term.is_Add:
++
+             p, q = term.as_numer_denom()
+             q = self._eval_product(q, (k, a, n))
+             if q.is_Number:
+@@ -282,8 +284,8 @@ def _eval_product(self, term, limits):
+                 # There is expression, which couldn't change by
+                 # as_numer_denom(). E.g. n**(2/3) + 1 --> (n**(2/3) + 1, 1).
+                 # We have to catch this case.
+-
+-                p = sum([self._eval_product(i, (k, a, n)) for i in p.as_coeff_Add()])
++                from sympy.concrete.summations import Sum
++                p = exp(Sum(log(p), (k, a, n)))
+             else:
+                 p = self._eval_product(p, (k, a, n))
+             return p / q
+
+From 1d2f7d56b36f31612a545b17b7d9cc2d277e8116 Mon Sep 17 00:00:00 2001
+From: ethankward <ethanward@email.arizona.edu>
+Date: Sun, 29 Oct 2017 13:45:48 -0700
+Subject: [PATCH 2/3] Add test for this issue
+
+---
+ sympy/concrete/tests/test_products.py | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/sympy/concrete/tests/test_products.py b/sympy/concrete/tests/test_products.py
+index 311d5153e2fc..283f926926f6 100644
+--- a/sympy/concrete/tests/test_products.py
++++ b/sympy/concrete/tests/test_products.py
+@@ -355,6 +355,13 @@ def test_issue_9983():
+     assert product(1 + 1/n**(S(2)/3), (n, 1, oo)) == p.doit()
+ 
+ 
++def test_issue_13546():
++    n = Symbol('n')
++    k = Symbol('k')
++    p = Product(n + 1 / 2**k, (k, 0, n-1)).doit()
++    assert p.subs(n, 2).doit() == S(15)/2
++
++
+ def test_rewrite_Sum():
+     assert Product(1 - S.Half**2/k**2, (k, 1, oo)).rewrite(Sum) == \
+         exp(Sum(log(1 - 1/(4*k**2)), (k, 1, oo)))
+
+From b605b939e8e6cdeefdaaa4a7d7bea5cbb58a96aa Mon Sep 17 00:00:00 2001
+From: ethankward <ethanward@email.arizona.edu>
+Date: Sun, 29 Oct 2017 13:47:23 -0700
+Subject: [PATCH 3/3] remove commented line
+
+---
+ sympy/concrete/products.py | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/sympy/concrete/products.py b/sympy/concrete/products.py
+index e29045a6e7c7..da71482e2850 100644
+--- a/sympy/concrete/products.py
++++ b/sympy/concrete/products.py
+@@ -239,7 +239,7 @@ def _eval_product(self, term, limits):
+         from sympy.functions import KroneckerDelta, RisingFactorial
+ 
+         (k, a, n) = limits
+-        #print(term, limits)
++
+         if k not in term.free_symbols:
+             if (term - 1).is_zero:
+                 return S.One
+@@ -252,7 +252,6 @@ def _eval_product(self, term, limits):
+             return deltaproduct(term, limits)
+ 
+         dif = n - a
+-
+         if dif.is_Integer:
+             return Mul(*[term.subs(k, a + i) for i in range(dif + 1)])
+ 
+@@ -276,7 +275,6 @@ def _eval_product(self, term, limits):
+             return poly.LC()**(n - a + 1) * A * B
+ 
+         elif term.is_Add:
+-
+             p, q = term.as_numer_denom()
+             q = self._eval_product(q, (k, a, n))
+             if q.is_Number:

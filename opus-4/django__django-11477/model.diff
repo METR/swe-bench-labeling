@@ -1,0 +1,50 @@
+diff --git a/django/urls/base.py b/django/urls/base.py
+index 0e1c3d909c..8188133b23 100644
+--- a/django/urls/base.py
++++ b/django/urls/base.py
+@@ -172,7 +172,9 @@ def translate_url(url, lang_code):
+         to_be_reversed = "%s:%s" % (match.namespace, match.url_name) if match.namespace else match.url_name
+         with override(lang_code):
+             try:
+-                url = reverse(to_be_reversed, args=match.args, kwargs=match.kwargs)
++                # Filter out kwargs with None values to handle optional named groups correctly
++                kwargs = {k: v for k, v in match.kwargs.items() if v is not None}
++                url = reverse(to_be_reversed, args=match.args, kwargs=kwargs)
+             except NoReverseMatch:
+                 pass
+             else:
+diff --git a/tests/i18n/patterns/tests.py b/tests/i18n/patterns/tests.py
+index 6ed2c4ffeb..7268c3fb9f 100644
+--- a/tests/i18n/patterns/tests.py
++++ b/tests/i18n/patterns/tests.py
+@@ -163,6 +163,17 @@ class URLTranslationTests(URLTestCaseBase):
+             self.assertEqual(translate_url('/nl/gebruikers/', 'en'), '/en/users/')
+             self.assertEqual(translation.get_language(), 'nl')
+ 
++    def test_translate_url_with_optional_groups(self):
++        """
++        Test that translate_url correctly handles URLs with optional named groups.
++        Optional parameters that are None should not appear in the translated URL.
++        """
++        with translation.override('en'):
++            # URL with both parameters
++            self.assertEqual(translate_url('/optional/foo/bar/', 'nl'), '/optional/foo/bar/')
++            # URL with only required parameter - optional parameter should not appear as "None"
++            self.assertEqual(translate_url('/optional/foo/', 'nl'), '/optional/foo/')
++
+ 
+ class URLNamespaceTests(URLTestCaseBase):
+     """
+diff --git a/tests/i18n/patterns/urls/default.py b/tests/i18n/patterns/urls/default.py
+index b0c2f2585e..11f422e115 100644
+--- a/tests/i18n/patterns/urls/default.py
++++ b/tests/i18n/patterns/urls/default.py
+@@ -10,6 +10,8 @@ urlpatterns = [
+     path('not-prefixed-include/', include('i18n.patterns.urls.included')),
+     re_path(_(r'^translated/$'), view, name='no-prefix-translated'),
+     re_path(_(r'^translated/(?P<slug>[\w-]+)/$'), view, name='no-prefix-translated-slug'),
++    # URL pattern with optional named group for testing
++    re_path(r'^optional/(?P<arg1>\w+)/(?:(?P<arg2>\w+)/)?$', view, name='optional-groups'),
+ ]
+ 
+ urlpatterns += i18n_patterns(

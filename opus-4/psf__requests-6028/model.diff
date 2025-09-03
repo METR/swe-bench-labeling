@@ -1,0 +1,432 @@
+diff --git a/requests/utils.py b/requests/utils.py
+index 1c2ae4e0..edbcc6ee 100644
+--- a/requests/utils.py
++++ b/requests/utils.py
+@@ -991,7 +991,11 @@ def get_auth_from_url(url):
+     parsed = urlparse(url)
+ 
+     try:
+-        auth = (unquote(parsed.username), unquote(parsed.password))
++        # Handle None values explicitly before calling unquote
++        # In Python 3.8.12, urlparse may return None instead of empty string
++        username = unquote(parsed.username) if parsed.username is not None else ''
++        password = unquote(parsed.password) if parsed.password is not None else ''
++        auth = (username, password)
+     except (AttributeError, TypeError):
+         auth = ('', '')
+ 
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 00000000..2f741bff
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python
++
++import sys
++from requests.utils import get_auth_from_url
++from requests.adapters import HTTPAdapter
++
++print("Python version:", sys.version)
++
++# Test cases that would fail in Python 3.8.12
++test_urls = [
++    ("http://proxy.example.com:8080", "No auth"),
++    ("http://user:pass@proxy.example.com:8080", "Normal auth"),
++    ("http://:@proxy.example.com:8080", "Empty auth"),
++    ("http://user@proxy.example.com:8080", "No password"),
++    ("http://:pass@proxy.example.com:8080", "No username"),
++    ("http://user:@proxy.example.com:8080", "Empty password"),
++    ("http://user%40domain:pass@proxy.example.com:8080", "Encoded @"),
++    ("http://user:pass%3Aword@proxy.example.com:8080", "Encoded :"),
++]
++
++adapter = HTTPAdapter()
++
++for url, description in test_urls:
++    print(f"\n{description}: {url}")
++    try:
++        username, password = get_auth_from_url(url)
++        print(f"  get_auth_from_url: username={username!r}, password={password!r}")
++        
++        headers = adapter.proxy_headers(url)
++        print(f"  proxy_headers: {headers}")
++    except Exception as e:
++        print(f"  ERROR: {type(e).__name__}: {e}")
++
++# Test that empty strings are properly handled
++print("\nTesting empty auth handling:")
++username, password = get_auth_from_url("http://proxy.example.com:8080")
++if username == '' and password == '':
++    print("✓ Empty auth returns ('', '') as expected")
+diff --git a/test_proxy_auth.py b/test_proxy_auth.py
+new file mode 100644
+index 00000000..402e3b16
+--- /dev/null
++++ b/test_proxy_auth.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python
++
++import requests
++import sys
++from requests.auth import _basic_auth_str
++import base64
++
++# Test the _basic_auth_str function with different types of usernames and passwords
++print("Python version:", sys.version)
++
++# Normal case
++username = "user"
++password = "pass"
++result = _basic_auth_str(username, password)
++print(f"Normal case: {result}")
++
++# With special characters that might need encoding
++username = "user@domain"
++password = "pass:word"  
++result = _basic_auth_str(username, password)
++print(f"With special chars: {result}")
++
++# Direct base64 encoding to compare
++combined = f"{username}:{password}"
++expected = "Basic " + base64.b64encode(combined.encode('latin1')).decode('ascii')
++print(f"Expected: {expected}")
++
++# Test proxy header creation
++from requests.adapters import HTTPAdapter
++adapter = HTTPAdapter()
++proxy_url = "http://user:pass@proxy.example.com:8080"
++headers = adapter.proxy_headers(proxy_url)
++print(f"Proxy headers: {headers}")
++
++# Test with problematic characters  
++proxy_url = "http://user@domain:pass:word@proxy.example.com:8080"
++headers = adapter.proxy_headers(proxy_url)
++print(f"Proxy headers with special chars: {headers}")
+diff --git a/test_proxy_auth_integration.py b/test_proxy_auth_integration.py
+new file mode 100644
+index 00000000..76fd1a83
+--- /dev/null
++++ b/test_proxy_auth_integration.py
+@@ -0,0 +1,105 @@
++#!/usr/bin/env python
++"""Integration test for proxy authentication with Python 3.8.12 compatibility."""
++
++import requests
++from requests.adapters import HTTPAdapter
++from unittest.mock import patch, Mock
++
++def test_proxy_auth_with_various_urls():
++    """Test that proxy authentication works with various URL formats."""
++    
++    # Test cases that should work in Python 3.8.12
++    test_cases = [
++        # Standard proxy with auth
++        {
++            'proxy_url': 'http://user:pass@proxy.example.com:8080',
++            'expected_header': 'Basic dXNlcjpwYXNz'
++        },
++        # Proxy with encoded special chars in username
++        {
++            'proxy_url': 'http://user%40domain:pass@proxy.example.com:8080',
++            'expected_header': 'Basic dXNlckBkb21haW46cGFzcw=='
++        },
++        # Proxy with encoded special chars in password
++        {
++            'proxy_url': 'http://user:pass%3Aword@proxy.example.com:8080',
++            'expected_header': 'Basic dXNlcjpwYXNzOndvcmQ='
++        },
++        # Proxy without auth (should not add header)
++        {
++            'proxy_url': 'http://proxy.example.com:8080',
++            'expected_header': None
++        },
++        # Empty username
++        {
++            'proxy_url': 'http://:pass@proxy.example.com:8080',
++            'expected_header': None  # Empty username means no auth
++        },
++        # Empty password 
++        {
++            'proxy_url': 'http://user:@proxy.example.com:8080',
++            'expected_header': 'Basic dXNlcjo='
++        }
++    ]
++    
++    adapter = HTTPAdapter()
++    
++    for test_case in test_cases:
++        proxy_url = test_case['proxy_url']
++        expected_header = test_case['expected_header']
++        
++        headers = adapter.proxy_headers(proxy_url)
++        
++        if expected_header is None:
++            assert 'Proxy-Authorization' not in headers, \
++                f"Expected no auth header for {proxy_url}, but got {headers}"
++        else:
++            assert 'Proxy-Authorization' in headers, \
++                f"Expected auth header for {proxy_url}, but got {headers}"
++            assert headers['Proxy-Authorization'] == expected_header, \
++                f"Wrong auth header for {proxy_url}: expected {expected_header}, got {headers['Proxy-Authorization']}"
++        
++        print(f"✓ {proxy_url}: {headers}")
++
++
++def test_proxy_auth_with_mocked_urlparse():
++    """Test that proxy auth works when urlparse returns None values (Python 3.8.12)."""
++    
++    adapter = HTTPAdapter()
++    
++    # Mock urlparse to simulate Python 3.8.12 behavior
++    with patch('requests.utils.urlparse') as mock_urlparse:
++        # Case 1: urlparse returns None for both username and password
++        mock_result = Mock()
++        mock_result.username = None
++        mock_result.password = None
++        mock_urlparse.return_value = mock_result
++        
++        headers = adapter.proxy_headers('http://proxy.example.com:8080')
++        assert 'Proxy-Authorization' not in headers
++        print(f"✓ None username/password: {headers}")
++        
++        # Case 2: urlparse returns None for username, string for password
++        mock_result.username = None
++        mock_result.password = 'pass'
++        headers = adapter.proxy_headers('http://:pass@proxy.example.com:8080')
++        assert 'Proxy-Authorization' not in headers  # Empty username = no auth
++        print(f"✓ None username, string password: {headers}")
++        
++        # Case 3: urlparse returns string for username, None for password
++        mock_result.username = 'user'
++        mock_result.password = None
++        headers = adapter.proxy_headers('http://user@proxy.example.com:8080')
++        assert 'Proxy-Authorization' in headers
++        assert headers['Proxy-Authorization'] == 'Basic dXNlcjo='
++        print(f"✓ String username, None password: {headers}")
++
++
++if __name__ == '__main__':
++    print("Testing proxy authentication with various URL formats:")
++    test_proxy_auth_with_various_urls()
++    
++    print("\nTesting proxy authentication with mocked urlparse (Python 3.8.12 simulation):")
++    test_proxy_auth_with_mocked_urlparse()
++    
++    print("\nAll tests passed! Proxy authentication should work correctly in Python 3.8.12.")
+diff --git a/test_proxy_issue.py b/test_proxy_issue.py
+new file mode 100644
+index 00000000..f13d438a
+--- /dev/null
++++ b/test_proxy_issue.py
+@@ -0,0 +1,70 @@
++#!/usr/bin/env python
++
++import sys
++from urllib.parse import urlparse, unquote
++from requests.utils import get_auth_from_url
++from requests.adapters import HTTPAdapter
++from requests.auth import _basic_auth_str
++
++print("Python version:", sys.version)
++
++# Test the flow of proxy authentication
++proxy_url = "http://user:pass@proxy.example.com:8080"
++
++# Step 1: Parse auth from URL
++username, password = get_auth_from_url(proxy_url)
++print(f"\nStep 1 - get_auth_from_url:")
++print(f"  Username: {username!r}")
++print(f"  Password: {password!r}")
++
++# Step 2: Create basic auth string
++auth_str = _basic_auth_str(username, password)
++print(f"\nStep 2 - _basic_auth_str:")
++print(f"  Auth string: {auth_str!r}")
++
++# Step 3: Check adapter proxy_headers
++adapter = HTTPAdapter()
++headers = adapter.proxy_headers(proxy_url)
++print(f"\nStep 3 - adapter.proxy_headers:")
++print(f"  Headers: {headers}")
++
++# Now test with problematic cases
++print("\n" + "="*50)
++print("Testing with special characters:")
++
++test_cases = [
++    ("http://user%40domain:pass@proxy.example.com:8080", "user with @ encoded"),
++    ("http://user:pass%3Aword@proxy.example.com:8080", "password with : encoded"),
++    ("http://user%2Bplus:pass@proxy.example.com:8080", "user with + encoded"),
++    ("http://user:pass%2Fslash@proxy.example.com:8080", "password with / encoded"),
++]
++
++for proxy_url, description in test_cases:
++    print(f"\n{description}: {proxy_url}")
++    username, password = get_auth_from_url(proxy_url)
++    print(f"  Username: {username!r}, Password: {password!r}")
++    headers = adapter.proxy_headers(proxy_url)
++    print(f"  Headers: {headers}")
++
++# Test if unquote returns None case
++print("\n" + "="*50)
++print("Testing edge cases:")
++
++# Let's also check what happens when urlparse returns None for username/password
++import unittest.mock
++
++with unittest.mock.patch('urllib.parse.urlparse') as mock_urlparse:
++    # Simulate urlparse returning None for username
++    mock_result = unittest.mock.Mock()
++    mock_result.username = None
++    mock_result.password = "pass"
++    mock_urlparse.return_value = mock_result
++    
++    try:
++        username, password = get_auth_from_url("http://proxy.example.com:8080")
++        print(f"When username is None: username={username!r}, password={password!r}")
++    except Exception as e:
++        print(f"Error when username is None: {e}")
++
++# Check what happens with unquote(None)
++print(f"\nunquote(None) = {unquote(None) if unquote(None) is not None else 'TypeError'}")
+diff --git a/test_python_3812.py b/test_python_3812.py
+new file mode 100644
+index 00000000..f5456a11
+--- /dev/null
++++ b/test_python_3812.py
+@@ -0,0 +1,50 @@
++#!/usr/bin/env python
++
++import sys
++from urllib.parse import urlparse, unquote
++
++print("Python version:", sys.version)
++
++# Test cases that might be problematic in Python 3.8.12
++test_urls = [
++    "http://proxy.example.com:8080",  # No auth
++    "http://:@proxy.example.com:8080",  # Empty auth
++    "http://user@proxy.example.com:8080",  # No password
++    "http://:pass@proxy.example.com:8080",  # No username
++    "http://user:@proxy.example.com:8080",  # Empty password
++]
++
++for url in test_urls:
++    print(f"\nTesting URL: {url}")
++    parsed = urlparse(url)
++    print(f"  username: {parsed.username!r} (type: {type(parsed.username).__name__})")
++    print(f"  password: {parsed.password!r} (type: {type(parsed.password).__name__})")
++    
++    # Test unquote behavior
++    try:
++        if parsed.username is not None:
++            unquoted_user = unquote(parsed.username)
++        else:
++            unquoted_user = None
++        print(f"  unquote(username): {unquoted_user!r}")
++    except Exception as e:
++        print(f"  unquote(username) error: {type(e).__name__}: {e}")
++        
++    try:
++        if parsed.password is not None:
++            unquoted_pass = unquote(parsed.password)
++        else:
++            unquoted_pass = None
++        print(f"  unquote(password): {unquoted_pass!r}")
++    except Exception as e:
++        print(f"  unquote(password) error: {type(e).__name__}: {e}")
++
++# The key issue might be that in Python 3.8.12, urlparse might return None 
++# in cases where it previously returned empty string
++print("\n" + "="*50)
++print("Direct unquote tests:")
++print(f"unquote(''): {unquote('')!r}")
++try:
++    print(f"unquote(None): {unquote(None)!r}")
++except TypeError as e:
++    print(f"unquote(None) raises TypeError: {e}")
+diff --git a/test_url_parsing.py b/test_url_parsing.py
+new file mode 100644
+index 00000000..fc3b0d52
+--- /dev/null
++++ b/test_url_parsing.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python
++
++import sys
++from urllib.parse import urlparse, unquote
++from requests.utils import get_auth_from_url
++
++print("Python version:", sys.version)
++
++# Test various proxy URLs
++test_urls = [
++    "http://user:pass@proxy.example.com:8080",
++    "http://user%40domain:pass@proxy.example.com:8080",  # @ encoded as %40
++    "http://user@domain:pass@proxy.example.com:8080",     # @ not encoded
++    "http://user:pass%3Aword@proxy.example.com:8080",     # : encoded as %3A
++    "http://user:pass:word@proxy.example.com:8080",       # : not encoded
++]
++
++for url in test_urls:
++    print(f"\nTesting URL: {url}")
++    parsed = urlparse(url)
++    print(f"  urlparse result: username={parsed.username!r}, password={parsed.password!r}")
++    
++    # Test requests' get_auth_from_url
++    username, password = get_auth_from_url(url)
++    print(f"  get_auth_from_url: username={username!r}, password={password!r}")
++    
++    # Manual unquoting to see what happens
++    if parsed.username:
++        print(f"  unquote(username): {unquote(parsed.username)!r}")
++    if parsed.password:
++        print(f"  unquote(password): {unquote(parsed.password)!r}")
+diff --git a/tests/test_utils.py b/tests/test_utils.py
+index c2186b88..7dea2a3e 100644
+--- a/tests/test_utils.py
++++ b/tests/test_utils.py
+@@ -401,6 +401,42 @@ def test_get_auth_from_url(url, auth):
+     assert get_auth_from_url(url) == auth
+ 
+ 
++def test_get_auth_from_url_handles_none_from_urlparse():
++    """Test that get_auth_from_url handles None values from urlparse.
++    
++    In Python 3.8.12, urlparse may return None for username/password
++    instead of empty strings, which causes unquote() to raise TypeError.
++    This test ensures our fix handles this case properly.
++    """
++    # Mock urlparse to return None values
++    from unittest.mock import patch, Mock
++    
++    with patch('requests.utils.urlparse') as mock_urlparse:
++        # Case 1: Both username and password are None
++        mock_result = Mock()
++        mock_result.username = None
++        mock_result.password = None
++        mock_urlparse.return_value = mock_result
++        
++        username, password = get_auth_from_url("http://proxy.example.com:8080")
++        assert username == ''
++        assert password == ''
++        
++        # Case 2: Username is None, password is a string
++        mock_result.username = None
++        mock_result.password = 'pass'
++        username, password = get_auth_from_url("http://:pass@proxy.example.com:8080")
++        assert username == ''
++        assert password == 'pass'
++        
++        # Case 3: Username is a string, password is None
++        mock_result.username = 'user'
++        mock_result.password = None
++        username, password = get_auth_from_url("http://user@proxy.example.com:8080")
++        assert username == 'user'
++        assert password == ''
++
++
+ @pytest.mark.parametrize(
+     'uri, expected', (
+         (

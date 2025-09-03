@@ -1,0 +1,530 @@
+diff --git a/setup.py b/setup.py
+index 2538952e3..94e1d8b32 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index a415a7074..705e5bd3f 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -457,6 +457,10 @@ def object_description(object: Any) -> str:
+         else:
+             return "frozenset({%s})" % ", ".join(object_description(x)
+                                                  for x in sorted_values)
++    if isinstance(object, enum.Enum):
++        # Special handling for Enum values to show them in a clean format
++        # E.g., "MyEnum.ValueA" instead of "<MyEnum.ValueA: 10>"
++        return f"{object.__class__.__name__}.{object.name}"
+     try:
+         s = repr(object)
+     except Exception as exc:
+diff --git a/test_enum_complete.py b/test_enum_complete.py
+new file mode 100644
+index 000000000..3778744b2
+--- /dev/null
++++ b/test_enum_complete.py
+@@ -0,0 +1,52 @@
++"""Test module to verify enum rendering in function signatures."""
++import enum
++import inspect
++from sphinx.util.inspect import stringify_signature
++
++
++class MyEnum(enum.Enum):
++    """Example enum for testing."""
++    ValueA = 10
++    ValueB = 20
++    ValueC = "string_value"
++
++
++def function_with_enum_default(e: MyEnum = MyEnum.ValueA) -> None:
++    """Function with enum default value."""
++    pass
++
++
++def function_with_multiple_enums(
++    e1: MyEnum = MyEnum.ValueA,
++    e2: MyEnum = MyEnum.ValueB,
++    e3: MyEnum = MyEnum.ValueC
++) -> None:
++    """Function with multiple enum parameters."""
++    pass
++
++
++def test_enum_signatures():
++    """Test that enum signatures are rendered correctly."""
++    # Test single enum parameter
++    sig1 = inspect.signature(function_with_enum_default)
++    str_sig1 = stringify_signature(sig1)
++    print(f"Function 1 signature: {str_sig1}")
++    assert "MyEnum.ValueA" in str_sig1
++    assert "<MyEnum.ValueA: 10>" not in str_sig1
++    
++    # Test multiple enum parameters
++    sig2 = inspect.signature(function_with_multiple_enums)
++    str_sig2 = stringify_signature(sig2)
++    print(f"Function 2 signature: {str_sig2}")
++    assert "MyEnum.ValueA" in str_sig2
++    assert "MyEnum.ValueB" in str_sig2
++    assert "MyEnum.ValueC" in str_sig2
++    assert "<MyEnum.ValueA: 10>" not in str_sig2
++    assert "<MyEnum.ValueB: 20>" not in str_sig2
++    assert "<MyEnum.ValueC: 'string_value'>" not in str_sig2
++    
++    print("\nAll tests passed!")
++
++
++if __name__ == "__main__":
++    test_enum_signatures()
+diff --git a/test_enum_edge_cases.py b/test_enum_edge_cases.py
+new file mode 100644
+index 000000000..b5aaef7ab
+--- /dev/null
++++ b/test_enum_edge_cases.py
+@@ -0,0 +1,66 @@
++"""Test edge cases for enum object_description."""
++import enum
++from sphinx.util.inspect import object_description
++
++
++# Test different enum types
++class IntEnum(enum.IntEnum):
++    ONE = 1
++    TWO = 2
++
++
++class StrEnum(enum.Enum):
++    ALPHA = "alpha"
++    BETA = "beta"
++
++
++class MultiValueEnum(enum.Enum):
++    PAIR = (1, 2)
++    TRIPLE = (3, 4, 5)
++
++
++class FlagEnum(enum.Flag):
++    READ = 1
++    WRITE = 2
++    EXECUTE = 4
++
++
++def test_edge_cases():
++    """Test various enum types."""
++    # Test IntEnum
++    print("IntEnum:")
++    print(f"  repr: {repr(IntEnum.ONE)}")
++    print(f"  object_description: {object_description(IntEnum.ONE)}")
++    
++    # Test StrEnum
++    print("\nStrEnum:")
++    print(f"  repr: {repr(StrEnum.ALPHA)}")
++    print(f"  object_description: {object_description(StrEnum.ALPHA)}")
++    
++    # Test MultiValueEnum
++    print("\nMultiValueEnum:")
++    print(f"  repr: {repr(MultiValueEnum.PAIR)}")
++    print(f"  object_description: {object_description(MultiValueEnum.PAIR)}")
++    
++    # Test FlagEnum
++    print("\nFlagEnum:")
++    print(f"  repr: {repr(FlagEnum.READ)}")
++    print(f"  object_description: {object_description(FlagEnum.READ)}")
++    
++    # Test combined flags
++    combined = FlagEnum.READ | FlagEnum.WRITE
++    print(f"\nCombined Flags (READ | WRITE):")
++    print(f"  repr: {repr(combined)}")
++    print(f"  object_description: {object_description(combined)}")
++    
++    # All should show clean format
++    assert object_description(IntEnum.ONE) == "IntEnum.ONE"
++    assert object_description(StrEnum.ALPHA) == "StrEnum.ALPHA"
++    assert object_description(MultiValueEnum.PAIR) == "MultiValueEnum.PAIR"
++    assert object_description(FlagEnum.READ) == "FlagEnum.READ"
++    
++    print("\nAll tests passed!")
++
++
++if __name__ == "__main__":
++    test_edge_cases()
+diff --git a/test_enum_issue.py b/test_enum_issue.py
+new file mode 100644
+index 000000000..944c33553
+--- /dev/null
++++ b/test_enum_issue.py
+@@ -0,0 +1,20 @@
++import enum
++from sphinx.util.inspect import object_description
++
++
++class MyEnum(enum.Enum):
++    ValueA = 10
++    ValueB = 20
++
++
++def test_enum_repr():
++    # Current behavior - shows ugly representation
++    print("Current repr():", repr(MyEnum.ValueA))
++    print("Current object_description():", object_description(MyEnum.ValueA))
++    
++    # Desired behavior - should show clean representation
++    print("\nDesired representation:", f"{MyEnum.ValueA.__class__.__name__}.{MyEnum.ValueA.name}")
++
++
++if __name__ == "__main__":
++    test_enum_repr()
+diff --git a/test_enum_signature_fix.py b/test_enum_signature_fix.py
+new file mode 100644
+index 000000000..dea4a4f9f
+--- /dev/null
++++ b/test_enum_signature_fix.py
+@@ -0,0 +1,119 @@
++"""Test for enum signature fix - ensuring enum default values are rendered nicely."""
++import pytest
++from docutils import nodes
++from sphinx.testing.fixtures import test_params
++from sphinx.testing.path import path
++
++
++def test_enum_default_value_in_signature(app):
++    """Test that enum default values in function signatures are rendered cleanly."""
++    # Create test module with enum and function
++    test_module_content = '''
++import enum
++
++class MyEnum(enum.Enum):
++    ValueA = 10
++    ValueB = 20
++
++def ugly_enum_func(e: MyEnum = MyEnum.ValueA) -> None:
++    """Function with enum default value."""
++    pass
++'''
++    
++    # Write test module
++    test_module_path = app.srcdir / 'ugly_enum.py'
++    test_module_path.write_text(test_module_content)
++    
++    # Create RST file that documents the function
++    rst_content = '''
++.. autofunction:: ugly_enum.ugly_enum_func
++'''
++    
++    # Write RST file
++    index_rst_path = app.srcdir / 'index.rst'
++    index_rst_path.write_text(rst_content)
++    
++    # Add conf.py
++    conf_content = '''
++import sys
++sys.path.insert(0, '.')
++
++extensions = ['sphinx.ext.autodoc']
++'''
++    conf_path = app.srcdir / 'conf.py'
++    conf_path.write_text(conf_content)
++    
++    # Build the documentation
++    app.builder.build_all()
++    
++    # Read the generated HTML
++    with open(app.outdir / 'index.html') as f:
++        html_content = f.read()
++    
++    # Check that the signature contains the clean enum format
++    assert 'MyEnum.ValueA' in html_content
++    # Make sure the ugly format is NOT present
++    assert '<MyEnum.ValueA: 10>' not in html_content
++    
++
++if __name__ == "__main__":
++    # For local testing
++    from sphinx.testing.path import path
++    from sphinx.cmd.build import build_main
++    import tempfile
++    import os
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        srcdir = path(tmpdir) / 'source'
++        outdir = path(tmpdir) / 'build'
++        srcdir.makedirs()
++        
++        # Create test module
++        test_module_content = '''
++import enum
++
++class MyEnum(enum.Enum):
++    ValueA = 10
++    ValueB = 20
++
++def ugly_enum_func(e: MyEnum = MyEnum.ValueA) -> None:
++    """Function with enum default value."""
++    pass
++'''
++        (srcdir / 'ugly_enum.py').write_text(test_module_content)
++        
++        # Create RST
++        (srcdir / 'index.rst').write_text('.. autofunction:: ugly_enum.ugly_enum_func')
++        
++        # Create conf.py
++        conf_content = '''
++import sys
++sys.path.insert(0, '.')
++
++extensions = ['sphinx.ext.autodoc']
++'''
++        (srcdir / 'conf.py').write_text(conf_content)
++        
++        # Build
++        build_main(['-b', 'html', str(srcdir), str(outdir)])
++        
++        # Check result
++        with open(outdir / 'index.html') as f:
++            html_content = f.read()
++            
++        print("Generated HTML contains:")
++        import re
++        # Find the signature in the HTML
++        sig_match = re.search(r'<code class="sig-name descname">.*?</code>.*?<em class="sig-param">.*?</em>', html_content, re.DOTALL)
++        if sig_match:
++            print(sig_match.group(0))
++            
++        if 'MyEnum.ValueA' in html_content:
++            print("✓ Clean enum format found!")
++        else:
++            print("✗ Clean enum format NOT found!")
++            
++        if '<MyEnum.ValueA: 10>' in html_content:
++            print("✗ Ugly enum format still present!")
++        else:
++            print("✓ Ugly enum format NOT present!")
+diff --git a/test_object_description_enum.py b/test_object_description_enum.py
+new file mode 100644
+index 000000000..ff3fb55d6
+--- /dev/null
++++ b/test_object_description_enum.py
+@@ -0,0 +1,38 @@
++"""
++Test for enum handling in object_description.
++
++This test should be added to tests/test_util_inspect.py
++"""
++import enum
++import pytest
++from sphinx.util.inspect import object_description
++
++
++class MyEnum(enum.Enum):
++    ValueA = 10
++    ValueB = 20
++
++
++class MyStrEnum(enum.Enum):
++    Alpha = "alpha"
++    Beta = "beta"
++
++
++def test_object_description_enum():
++    """Test that enum values are rendered cleanly in object_description."""
++    # Test regular enum with int values
++    assert object_description(MyEnum.ValueA) == "MyEnum.ValueA"
++    assert object_description(MyEnum.ValueB) == "MyEnum.ValueB"
++    
++    # Test enum with string values
++    assert object_description(MyStrEnum.Alpha) == "MyStrEnum.Alpha"
++    assert object_description(MyStrEnum.Beta) == "MyStrEnum.Beta"
++    
++    # Make sure the ugly format is not present
++    assert "<MyEnum.ValueA: 10>" not in object_description(MyEnum.ValueA)
++    assert "<MyStrEnum.Alpha: 'alpha'>" not in object_description(MyStrEnum.Alpha)
++
++
++if __name__ == "__main__":
++    test_object_description_enum()
++    print("All tests passed!")
+diff --git a/test_sphinx_enum_integration.py b/test_sphinx_enum_integration.py
+new file mode 100644
+index 000000000..01b6796d7
+--- /dev/null
++++ b/test_sphinx_enum_integration.py
+@@ -0,0 +1,136 @@
++#!/usr/bin/env python3
++"""Test the enum fix in a full Sphinx build."""
++
++import subprocess
++import tempfile
++import shutil
++from pathlib import Path
++
++
++def test_sphinx_enum_fix():
++    """Test enum rendering in a full Sphinx documentation build."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        tmpdir = Path(tmpdir)
++        srcdir = tmpdir / "source"
++        builddir = tmpdir / "build"
++        srcdir.mkdir()
++        
++        # Create the Python module with enum
++        module_content = '''
++"""Test module for enum documentation."""
++import enum
++
++
++class Priority(enum.Enum):
++    """Priority levels for tasks."""
++    LOW = 1
++    MEDIUM = 2
++    HIGH = 3
++
++
++def process_task(task_name: str, priority: Priority = Priority.MEDIUM) -> None:
++    """Process a task with given priority.
++    
++    Args:
++        task_name: Name of the task to process
++        priority: Priority level for the task
++    """
++    print(f"Processing {task_name} with priority {priority.name}")
++
++
++class TaskManager:
++    """Manages tasks with priorities."""
++    
++    def __init__(self, default_priority: Priority = Priority.LOW):
++        """Initialize task manager.
++        
++        Args:
++            default_priority: Default priority for new tasks
++        """
++        self.default_priority = default_priority
++'''
++        
++        (srcdir / "mymodule.py").write_text(module_content)
++        
++        # Create conf.py
++        conf_content = f'''
++import sys
++import os
++sys.path.insert(0, os.path.abspath('.'))
++
++project = 'EnumTest'
++extensions = ['sphinx.ext.autodoc', 'sphinx.ext.napoleon']
++html_theme = 'alabaster'
++'''
++        (srcdir / "conf.py").write_text(conf_content)
++        
++        # Create index.rst
++        index_content = '''
++Enum Test Documentation
++=======================
++
++.. automodule:: mymodule
++   :members:
++   :undoc-members:
++   :show-inheritance:
++'''
++        (srcdir / "index.rst").write_text(index_content)
++        
++        # Run sphinx-build
++        result = subprocess.run(
++            ["sphinx-build", "-b", "html", str(srcdir), str(builddir)],
++            capture_output=True,
++            text=True
++        )
++        
++        print("Sphinx build output:")
++        print(result.stdout)
++        if result.stderr:
++            print("Errors:")
++            print(result.stderr)
++        
++        # Check the generated HTML
++        html_file = builddir / "index.html"
++        if html_file.exists():
++            html_content = html_file.read_text()
++            
++            # Look for function signatures
++            print("\nChecking generated HTML for enum rendering...")
++            
++            # Check process_task function
++            if "Priority.MEDIUM" in html_content:
++                print("✓ process_task: Clean enum format found (Priority.MEDIUM)")
++            else:
++                print("✗ process_task: Clean enum format NOT found")
++                
++            if "<Priority.MEDIUM: 2>" in html_content:
++                print("✗ process_task: Ugly enum format still present!")
++            else:
++                print("✓ process_task: Ugly enum format NOT present")
++                
++            # Check TaskManager.__init__
++            if "Priority.LOW" in html_content:
++                print("✓ TaskManager.__init__: Clean enum format found (Priority.LOW)")
++            else:
++                print("✗ TaskManager.__init__: Clean enum format NOT found")
++                
++            if "<Priority.LOW: 1>" in html_content:
++                print("✗ TaskManager.__init__: Ugly enum format still present!")
++            else:
++                print("✓ TaskManager.__init__: Ugly enum format NOT present")
++                
++            # Save a snippet of the HTML for debugging
++            import re
++            # Find all function signatures
++            sigs = re.findall(r'<em class="sig-param">.*?</em>', html_content, re.DOTALL)
++            if sigs:
++                print("\nFound signatures:")
++                for sig in sigs[:5]:  # Show first 5
++                    print(f"  {sig}")
++        else:
++            print(f"ERROR: HTML file not found at {html_file}")
++
++
++if __name__ == "__main__":
++    test_sphinx_enum_fix()
+diff --git a/tox.ini b/tox.ini
+index a363e187f..3b8bc12d0 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

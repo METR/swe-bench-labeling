@@ -1,0 +1,102 @@
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+index 30616c0172..d80ddab0ae 100644
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -563,6 +563,16 @@ class MigrationAutodetector:
+                 if isinstance(base, str) and "." in base:
+                     base_app_label, base_name = base.split(".", 1)
+                     dependencies.append((base_app_label, base_name, None, True))
++                    # Check for field removals from parent models that would clash
++                    # with this model's fields. If a field is being removed from a parent
++                    # and exists in the child, we need to depend on that removal.
++                    for field_name in model_state.fields:
++                        removal_key = (base_app_label, base_name.lower(), field_name)
++                        if (removal_key in self.old_field_keys and
++                            removal_key not in self.new_field_keys):
++                            # This field is being removed from the parent model
++                            # Add a dependency on the field removal
++                            dependencies.append((base_app_label, base_name.lower(), field_name, False))
+             # Depend on the other end of the primary key if it's a relation
+             if primary_key_rel:
+                 dependencies.append((
+diff --git a/test_field_migration_comprehensive.py b/test_field_migration_comprehensive.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_field_migration_issue.py b/test_field_migration_issue.py
+new file mode 100644
+index 0000000000..0d54293ffa
+--- /dev/null
++++ b/test_field_migration_issue.py
+@@ -0,0 +1,72 @@
++"""Test script to reproduce the field migration issue when moving field to subclass"""
++import os
++import sys
++import django
++from django.db import models
++from django.db.migrations.autodetector import MigrationAutodetector
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.migration import Migration
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}
++)
++django.setup()
++
++# Define the old state with Readable having a title field
++old_state = ProjectState()
++old_state.add_model(ModelState(
++    'testapp', 
++    'Readable',
++    [('id', models.AutoField(primary_key=True)),
++     ('title', models.CharField(max_length=200))],
++    {},
++    ()
++))
++
++# Define the new state with Book inheriting from Readable and having the title field
++new_state = ProjectState()
++new_state.add_model(ModelState(
++    'testapp', 
++    'Readable',
++    [('id', models.AutoField(primary_key=True))],
++    {},
++    ()
++))
++new_state.add_model(ModelState(
++    'testapp',
++    'Book',
++    [('readable_ptr', models.OneToOneField(
++        auto_created=True,
++        on_delete=models.CASCADE,
++        parent_link=True,
++        primary_key=True,
++        serialize=False,
++        to='testapp.Readable'
++     )),
++     ('title', models.CharField(max_length=200))],
++    {},
++    ('testapp.Readable',)
++))
++
++# Create autodetector and generate migrations
++autodetector = MigrationAutodetector(old_state, new_state)
++changes = autodetector._detect_changes()
++
++# Print the generated operations
++print("Generated operations:")
++for app_label, migrations in autodetector.migrations.items():
++    print(f"\nApp: {app_label}")
++    for migration in migrations:
++        print(f"  Migration: {migration.name}")
++        for operation in migration.operations:
++            print(f"    - {operation.__class__.__name__}")
++            if hasattr(operation, 'name'):
++                print(f"      name: {operation.name}")
++            if hasattr(operation, 'model_name'):  
++                print(f"      model_name: {operation.model_name}")
++            if hasattr(operation, 'field') and hasattr(operation, 'name'):
++                print(f"      field_name: {operation.name}")

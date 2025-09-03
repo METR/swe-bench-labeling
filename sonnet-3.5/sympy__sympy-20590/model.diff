@@ -1,0 +1,108 @@
+diff --git a/github_issue.md b/github_issue.md
+new file mode 100644
+index 0000000000..fe2d2d078c
+--- /dev/null
++++ b/github_issue.md
+@@ -0,0 +1,78 @@
++## Unexpected presence of `__dict__` in `Symbol` instances
++
++### Description
++
++In SymPy 1.7.1 running on Python 3.9.20, `Symbol` instances unexpectedly have a `__dict__` attribute, even though the `Symbol` class and its parent classes (except `Printable` and `object`) define `__slots__`. This behavior contradicts the typical behavior of classes with `__slots__` and may have implications for memory usage and performance.
++
++### Reproduction
++
++```python
++import sympy
++import sys
++
++print(f"Python version: {sys.version}")
++print(f"SymPy version: {sympy.__version__}")
++
++s = sympy.Symbol('s')
++print(f"Symbol 's' has __dict__: {'__dict__' in dir(s)}")
++print(f"Symbol 's' __slots__: {s.__slots__}")
++
++if '__dict__' in dir(s):
++    print(f"Symbol 's' __dict__ content: {s.__dict__}")
++
++# Check parent classes
++for cls in s.__class__.__mro__:
++    print(f"{cls.__name__} has __slots__: {'__slots__' in dir(cls)}")
++    if '__slots__' in dir(cls):
++        print(f"{cls.__name__} __slots__: {cls.__slots__}")
++```
++
++### Output
++
++```
++Python version: 3.9.20 (main, Oct  3 2024, 07:27:41) 
++[GCC 11.2.0]
++SymPy version: 1.7.1
++Symbol 's' has __dict__: True
++Symbol 's' __slots__: ('name',)
++Symbol 's' __dict__ content: {}
++Symbol has __slots__: True
++Symbol __slots__: ('name',)
++AtomicExpr has __slots__: True
++AtomicExpr __slots__: ()
++Atom has __slots__: True
++Atom __slots__: ()
++Expr has __slots__: True
++Expr __slots__: ()
++Boolean has __slots__: True
++Boolean __slots__: ()
++Basic has __slots__: True
++Basic __slots__: ('_mhash', '_args', '_assumptions')
++Printable has __slots__: False
++EvalfMixin has __slots__: True
++EvalfMixin __slots__: ()
++object has __slots__: False
++```
++
++### Expected Behavior
++
++`Symbol` instances should not have a `__dict__` attribute, as the class and its parent classes define `__slots__`.
++
++### Actual Behavior
++
++`Symbol` instances have an empty `__dict__` attribute.
++
++### Possible Causes
++
++This behavior might be related to changes in how Python 3.9 handles classes with `__slots__` in complex inheritance hierarchies.
++
++### Suggestions
++
++1. Investigate if this behavior is intentional or a side effect of Python 3.9's implementation.
++2. Add a test case to SymPy's test suite to check for the presence of `__dict__` in `Symbol` instances.
++3. Update the documentation to mention this behavior change if it's determined to be intentional or unavoidable.
++4. Consider the impact on memory usage and performance, and evaluate if any changes are needed in SymPy's codebase to address this issue.
++
++### Additional Notes
++
++This behavior was not present in SymPy 1.6.2, as mentioned in the original issue description. It would be helpful to determine which Python versions exhibit this behavior and if it's specific to certain SymPy versions.
+diff --git a/test_symbol_dict.py b/test_symbol_dict.py
+new file mode 100644
+index 0000000000..c309ae8aef
+--- /dev/null
++++ b/test_symbol_dict.py
+@@ -0,0 +1,18 @@
++import sympy
++import sys
++
++print(f"Python version: {sys.version}")
++print(f"SymPy version: {sympy.__version__}")
++
++s = sympy.Symbol('s')
++print(f"Symbol 's' has __dict__: {'__dict__' in dir(s)}")
++print(f"Symbol 's' __slots__: {s.__slots__}")
++
++if '__dict__' in dir(s):
++    print(f"Symbol 's' __dict__ content: {s.__dict__}")
++
++# Check parent classes
++for cls in s.__class__.__mro__:
++    print(f"{cls.__name__} has __slots__: {'__slots__' in dir(cls)}")
++    if '__slots__' in dir(cls):
++        print(f"{cls.__name__} __slots__: {cls.__slots__}")

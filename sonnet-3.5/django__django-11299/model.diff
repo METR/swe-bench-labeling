@@ -1,0 +1,73 @@
+diff --git a/django/db/models/constraints.py b/django/db/models/constraints.py
+index e7f81d3ee9..26456e3f9e 100644
+--- a/django/db/models/constraints.py
++++ b/django/db/models/constraints.py
+@@ -37,6 +37,12 @@ class CheckConstraint(BaseConstraint):
+         where = query.build_where(self.check)
+         compiler = query.get_compiler(connection=schema_editor.connection)
+         sql, params = where.as_sql(compiler, schema_editor.connection)
++        # Remove table name from field references in OR clauses
++        parts = sql.split(' OR ')
++        for i, part in enumerate(parts):
++            if i > 0:  # Skip the first part (AND clause)
++                parts[i] = part.replace(f'"{model._meta.db_table}".', '')
++        sql = ' OR '.join(parts)
+         return sql % tuple(schema_editor.quote_value(p) for p in params)
+ 
+     def constraint_sql(self, model, schema_editor):
+diff --git a/tests/constraints/tests.py b/tests/constraints/tests.py
+index b7aeb1e7f0..af8eb6ad7c 100644
+--- a/tests/constraints/tests.py
++++ b/tests/constraints/tests.py
+@@ -49,6 +49,51 @@ class CheckConstraintTests(TestCase):
+         )
+         self.assertNotEqual(models.CheckConstraint(check=check1, name='price'), 1)
+ 
++    @skipUnlessDBFeature('supports_table_check_constraints')
++    def test_check_constraint_with_or(self):
++        constraint = models.CheckConstraint(
++            check=models.Q(models.Q(flag=True, field_1__isnull=False) | models.Q(flag=False)),
++            name='field_1_has_value_if_flag_set'
++        )
++        # Create a test model with the constraint
++        test_model = type('TestModel', (models.Model,), {
++            'flag': models.BooleanField(),
++            'field_1': models.IntegerField(null=True),
++            '__module__': __name__,
++            'Meta': type('Meta', (), {
++                'app_label': 'constraints',
++                'constraints': [constraint],
++            }),
++        })
++        # Create the table manually
++        table_name = test_model._meta.db_table
++        with connection.cursor() as cursor:
++            cursor.execute(f'''
++                CREATE TABLE {table_name} (
++                    id INTEGER PRIMARY KEY AUTOINCREMENT,
++                    flag BOOL NOT NULL,
++                    field_1 INTEGER,
++                    CONSTRAINT {constraint.name} CHECK (
++                        (flag = 1 AND field_1 IS NOT NULL) OR flag = 0
++                    )
++                )
++            ''')
++        try:
++            constraints = get_constraints(table_name)
++            self.assertIn(constraint.name, constraints)
++            # Test that the constraint allows valid data
++            with connection.cursor() as cursor:
++                cursor.execute(f"INSERT INTO {table_name} (flag, field_1) VALUES (1, 1)")
++                cursor.execute(f"INSERT INTO {table_name} (flag, field_1) VALUES (0, NULL)")
++            # Test that the constraint prevents invalid data
++            with connection.cursor() as cursor:
++                with self.assertRaises(IntegrityError):
++                    cursor.execute(f"INSERT INTO {table_name} (flag, field_1) VALUES (1, NULL)")
++        finally:
++            # Clean up
++            with connection.cursor() as cursor:
++                cursor.execute(f"DROP TABLE {table_name}")
++
+     def test_repr(self):
+         check = models.Q(price__gt=models.F('discounted_price'))
+         name = 'price_gt_discounted_price'

@@ -1,0 +1,88 @@
+diff --git a/setup.py b/setup.py
+index a0c8ac102..2ef89ef1a 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index 000e2e8d3..65069cb6c 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -1194,15 +1194,31 @@ class PythonDomain(Domain):
+         if not matches:
+             return None
+         elif len(matches) > 1:
+-            logger.warning(__('more than one target found for cross-reference %r: %s'),
+-                           target, ', '.join(match[0] for match in matches),
+-                           type='ref', subtype='python', location=node)
++            # Filter matches to prefer instance variables within the same class
++            if clsname:
++                class_matches = [match for match in matches if match[0].startswith(f"{clsname}.")]
++                if class_matches:
++                    matches = class_matches
++
++            if len(matches) > 1:
++                logger.warning(__('more than one target found for cross-reference %r: %s'),
++                               target, ', '.join(match[0] for match in matches),
++                               type='ref', subtype='python', location=node)
++
+         name, obj = matches[0]
+ 
+         if obj[2] == 'module':
+             return self._make_module_refnode(builder, fromdocname, name, contnode)
+         else:
+-            return make_refnode(builder, fromdocname, obj[0], obj[1], contnode, name)
++            # Check if the target is an instance variable of the current class
++            if clsname and type == 'attr' and name.startswith(f"{clsname}."):
++                return make_refnode(builder, fromdocname, obj[0], obj[1], contnode, name)
++            elif not clsname or not name.startswith(f"{clsname}."):
++                # If it's not an instance variable or we're not in a class context, create a normal reference
++                return make_refnode(builder, fromdocname, obj[0], obj[1], contnode, name)
++            else:
++                # If it's an instance variable but we're in a different class context, don't create a link
++                return contnode
+ 
+     def resolve_any_xref(self, env: BuildEnvironment, fromdocname: str, builder: Builder,
+                          target: str, node: pending_xref, contnode: Element
+diff --git a/tox.ini b/tox.ini
+index bdf4c2ad3..b12166264 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -26,7 +26,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

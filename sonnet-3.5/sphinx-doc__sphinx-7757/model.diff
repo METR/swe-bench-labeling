@@ -1,0 +1,108 @@
+diff --git a/setup.py b/setup.py
+index 5e822fe9b..77b63df38 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index fc1136ae2..9497987c3 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -172,13 +172,10 @@ def _parse_arglist(arglist: str) -> addnodes.desc_parameterlist:
+             node += nodes.Text(' ')
+             node += addnodes.desc_sig_name('', '', *children)  # type: ignore
+         if param.default is not param.empty:
+-            if param.annotation is not param.empty:
+-                node += nodes.Text(' ')
+-                node += addnodes.desc_sig_operator('', '=')
+-                node += nodes.Text(' ')
+-            else:
+-                node += addnodes.desc_sig_operator('', '=')
+-            node += nodes.inline('', param.default, classes=['default_value'],
++            node += nodes.Text(' ')
++            node += addnodes.desc_sig_operator('', '=')
++            node += nodes.Text(' ')
++            node += nodes.inline('', str(param.default), classes=['default_value'],
+                                  support_smartquotes=False)
+ 
+         params += node
+diff --git a/tests/roots/test-positional-only-args/conf.py b/tests/roots/test-positional-only-args/conf.py
+new file mode 100644
+index 000000000..5f27b6583
+--- /dev/null
++++ b/tests/roots/test-positional-only-args/conf.py
+@@ -0,0 +1,3 @@
++extensions = ['sphinx.ext.autodoc']
++
++master_doc = 'index'
+diff --git a/tests/roots/test-positional-only-args/index.rst b/tests/roots/test-positional-only-args/index.rst
+new file mode 100644
+index 000000000..c5325d16f
+--- /dev/null
++++ b/tests/roots/test-positional-only-args/index.rst
+@@ -0,0 +1,6 @@
++Test for positional-only arguments
++==================================
++
++.. py:function:: foo(a, b=0, /, c=1)
++
++   This is a test function with positional-only arguments.
+diff --git a/tests/test_build_html.py b/tests/test_build_html.py
+index b3406b74c..bd507876b 100644
+--- a/tests/test_build_html.py
++++ b/tests/test_build_html.py
+@@ -1573,3 +1573,11 @@ def test_html_scaled_image_link(app):
+     assert re.search('\n<img alt="_images/img.png" class="no-scaled-link"'
+                      ' src="_images/img.png" style="[^"]+" />',
+                      context)
++
++@pytest.mark.sphinx('html', testroot='positional-only-args')
++def test_positional_only_args(app, warning):
++    app.build()
++    content = (app.outdir / 'index.html').read_text(encoding='utf8')
++    assert 'foo(a, b=0, /, c=1)' in content
++    assert '<span class="default_value">0</span>' in content
++    assert '<span class="default_value">1</span>' in content
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

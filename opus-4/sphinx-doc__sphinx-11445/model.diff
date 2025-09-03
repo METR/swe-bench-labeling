@@ -1,0 +1,470 @@
+diff --git a/sphinx/util/rst.py b/sphinx/util/rst.py
+index 7a1538325..233a648dc 100644
+--- a/sphinx/util/rst.py
++++ b/sphinx/util/rst.py
+@@ -25,7 +25,7 @@ except ImportError:
+ 
+ logger = logging.getLogger(__name__)
+ 
+-docinfo_re = re.compile(':\\w+:.*?')
++docinfo_re = re.compile(':\\w+:\\s.*')
+ symbols_re = re.compile(r'([!-\-/:-@\[-`{-~])')  # symbols without dot(0x2e)
+ SECTIONING_CHARS = ['=', '-', '~']
+ 
+@@ -85,12 +85,29 @@ def prepend_prolog(content: StringList, prolog: str) -> None:
+             else:
+                 break
+ 
+-        if pos > 0:
+-            # insert a blank line after docinfo
++        # Check if the first non-docinfo lines form a section heading
++        # A section heading consists of a title line followed by an underline
++        if pos < len(content) - 1:
++            title_line = content[pos] if pos < len(content) else ''
++            underline_line = content[pos + 1] if pos + 1 < len(content) else ''
++            
++            # Check if this is a section heading
++            if (title_line and underline_line and 
++                len(set(underline_line)) == 1 and  # All chars are the same
++                underline_line[0] in '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~' and  # Valid section char
++                len(underline_line) >= len(title_line)):  # Underline is long enough
++                # This is a section heading, insert after it
++                pos += 2
++                # Skip any blank lines after the heading
++                while pos < len(content) and not content[pos].strip():
++                    pos += 1
++
++        if pos > 0 and (pos >= len(content) or content[pos - 1].strip()):
++            # insert a blank line after docinfo or heading
+             content.insert(pos, '', '<generated>', 0)
+             pos += 1
+ 
+-        # insert prolog (after docinfo if exists)
++        # insert prolog (after docinfo/heading if exists)
+         for lineno, line in enumerate(prolog.splitlines()):
+             content.insert(pos + lineno, line, '<rst_prolog>', lineno)
+ 
+diff --git a/test_docinfo.py b/test_docinfo.py
+new file mode 100644
+index 000000000..5bbc30a82
+--- /dev/null
++++ b/test_docinfo.py
+@@ -0,0 +1,17 @@
++"""Test docinfo regex"""
++import re
++
++docinfo_re = re.compile(':\\w+:\\s.*')
++
++test_cases = [
++    ":mod:`mypackage2`",  # This is a role, not docinfo
++    ":Author: John Doe",  # This is docinfo
++    ":Version: 1.0",      # This is docinfo
++    ":Date: 2023-01-01",  # This is docinfo
++    "Normal text",        # Not docinfo
++    ":func:`test`",       # This is a role, not docinfo
++]
++
++for test in test_cases:
++    match = docinfo_re.match(test)
++    print(f"{test:30} -> {'MATCH' if match else 'NO MATCH'}")
+diff --git a/test_docinfo_debug.py b/test_docinfo_debug.py
+new file mode 100644
+index 000000000..c739ab4a0
+--- /dev/null
++++ b/test_docinfo_debug.py
+@@ -0,0 +1,24 @@
++"""Debug docinfo case"""
++from docutils.statemachine import StringList
++from sphinx.util.rst import prepend_prolog
++
++content = StringList([
++    ':Author: John Doe',
++    ':Date: 2023-01-01',
++    '',
++    ':mod:`mypackage`',
++    '================',
++    '',
++    'Content'
++], 'test.rst')
++
++print("Before prepending:")
++for i, line in enumerate(content):
++    print(f"{i}: {repr(line)}")
++
++prolog = '.. |psf| replace:: Python Software Foundation'
++prepend_prolog(content, prolog)
++
++print("\nAfter prepending:")
++for i, line in enumerate(content):
++    print(f"{i}: {repr(line)}")
+diff --git a/test_heading_detection.py b/test_heading_detection.py
+new file mode 100644
+index 000000000..3ee963fa3
+--- /dev/null
++++ b/test_heading_detection.py
+@@ -0,0 +1,43 @@
++"""Test to understand section heading detection"""
++import re
++
++# Test various patterns
++test_cases = [
++    # (title_line, underline_line, expected_result)
++    (":mod:`mypackage2`", "=================", True),
++    ("Simple Title", "============", True),
++    ("Another Title", "-------------", True),
++    (":mod:`test`", "===========", True),
++    ("", "=================", False),  # Empty title
++    ("Title", "===", False),  # Underline too short
++    ("Title", "=================", True),  # Underline longer than title
++]
++
++def is_section_heading(title_line, underline_line):
++    """Check if two lines form a section heading"""
++    if not title_line or not underline_line:
++        return False
++    
++    # Check if underline consists of only section characters
++    if not underline_line:
++        return False
++    
++    # Common section characters in reST
++    section_chars = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'
++    
++    # Check if all characters in underline are the same and are section chars
++    if len(set(underline_line)) != 1:
++        return False
++    
++    if underline_line[0] not in section_chars:
++        return False
++    
++    # Check if underline is at least as long as the title
++    # (accounting for markup like :mod:`...`)
++    return len(underline_line) >= len(title_line)
++
++print("Testing section heading detection:")
++for title, underline, expected in test_cases:
++    result = is_section_heading(title, underline)
++    status = "✓" if result == expected else "✗"
++    print(f"{status} '{title}' / '{underline}' -> {result} (expected {expected})")
+diff --git a/test_heading_with_domain_directive.py b/test_heading_with_domain_directive.py
+new file mode 100644
+index 000000000..1571a0688
+--- /dev/null
++++ b/test_heading_with_domain_directive.py
+@@ -0,0 +1,81 @@
++"""Test for the fix of domain directive headings with rst_prolog"""
++from docutils.statemachine import StringList
++from sphinx.util.rst import prepend_prolog
++
++def test_domain_directive_heading_with_prolog():
++    """Test that rst_prolog doesn't break headings with domain directives."""
++    # Test case 1: heading with :mod: directive
++    content = StringList([
++        ':mod:`mypackage`',
++        '================',
++        '',
++        'Content here'
++    ], 'test.rst')
++    
++    prolog = '.. |psf| replace:: Python Software Foundation'
++    prepend_prolog(content, prolog)
++    
++    # The prolog should be inserted after the heading, not in the middle
++    assert content[0] == ':mod:`mypackage`'
++    assert content[1] == '================'
++    assert content[2] == ''
++    assert content[3] == '.. |psf| replace:: Python Software Foundation'
++    assert content[4] == ''
++    assert content[5] == 'Content here'
++    
++    # Test case 2: heading with :func: directive
++    content2 = StringList([
++        ':func:`my_function`',
++        '===================',
++        '',
++        'Function docs'
++    ], 'test.rst')
++    
++    prepend_prolog(content2, prolog)
++    
++    assert content2[0] == ':func:`my_function`'
++    assert content2[1] == '==================='
++    assert content2[2] == ''
++    assert content2[3] == '.. |psf| replace:: Python Software Foundation'
++    
++    # Test case 3: normal heading (should still work)
++    content3 = StringList([
++        'Normal Heading',
++        '==============',
++        '',
++        'Content'
++    ], 'test.rst')
++    
++    prepend_prolog(content3, prolog)
++    
++    assert content3[0] == 'Normal Heading'
++    assert content3[1] == '=============='
++    assert content3[2] == ''
++    assert content3[3] == '.. |psf| replace:: Python Software Foundation'
++    
++    # Test case 4: document with docinfo
++    content4 = StringList([
++        ':Author: John Doe',
++        ':Date: 2023-01-01',
++        '',
++        ':mod:`mypackage`',
++        '================',
++        '',
++        'Content'
++    ], 'test.rst')
++    
++    prepend_prolog(content4, prolog)
++    
++    # Prolog should be after docinfo but before heading
++    assert content4[0] == ':Author: John Doe'
++    assert content4[1] == ':Date: 2023-01-01'
++    assert content4[2] == ''
++    assert content4[3] == '.. |psf| replace:: Python Software Foundation'
++    assert content4[4] == ''
++    assert content4[5] == ':mod:`mypackage`'
++    assert content4[6] == '================'
++    
++    print("All tests passed!")
++
++if __name__ == '__main__':
++    test_domain_directive_heading_with_prolog()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..57411bf8a
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,30 @@
++"""Test script to debug the rst_prolog issue"""
++from docutils.statemachine import StringList
++
++content = """:mod:`mypackage2`
++=================
++
++Content
++
++Subheading
++----------
++"""
++
++prolog = """.. |psf| replace:: Python Software Foundation
++"""
++
++# Create a StringList from the content
++lines = content.strip().split('\n')
++string_list = StringList(lines, 'test.rst')
++
++print("Original content:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {line}")
++
++# Now let's see what happens when we prepend prolog
++from sphinx.util.rst import prepend_prolog
++prepend_prolog(string_list, prolog)
++
++print("\nContent after prepending prolog:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {line}")
+diff --git a/test_issue2.py b/test_issue2.py
+new file mode 100644
+index 000000000..623e1f273
+--- /dev/null
++++ b/test_issue2.py
+@@ -0,0 +1,35 @@
++"""Test script to debug the rst_prolog issue"""
++from docutils.statemachine import StringList
++
++content = """:mod:`mypackage2`
++=================
++
++Content
++
++Subheading
++----------
++"""
++
++prolog = """.. |psf| replace:: Python Software Foundation
++"""
++
++# Create a StringList from the content
++lines = content.strip().split('\n')
++string_list = StringList(lines, 'test.rst')
++
++print("Original content:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {repr(line)}")
++
++# Reload the module to get our changes
++import importlib
++import sphinx.util.rst
++importlib.reload(sphinx.util.rst)
++from sphinx.util.rst import prepend_prolog
++
++# Now let's see what happens when we prepend prolog
++prepend_prolog(string_list, prolog)
++
++print("\nContent after prepending prolog:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {repr(line)}")
+diff --git a/test_issue3.py b/test_issue3.py
+new file mode 100644
+index 000000000..4504e2026
+--- /dev/null
++++ b/test_issue3.py
+@@ -0,0 +1,47 @@
++"""Test script to debug the rst_prolog issue - with debugging"""
++from docutils.statemachine import StringList
++
++content = """:mod:`mypackage2`
++=================
++
++Content
++
++Subheading
++----------
++"""
++
++prolog = """.. |psf| replace:: Python Software Foundation
++"""
++
++# Create a StringList from the content
++lines = content.strip().split('\n')
++string_list = StringList(lines, 'test.rst')
++
++print("Original content:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {repr(line)}")
++
++# Let's manually check what our function should detect
++pos = 0
++if pos < len(string_list) - 1:
++    title_line = string_list[pos]
++    underline_line = string_list[pos + 1]
++    print(f"\nChecking lines at pos={pos}:")
++    print(f"  Title: {repr(title_line)}")
++    print(f"  Underline: {repr(underline_line)}")
++    print(f"  len(set(underline_line)): {len(set(underline_line))}")
++    print(f"  underline_line[0]: {repr(underline_line[0])}")
++    print(f"  len(underline_line) >= len(title_line): {len(underline_line)} >= {len(title_line)} = {len(underline_line) >= len(title_line)}")
++    
++# Reload the module to get our changes
++import importlib
++import sphinx.util.rst
++importlib.reload(sphinx.util.rst)
++from sphinx.util.rst import prepend_prolog
++
++# Now let's see what happens when we prepend prolog
++prepend_prolog(string_list, prolog)
++
++print("\nContent after prepending prolog:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {repr(line)}")
+diff --git a/test_issue4.py b/test_issue4.py
+new file mode 100644
+index 000000000..a116e201d
+--- /dev/null
++++ b/test_issue4.py
+@@ -0,0 +1,86 @@
++"""Test script to debug the rst_prolog issue - with inline debug"""
++from docutils.statemachine import StringList
++
++def prepend_prolog_debug(content: StringList, prolog: str) -> None:
++    """Prepend a string to content body as prolog."""
++    import re
++    docinfo_re = re.compile(':\\w+:.*?')
++    
++    if prolog:
++        pos = 0
++        print(f"DEBUG: Starting pos = {pos}")
++        for line in content:
++            if docinfo_re.match(line):
++                print(f"DEBUG: Found docinfo line: {repr(line)}")
++                pos += 1
++            else:
++                print(f"DEBUG: Not a docinfo line, breaking at: {repr(line)}")
++                break
++        print(f"DEBUG: After docinfo check, pos = {pos}")
++
++        # Check if the first non-docinfo lines form a section heading
++        # A section heading consists of a title line followed by an underline
++        if pos < len(content) - 1:
++            title_line = content[pos] if pos < len(content) else ''
++            underline_line = content[pos + 1] if pos + 1 < len(content) else ''
++            
++            print(f"DEBUG: Checking for section heading at pos={pos}")
++            print(f"DEBUG:   title_line = {repr(title_line)}")
++            print(f"DEBUG:   underline_line = {repr(underline_line)}")
++            
++            # Check if this is a section heading
++            if (title_line and underline_line and 
++                len(set(underline_line)) == 1 and  # All chars are the same
++                underline_line[0] in '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~' and  # Valid section char
++                len(underline_line) >= len(title_line)):  # Underline is long enough
++                # This is a section heading, insert after it
++                print(f"DEBUG: Detected section heading!")
++                pos += 2
++                print(f"DEBUG: pos after skipping heading = {pos}")
++                # Skip any blank lines after the heading
++                while pos < len(content) and not content[pos].strip():
++                    print(f"DEBUG: Skipping blank line at pos={pos}")
++                    pos += 1
++                print(f"DEBUG: pos after skipping blanks = {pos}")
++            else:
++                print(f"DEBUG: Not a section heading")
++
++        if pos > 0 and (pos >= len(content) or content[pos - 1].strip()):
++            # insert a blank line after docinfo or heading
++            print(f"DEBUG: Inserting blank line at pos={pos}")
++            content.insert(pos, '', '<generated>', 0)
++            pos += 1
++
++        # insert prolog (after docinfo/heading if exists)
++        print(f"DEBUG: Inserting prolog at pos={pos}")
++        for lineno, line in enumerate(prolog.splitlines()):
++            content.insert(pos + lineno, line, '<rst_prolog>', lineno)
++
++        content.insert(pos + lineno + 1, '', '<generated>', 0)
++
++content = """:mod:`mypackage2`
++=================
++
++Content
++
++Subheading
++----------
++"""
++
++prolog = """.. |psf| replace:: Python Software Foundation
++"""
++
++# Create a StringList from the content
++lines = content.strip().split('\n')
++string_list = StringList(lines, 'test.rst')
++
++print("Original content:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {repr(line)}")
++
++# Now let's see what happens when we prepend prolog
++prepend_prolog_debug(string_list, prolog)
++
++print("\nContent after prepending prolog:")
++for i, line in enumerate(string_list):
++    print(f"{i}: {repr(line)}")
+diff --git a/tox.ini b/tox.ini
+index 512aa5f74..84c8093a3 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -24,7 +24,7 @@ setenv =
+     PYTHONWARNINGS = error
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -X warn_default_encoding -m pytest --durations 25 {posargs}
++    python -X dev -X warn_default_encoding -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:docs]
+ basepython = python3

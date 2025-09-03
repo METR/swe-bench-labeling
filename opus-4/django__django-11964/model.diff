@@ -1,0 +1,49 @@
+diff --git a/django/db/models/enums.py b/django/db/models/enums.py
+index bbe362a6ab..2d5902815c 100644
+--- a/django/db/models/enums.py
++++ b/django/db/models/enums.py
+@@ -65,11 +65,16 @@ class Choices(enum.Enum, metaclass=ChoicesMeta):
+ 
+ class IntegerChoices(int, Choices):
+     """Class for creating enumerated integer choices."""
+-    pass
++    
++    def __str__(self):
++        return str(self.value)
+ 
+ 
+ class TextChoices(str, Choices):
+     """Class for creating enumerated string choices."""
++    
++    def __str__(self):
++        return str(self.value)
+ 
+     def _generate_next_value_(name, start, count, last_values):
+         return name
+diff --git a/tests/model_enums/tests.py b/tests/model_enums/tests.py
+index 6b4bd6e7fd..53904eaf2b 100644
+--- a/tests/model_enums/tests.py
++++ b/tests/model_enums/tests.py
+@@ -143,6 +143,22 @@ class ChoicesTests(SimpleTestCase):
+                 APPLE = 1, 'Apple'
+                 PINEAPPLE = 1, 'Pineapple'
+ 
++    def test_textchoices_str_method(self):
++        """Test that TextChoices.__str__ returns the value, not the enum representation."""
++        self.assertEqual(str(YearInSchool.FRESHMAN), 'FR')
++        self.assertEqual(str(YearInSchool.SOPHOMORE), 'SO')
++        self.assertEqual(str(YearInSchool.JUNIOR), 'JR')
++        # The repr should still show the enum representation
++        self.assertEqual(repr(YearInSchool.FRESHMAN), "<YearInSchool.FRESHMAN: 'FR'>")
++
++    def test_integerchoices_str_method(self):
++        """Test that IntegerChoices.__str__ returns the string value, not the enum representation."""
++        self.assertEqual(str(Suit.DIAMOND), '1')
++        self.assertEqual(str(Suit.SPADE), '2') 
++        self.assertEqual(str(Suit.HEART), '3')
++        # The repr should still show the enum representation
++        self.assertEqual(repr(Suit.DIAMOND), '<Suit.DIAMOND: 1>')
++
+ 
+ class Separator(bytes, models.Choices):
+     FS = b'\x1c', 'File Separator'

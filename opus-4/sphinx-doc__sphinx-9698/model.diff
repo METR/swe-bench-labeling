@@ -1,0 +1,342 @@
+diff --git a/setup.py b/setup.py
+index 3dbc8746b..31bd48c0a 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index cd02eaad5..a3f9c639b 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -789,14 +789,20 @@ class PyMethod(PyObject):
+                 clsname = '.'.join([modname, clsname])
+         except ValueError:
+             if modname:
+-                return _('%s() (in module %s)') % (name, modname)
++                if 'property' in self.options:
++                    return _('%s (in module %s)') % (name, modname)
++                else:
++                    return _('%s() (in module %s)') % (name, modname)
+             else:
+-                return '%s()' % name
++                if 'property' in self.options:
++                    return name
++                else:
++                    return '%s()' % name
+ 
+         if 'classmethod' in self.options:
+             return _('%s() (%s class method)') % (methname, clsname)
+         elif 'property' in self.options:
+-            return _('%s() (%s property)') % (methname, clsname)
++            return _('%s (%s property)') % (methname, clsname)
+         elif 'staticmethod' in self.options:
+             return _('%s() (%s static method)') % (methname, clsname)
+         else:
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..cc56b01e3
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,91 @@
++#!/usr/bin/env python3
++"""Comprehensive test for various method and property directives."""
++
++import os
++import tempfile
++from sphinx.application import Sphinx
++from sphinx.util.docutils import docutils_namespace
++
++# Create test RST content
++test_rst = """
++Test Various Methods and Properties
++===================================
++
++.. py:class:: TestClass
++
++   .. py:method:: regular_method(arg1, arg2)
++
++      A regular method
++
++   .. py:method:: property_method
++      :property:
++
++      A property using py:method directive
++
++   .. py:property:: regular_property
++
++      A regular property
++
++   .. py:method:: classmethod_example()
++      :classmethod:
++
++      A class method
++
++   .. py:method:: staticmethod_example()
++      :staticmethod:
++
++      A static method
++
++   .. py:method:: abstract_property
++      :property:
++      :abstractmethod:
++
++      An abstract property using py:method
++
++.. py:function:: module_function(x, y)
++
++   A module-level function
++
++.. py:method:: module_level_property
++   :property:
++
++   A module-level property (edge case)
++"""
++
++# Create a temporary directory for the test
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Write test RST file
++    with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++        f.write(test_rst)
++    
++    # Write minimal conf.py
++    with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++        f.write("extensions = []\n")
++    
++    # Build the documentation
++    outdir = os.path.join(tmpdir, '_build')
++    with docutils_namespace():
++        app = Sphinx(tmpdir, tmpdir, outdir, os.path.join(outdir, '.doctrees'), 'html')
++        app.build()
++    
++    # Check the index
++    print("Index entries:")
++    from sphinx.environment.adapters.indexentries import IndexEntries
++    indexentries = IndexEntries(app.env)
++    entries = indexentries.create_index(app.builder)
++    
++    # Look for our entries in the index
++    for letter, items in entries:
++        for entry in items:
++            if any(name in entry[0] for name in ['method', 'property', 'function']):
++                print(f"  {entry[0]}")
++    
++    print("\nExpected results:")
++    print("  - regular_method() should have parentheses")
++    print("  - property_method should NOT have parentheses") 
++    print("  - regular_property should NOT have parentheses")
++    print("  - classmethod_example() should have parentheses")
++    print("  - staticmethod_example() should have parentheses")
++    print("  - abstract_property should NOT have parentheses")
++    print("  - module_function() should have parentheses")
++    print("  - module_level_property should NOT have parentheses")
+diff --git a/test_property_html_output.py b/test_property_html_output.py
+new file mode 100644
+index 000000000..12ee9079a
+--- /dev/null
++++ b/test_property_html_output.py
+@@ -0,0 +1,70 @@
++#!/usr/bin/env python3
++"""Test HTML output for property index entries."""
++
++import os
++import tempfile
++from sphinx.application import Sphinx
++from sphinx.util.docutils import docutils_namespace
++
++# Create test RST content
++test_rst = """
++Test Property Index
++===================
++
++.. py:class:: Foo
++
++   .. py:method:: bar
++      :property:
++
++      This is a property defined using py:method with :property: option
++
++   .. py:property:: baz
++
++      This is a property defined using py:property directive
++"""
++
++# Create a temporary directory for the test
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Write test RST file
++    with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++        f.write(test_rst)
++    
++    # Write minimal conf.py
++    with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++        f.write("extensions = []\n")
++    
++    # Build the documentation
++    outdir = os.path.join(tmpdir, '_build', 'html')
++    with docutils_namespace():
++        app = Sphinx(tmpdir, tmpdir, outdir, os.path.join(outdir, '.doctrees'), 'html')
++        app.build()
++    
++    # Check the generated HTML index file
++    index_path = os.path.join(outdir, 'genindex.html')
++    if os.path.exists(index_path):
++        with open(index_path, 'r') as f:
++            html_content = f.read()
++        
++        # Check for the entries
++        print("Checking generated HTML index...")
++        if 'bar()' in html_content:
++            print("❌ Found 'bar()' with parentheses in HTML - this is WRONG!")
++        elif 'bar' in html_content and 'Foo property' in html_content:
++            print("✅ Found 'bar' without parentheses in HTML - correct!")
++        
++        if 'baz()' in html_content:
++            print("❌ Found 'baz()' with parentheses in HTML - this is wrong!")
++        elif 'baz' in html_content and 'Foo property' in html_content:
++            print("✅ Found 'baz' without parentheses in HTML - correct!")
++            
++        # Print relevant parts of the HTML for verification
++        print("\nRelevant HTML snippets:")
++        lines = html_content.split('\n')
++        for i, line in enumerate(lines):
++            if 'bar' in line or 'baz' in line:
++                # Print context lines
++                start = max(0, i-1)
++                end = min(len(lines), i+2)
++                for j in range(start, end):
++                    if 'bar' in lines[j] or 'baz' in lines[j]:
++                        print(f"  Line {j}: {lines[j].strip()}")
+diff --git a/test_property_index.py b/test_property_index.py
+new file mode 100644
+index 000000000..3bb91bc33
+--- /dev/null
++++ b/test_property_index.py
+@@ -0,0 +1,66 @@
++#!/usr/bin/env python3
++"""Test to verify the property index entry issue."""
++
++import os
++import tempfile
++from sphinx.application import Sphinx
++from sphinx.util.docutils import docutils_namespace
++
++# Create test RST content
++test_rst = """
++Test Property Index
++===================
++
++.. py:class:: Foo
++
++   .. py:method:: bar
++      :property:
++
++      This is a property defined using py:method with :property: option
++
++   .. py:property:: baz
++
++      This is a property defined using py:property directive
++"""
++
++# Create a temporary directory for the test
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Write test RST file
++    with open(os.path.join(tmpdir, 'index.rst'), 'w') as f:
++        f.write(test_rst)
++    
++    # Write minimal conf.py
++    with open(os.path.join(tmpdir, 'conf.py'), 'w') as f:
++        f.write("extensions = []\n")
++    
++    # Build the documentation
++    outdir = os.path.join(tmpdir, '_build')
++    with docutils_namespace():
++        app = Sphinx(tmpdir, tmpdir, outdir, os.path.join(outdir, '.doctrees'), 'html')
++        app.build()
++    
++    # Check the generated index entries
++    index_entries = app.env.domains['py'].data['objects']
++    
++    print("Index entries found:")
++    for key, value in index_entries.items():
++        print(f"  {key}: {value}")
++    
++    # Check if we can find the specific entries
++    print("\nChecking specific entries:")
++    if 'Foo.bar' in index_entries:
++        print(f"  Foo.bar found: {index_entries['Foo.bar']}")
++    if 'Foo.baz' in index_entries:
++        print(f"  Foo.baz found: {index_entries['Foo.baz']}")
++    
++    # Check the index
++    print("\nGeneral index entries:")
++    from sphinx.environment.adapters.indexentries import IndexEntries
++    indexentries = IndexEntries(app.env)
++    entries = indexentries.create_index(app.builder)
++    
++    # Look for our entries in the index
++    for letter, items in entries:
++        for entry in items:
++            if 'bar' in entry[0] or 'baz' in entry[0]:
++                print(f"  Found: {entry[0]} (type: {entry[1]})")
+diff --git a/tests/test_domain_py.py b/tests/test_domain_py.py
+index 682ea76e1..5ba63d0e3 100644
+--- a/tests/test_domain_py.py
++++ b/tests/test_domain_py.py
+@@ -756,7 +756,7 @@ def test_pymethod_options(app):
+ 
+     # :property:
+     assert_node(doctree[1][1][8], addnodes.index,
+-                entries=[('single', 'meth5() (Class property)', 'Class.meth5', '', None)])
++                entries=[('single', 'meth5 (Class property)', 'Class.meth5', '', None)])
+     assert_node(doctree[1][1][9], ([desc_signature, ([desc_annotation, ("property", desc_sig_space)],
+                                                      [desc_name, "meth5"])],
+                                    [desc_content, ()]))
+diff --git a/tox.ini b/tox.ini
+index 00c8e13bd..11d3352df 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -22,14 +22,14 @@ deps =
+     du15: docutils==0.15.*
+     du16: docutils==0.16.*
+     du17: docutils==0.17.*
+-    py311: git+https://github.com/pytest-dev/py
++    py311: git+https://github.com/pytest -rA-dev/py
+ extras =
+     test
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:du-latest]
+ commands =

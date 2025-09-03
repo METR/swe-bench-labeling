@@ -1,0 +1,150 @@
+diff --git a/test_integrate_api.py b/test_integrate_api.py
+new file mode 100644
+index 00000000..421a838b
+--- /dev/null
++++ b/test_integrate_api.py
+@@ -0,0 +1,30 @@
++import xarray as xr
++import numpy as np
++
++# Test current API
++da = xr.DataArray(
++    np.arange(12).reshape(4, 3),
++    dims=["x", "y"],
++    coords={"x": [0, 0.1, 1.1, 1.2]},
++)
++
++print("Testing current API:")
++print("da.integrate('x'):", da.integrate('x'))
++try:
++    print("da.integrate(dim='x'):", da.integrate(dim='x'))
++except Exception as e:
++    print("da.integrate(dim='x') failed:", e)
++
++try:
++    print("da.integrate(coord='x'):", da.integrate(coord='x'))
++except Exception as e:
++    print("da.integrate(coord='x') failed:", e)
++
++# Test dataset
++ds = xr.Dataset({"var": da})
++print("\nDataset integrate:")
++print("ds.integrate('x'):", ds.integrate('x'))
++try:
++    print("ds.integrate(coord='x'):", ds.integrate(coord='x'))
++except Exception as e:
++    print("ds.integrate(coord='x') failed:", e)
+diff --git a/test_integrate_edge_cases.py b/test_integrate_edge_cases.py
+new file mode 100644
+index 00000000..60e90617
+--- /dev/null
++++ b/test_integrate_edge_cases.py
+@@ -0,0 +1,61 @@
++import xarray as xr
++import numpy as np
++
++# Test edge cases and backward compatibility
++da = xr.DataArray(
++    np.arange(12).reshape(4, 3),
++    dims=["x", "y"],
++    coords={"x": [0, 0.1, 1.1, 1.2]},
++)
++
++# Test positional arguments (should work with backward compatibility)
++print("Positional argument test:")
++try:
++    result1 = da.integrate("x")
++    print("da.integrate('x') works:", result1.values)
++except Exception as e:
++    print("da.integrate('x') failed:", e)
++
++# Test keyword argument with new name
++print("\nKeyword argument test (new name):")
++try:
++    result2 = da.integrate(coord="x")
++    print("da.integrate(coord='x') works:", result2.values)
++except Exception as e:
++    print("da.integrate(coord='x') failed:", e)
++
++# Test old keyword argument name (should fail)
++print("\nKeyword argument test (old name):")
++try:
++    result3 = da.integrate(dim="x")
++    print("da.integrate(dim='x') works:", result3.values)
++except Exception as e:
++    print("da.integrate(dim='x') failed:", e)
++
++# Test multiple coordinates
++print("\nMultiple coordinates test:")
++try:
++    result4 = da.integrate(["x", "y"])
++    print("da.integrate(['x', 'y']) works:", result4.values)
++except Exception as e:
++    print("da.integrate(['x', 'y']) failed:", e)
++
++# Test datetime_unit parameter
++print("\nDatetime unit parameter test:")
++try:
++    result5 = da.integrate("x", datetime_unit="s")
++    print("da.integrate('x', datetime_unit='s') works:", result5.values)
++except Exception as e:
++    print("da.integrate('x', datetime_unit='s') failed:", e)
++
++# Compare with Dataset behavior
++print("\nDataset consistency check:")
++ds = xr.Dataset({"var": da})
++try:
++    ds_result1 = ds.integrate(coord="x")
++    print("ds.integrate(coord='x') works")
++    
++    # Check if results match
++    print("Results match:", np.allclose(result2.values, ds_result1["var"].values))
++except Exception as e:
++    print("ds.integrate(coord='x') failed:", e)
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index 2fef3edb..510e6d48 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -3481,17 +3481,17 @@ class DataArray(AbstractArray, DataWithCoords):
+         return self._from_temp_dataset(ds)
+ 
+     def integrate(
+-        self, dim: Union[Hashable, Sequence[Hashable]], datetime_unit: str = None
++        self, coord: Union[Hashable, Sequence[Hashable]], datetime_unit: str = None
+     ) -> "DataArray":
+         """ integrate the array with the trapezoidal rule.
+ 
+         .. note::
+-            This feature is limited to simple cartesian geometry, i.e. dim
++            This feature is limited to simple cartesian geometry, i.e. coord
+             must be one dimensional.
+ 
+         Parameters
+         ----------
+-        dim : hashable, or sequence of hashable
++        coord : hashable, or sequence of hashable
+             Coordinate(s) used for the integration.
+         datetime_unit : {"Y", "M", "W", "D", "h", "m", "s", "ms", "us", "ns", \
+                          "ps", "fs", "as"}, optional
+@@ -3528,7 +3528,7 @@ class DataArray(AbstractArray, DataWithCoords):
+         array([5.4, 6.6, 7.8])
+         Dimensions without coordinates: y
+         """
+-        ds = self._to_temp_dataset().integrate(dim, datetime_unit)
++        ds = self._to_temp_dataset().integrate(coord, datetime_unit)
+         return self._from_temp_dataset(ds)
+ 
+     def unify_chunks(self) -> "DataArray":
+diff --git a/xarray/tests/test_units.py b/xarray/tests/test_units.py
+index bb3127e9..76dd830d 100644
+--- a/xarray/tests/test_units.py
++++ b/xarray/tests/test_units.py
+@@ -3681,7 +3681,7 @@ class TestDataArray:
+         (
+             method("diff", dim="x"),
+             method("differentiate", coord="x"),
+-            method("integrate", dim="x"),
++            method("integrate", coord="x"),
+             method("quantile", q=[0.25, 0.75]),
+             method("reduce", func=np.sum, dim="x"),
+             pytest.param(lambda x: x.dot(x), id="method_dot"),

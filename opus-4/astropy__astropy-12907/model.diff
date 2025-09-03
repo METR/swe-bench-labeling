@@ -1,0 +1,302 @@
+diff --git a/astropy/modeling/separable.py b/astropy/modeling/separable.py
+index a308e27297..4196e14f68 100644
+--- a/astropy/modeling/separable.py
++++ b/astropy/modeling/separable.py
+@@ -234,15 +234,32 @@ def _cstack(left, right):
+     noutp = _compute_n_outputs(left, right)
+ 
+     if isinstance(left, Model):
+-        cleft = _coord_matrix(left, 'left', noutp)
++        if isinstance(left, CompoundModel):
++            # For compound models, first compute their separability matrix
++            cleft = _separable(left)
++            # Pad with zeros to match the total output size
++            temp = np.zeros((noutp, cleft.shape[1]))
++            temp[: cleft.shape[0], : cleft.shape[1]] = cleft
++            cleft = temp
++        else:
++            cleft = _coord_matrix(left, 'left', noutp)
+     else:
+         cleft = np.zeros((noutp, left.shape[1]))
+         cleft[: left.shape[0], : left.shape[1]] = left
++        
+     if isinstance(right, Model):
+-        cright = _coord_matrix(right, 'right', noutp)
++        if isinstance(right, CompoundModel):
++            # For compound models, first compute their separability matrix
++            cright = _separable(right)
++            # Pad with zeros to match the total output size
++            temp = np.zeros((noutp, cright.shape[1]))
++            temp[-cright.shape[0]:, -cright.shape[1]:] = cright
++            cright = temp
++        else:
++            cright = _coord_matrix(right, 'right', noutp)
+     else:
+         cright = np.zeros((noutp, right.shape[1]))
+-        cright[-right.shape[0]:, -right.shape[1]:] = 1
++        cright[-right.shape[0]:, -right.shape[1]:] = right
+ 
+     return np.hstack([cleft, cright])
+ 
+diff --git a/debug_separability.py b/debug_separability.py
+new file mode 100644
+index 0000000000..6a23cee538
+--- /dev/null
++++ b/debug_separability.py
+@@ -0,0 +1,51 @@
++from astropy.modeling import models as m
++from astropy.modeling.separable import _separable, _cstack, _coord_matrix
++from astropy.modeling.core import CompoundModel
++import numpy as np
++
++# Create the models
++cm = m.Linear1D(10) & m.Linear1D(5)
++pix2sky = m.Pix2Sky_TAN()
++
++print("Testing _separable on compound model cm:")
++sep_cm = _separable(cm)
++print("Result:", sep_cm)
++print()
++
++print("Testing _coord_matrix on compound model cm (right position, noutp=4):")
++coord_cm = _coord_matrix(cm, 'right', 4)
++print("Result shape:", coord_cm.shape)
++print("Result:\n", coord_cm)
++print()
++
++print("Expected separability matrix for cm:")
++# This should be calculated recursively
++expected_cm = _separable(cm)
++print("Result:", expected_cm)
++print()
++
++# Now let's see what happens in _cstack
++print("\nTesting _cstack with Pix2Sky_TAN & cm:")
++left = pix2sky
++right = cm
++
++# Simulate what happens inside _cstack
++noutp = left.n_outputs + right.n_outputs  # 4
++
++print(f"\nInside _cstack:")
++print(f"left is Model: {isinstance(left, m.Model)}")
++print(f"right is Model: {isinstance(right, m.Model)}")
++print(f"right is CompoundModel: {isinstance(right, CompoundModel)}")
++
++# The issue is here - when right is a CompoundModel, it's treated as a simple model
++if isinstance(right, m.Model):
++    print("\nCalling _coord_matrix on right (compound model)...")
++    cright = _coord_matrix(right, 'right', noutp)
++    print("cright shape:", cright.shape)
++    print("cright:\n", cright)
++    
++# What should happen: first calculate separability matrix for the compound model
++print("\nWhat should happen - calculate separability matrix for cm first:")
++sep_right = _separable(right)
++print("Separability matrix for cm:", sep_right.shape)
++print(sep_right)
+diff --git a/investigate_model.py b/investigate_model.py
+new file mode 100644
+index 0000000000..1e2fa2fbf6
+--- /dev/null
++++ b/investigate_model.py
+@@ -0,0 +1,32 @@
++from astropy.modeling import models as m
++from astropy.modeling.core import CompoundModel
++
++# Create the models
++cm = m.Linear1D(10) & m.Linear1D(5)
++model3 = m.Pix2Sky_TAN() & cm
++
++print("Compound model cm:")
++print(f"Type: {type(cm)}")
++print(f"Is CompoundModel: {isinstance(cm, CompoundModel)}")
++print(f"Left: {cm.left}")
++print(f"Right: {cm.right}")
++print(f"Op: {cm.op}")
++print()
++
++print("Nested model (Pix2Sky_TAN & cm):")
++print(f"Type: {type(model3)}")
++print(f"Is CompoundModel: {isinstance(model3, CompoundModel)}")
++print(f"Left: {model3.left}")
++print(f"Right: {model3.right}")
++print(f"Op: {model3.op}")
++print()
++
++# It looks like the model is being flattened
++# Let's verify this by creating the model differently
++model3_manual = m.Pix2Sky_TAN() & (m.Linear1D(10) & m.Linear1D(5))
++print("Manually created nested model:")
++print(f"Type: {type(model3_manual)}")
++print(f"Is CompoundModel: {isinstance(model3_manual, CompoundModel)}")
++print(f"Left: {model3_manual.left}")
++print(f"Right: {model3_manual.right}")
++print(f"Op: {model3_manual.op}")
+diff --git a/pyproject.toml b/pyproject.toml
+index 3364d30740..02dddbe713 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.22",
+diff --git a/test_cdot_nested.py b/test_cdot_nested.py
+new file mode 100644
+index 0000000000..c0041d3e4a
+--- /dev/null
++++ b/test_cdot_nested.py
+@@ -0,0 +1,25 @@
++from astropy.modeling import models as m
++from astropy.modeling.separable import separability_matrix
++import numpy as np
++
++# Test case with nested compound model and pipe operator
++# Need to ensure dimensions match for pipe operator
++cm = m.Shift(1) & m.Shift(2)  # 2 inputs -> 2 outputs
++rot = m.Rotation2D(45)  # 2 inputs -> 2 outputs
++nested_pipe = cm | rot
++
++print("Test: (Shift & Shift) | Rotation2D")
++print("Model:", nested_pipe)
++print("Separability matrix:")
++result = separability_matrix(nested_pipe)
++print(result)
++print()
++
++# Expected result: Rotation2D mixes the inputs, so both outputs depend on both inputs
++expected = np.array([
++    [True, True],
++    [True, True]
++])
++print("Expected:")
++print(expected)
++print("Are they equal?", np.array_equal(result, expected))
+diff --git a/test_nested_compound.py b/test_nested_compound.py
+new file mode 100644
+index 0000000000..de9e4e6bf5
+--- /dev/null
++++ b/test_nested_compound.py
+@@ -0,0 +1,34 @@
++import numpy as np
++from astropy.modeling import models as m
++from astropy.modeling.separable import separability_matrix
++
++
++def test_separability_nested_compound_models():
++    """
++    Test that separability_matrix computes separability correctly for nested CompoundModels.
++    
++    This is a regression test for an issue where nested compound models were not 
++    handled correctly by the _cstack function in separability_matrix.
++    """
++    # Create a nested compound model
++    cm = m.Linear1D(10) & m.Linear1D(5)
++    nested_model = m.Pix2Sky_TAN() & cm
++    
++    # Get the separability matrix  
++    result = separability_matrix(nested_model)
++    
++    # Expected: Pix2Sky_TAN has 2 coupled outputs that depend on 2 coupled inputs
++    # Linear1D models each have 1 output that depends on 1 input (separable)
++    expected = np.array([
++        [True, True, False, False],   # phi depends on x,y
++        [True, True, False, False],   # theta depends on x,y  
++        [False, False, True, False],  # first Linear1D output depends only on its input
++        [False, False, False, True]   # second Linear1D output depends only on its input
++    ])
++    
++    assert np.array_equal(result, expected), f"Expected:\n{expected}\n\nGot:\n{result}"
++    print("Test passed!")
++
++
++if __name__ == "__main__":
++    test_separability_nested_compound_models()
+diff --git a/test_separability_issue.py b/test_separability_issue.py
+new file mode 100644
+index 0000000000..d58e659c4e
+--- /dev/null
++++ b/test_separability_issue.py
+@@ -0,0 +1,42 @@
++from astropy.modeling import models as m
++from astropy.modeling.separable import separability_matrix, _separable
++import numpy as np
++
++# Test case 1: Simple compound model
++cm = m.Linear1D(10) & m.Linear1D(5)
++print("Test 1: Simple compound model (Linear1D & Linear1D)")
++print("Model:", cm)
++print("Separability matrix:")
++print(separability_matrix(cm))
++print()
++
++# Test case 2: More complex model
++model2 = m.Pix2Sky_TAN() & m.Linear1D(10) & m.Linear1D(5)
++print("Test 2: Pix2Sky_TAN & Linear1D & Linear1D")
++print("Model:", model2)
++print("Separability matrix:")
++print(separability_matrix(model2))
++print()
++
++# Test case 3: Nested compound model (the issue)
++model3 = m.Pix2Sky_TAN() & cm
++print("Test 3: Pix2Sky_TAN & (Linear1D & Linear1D) - ISSUE")
++print("Model:", model3)
++print("Separability matrix:")
++print(separability_matrix(model3))
++print()
++
++# Let's debug what's happening inside
++print("Debugging the _separable function for the nested model:")
++print("Left model (Pix2Sky_TAN):", m.Pix2Sky_TAN())
++print("Right model (cm):", cm)
++print()
++
++# Let's trace through manually
++print("Manual trace through _cstack:")
++left = m.Pix2Sky_TAN()
++right = cm
++noutp = left.n_outputs + right.n_outputs  # 2 + 2 = 4
++print(f"Total outputs: {noutp}")
++print(f"Left model n_inputs: {left.n_inputs}, n_outputs: {left.n_outputs}")
++print(f"Right model n_inputs: {right.n_inputs}, n_outputs: {right.n_outputs}")
+diff --git a/test_with_debug.py b/test_with_debug.py
+new file mode 100644
+index 0000000000..c192eb5a15
+--- /dev/null
++++ b/test_with_debug.py
+@@ -0,0 +1,31 @@
++from astropy.modeling import models as m
++from astropy.modeling.separable import separability_matrix, _separable, _cstack
++import numpy as np
++
++# Create the nested model
++cm = m.Linear1D(10) & m.Linear1D(5)
++model3 = m.Pix2Sky_TAN() & cm
++
++print("Testing the fix:")
++print("Model:", model3)
++print("Separability matrix:")
++result = separability_matrix(model3)
++print(result)
++print()
++
++# Check if it's correct now
++print("Expected result:")
++print("First two outputs depend on first two inputs (Pix2Sky_TAN)")
++print("Third output depends only on third input (first Linear1D)")
++print("Fourth output depends only on fourth input (second Linear1D)")
++print()
++print("So the expected matrix should be:")
++expected = np.array([
++    [True, True, False, False],
++    [True, True, False, False],
++    [False, False, True, False],
++    [False, False, False, True]
++])
++print(expected)
++print()
++print("Are they equal?", np.array_equal(result, expected))

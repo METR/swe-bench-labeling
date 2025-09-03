@@ -1,0 +1,598 @@
+diff --git a/test_m2m_debug.py b/test_m2m_debug.py
+new file mode 100644
+index 0000000000..0928a8df0c
+--- /dev/null
++++ b/test_m2m_debug.py
+@@ -0,0 +1,101 @@
++"""
++Debug the ManyToMany through model issue
++"""
++
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.backends.base.schema import BaseDatabaseSchemaEditor
++
++# Configure Django
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create a custom schema editor to see what's happening
++class DebugSchemaEditor(BaseDatabaseSchemaEditor):
++    def create_model(self, model):
++        """Override to debug the issue"""
++        print(f"\nDEBUG: Creating model {model._meta.label}")
++        
++        # Check M2M fields
++        for field in model._meta.local_many_to_many:
++            print(f"  M2M field: {field.name}")
++            print(f"  Through: {field.remote_field.through}")
++            print(f"  Through type: {type(field.remote_field.through)}")
++            
++            # This is the problematic line from the original code
++            if isinstance(field.remote_field.through, str):
++                print(f"  ERROR: through is still a string!")
++            else:
++                print(f"  Through _meta: {field.remote_field.through._meta}")
++                print(f"  Auto created: {field.remote_field.through._meta.auto_created}")
++        
++        # Call parent (skip for this test)
++        print("  (Skipping actual table creation)")
++
++
++def test_with_debug_schema():
++    """Test with debug schema editor"""
++    
++    # Create the model state with M2M field referencing through as string
++    from django.db import models
++    
++    # First, let's directly create a model with the issue
++    class TestModel(models.Model):
++        variaveis = models.ManyToManyField(
++            'TestTarget',
++            through='TestThrough'  # String reference
++        )
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    class TestTarget(models.Model):
++        name = models.CharField(max_length=100)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    class TestThrough(models.Model):
++        test = models.ForeignKey(TestModel, on_delete=models.CASCADE)
++        target = models.ForeignKey(TestTarget, on_delete=models.CASCADE)
++        
++        class Meta:
++            app_label = 'test_app'
++    
++    # Now let's see what happens when we try to create it
++    with DebugSchemaEditor(connection) as editor:
++        # This should fail with the string issue
++        try:
++            editor.create_model(TestModel)
++        except Exception as e:
++            print(f"\nException: {e}")
++    
++    # Now let's test with the through model resolved
++    print("\n\n--- Testing after manual resolution ---")
++    # Manually resolve the through model
++    TestModel._meta.get_field('variaveis').remote_field.through = TestThrough
++    
++    with DebugSchemaEditor(connection) as editor:
++        editor.create_model(TestModel)
++
++
++if __name__ == "__main__":
++    test_with_debug_schema()
+diff --git a/test_m2m_through_bug.py b/test_m2m_through_bug.py
+new file mode 100644
+index 0000000000..ebd8820f0c
+--- /dev/null
++++ b/test_m2m_through_bug.py
+@@ -0,0 +1,110 @@
++"""
++Test script to reproduce the ManyToMany through model bug
++"""
++
++import django
++from django.db import models, migrations, connection
++from django.db.migrations.executor import MigrationExecutor
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.backends.base.schema import BaseDatabaseSchemaEditor
++from django.db.migrations.operations.models import CreateModel
++
++# First, let's create a test that simulates the problem
++def test_m2m_through_string_reference():
++    """Test that ManyToMany field with string through reference works during migration"""
++    
++    # Create mock models similar to the issue
++    fonte_fields = [
++        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++        ('nome', models.TextField(unique=True)),
++        ('descricao', models.TextField()),
++        ('data_inicial', models.DateField()),
++        ('data_final', models.DateField(blank=True, null=True)),
++        ('variaveis', models.ManyToManyField('variavel.VariavelModel', through='fonte_variavel.FonteVariavelModel')),
++    ]
++    
++    # Create the CreateModel operation
++    create_fonte = CreateModel(
++        name='FonteModel',
++        fields=fonte_fields,
++        options={
++            'verbose_name': 'Fonte',
++            'verbose_name_plural': 'Fontes',
++            'db_table': 'fontes',
++        },
++    )
++    
++    # Create a mock project state
++    project_state = ProjectState()
++    
++    # Add the variavel model state
++    project_state.add_model(ModelState(
++        app_label='variavel',
++        name='VariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++        ],
++        options={
++            'db_table': 'variaveis',
++            'verbose_name': 'Variável',
++            'verbose_name_plural': 'Variáveis',
++        }
++    ))
++    
++    # Add the through model state
++    project_state.add_model(ModelState(
++        app_label='fonte_variavel',
++        name='FonteVariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('variavel', models.ForeignKey('variavel.VariavelModel', on_delete=models.CASCADE)),
++            ('fonte', models.ForeignKey('fonte.FonteModel', on_delete=models.CASCADE)),
++        ],
++        options={
++            'db_table': 'fontes_variaveis',
++            'verbose_name': 'Fonte',
++            'verbose_name_plural': 'Fontes',
++        }
++    ))
++    
++    # Apply the state
++    new_state = project_state.clone()
++    create_fonte.state_forwards('fonte', new_state)
++    
++    # Try to get the model - this should work
++    apps = new_state.apps
++    FonteModel = apps.get_model('fonte', 'FonteModel')
++    
++    # Check that the through field is properly resolved
++    through_field = FonteModel._meta.get_field('variaveis')
++    print(f"Through field: {through_field.remote_field.through}")
++    print(f"Through field type: {type(through_field.remote_field.through)}")
++    
++    # The issue occurs when schema editor tries to create the model
++    # Let's simulate what happens in schema.create_model
++    for field in FonteModel._meta.local_many_to_many:
++        print(f"Field: {field.name}")
++        print(f"Through: {field.remote_field.through}")
++        print(f"Through type: {type(field.remote_field.through)}")
++        
++        # This is where the error happens - trying to access _meta on a string
++        try:
++            auto_created = field.remote_field.through._meta.auto_created
++            print(f"Auto created: {auto_created}")
++        except AttributeError as e:
++            print(f"ERROR: {e}")
++            return False
++    
++    return True
++
++if __name__ == "__main__":
++    # Initialize Django
++    import os
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++    django.setup()
++    
++    # Run the test
++    success = test_m2m_through_string_reference()
++    print(f"\nTest {'PASSED' if success else 'FAILED'}")
+diff --git a/test_m2m_through_bug2.py b/test_m2m_through_bug2.py
+new file mode 100644
+index 0000000000..0c0f3450f6
+--- /dev/null
++++ b/test_m2m_through_bug2.py
+@@ -0,0 +1,103 @@
++"""
++Test script to reproduce the ManyToMany through model bug
++"""
++
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.operations.models import CreateModel
++
++# Configure Django
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++def test_m2m_through_database_forwards():
++    """Test that ManyToMany field with string through reference works during migration database_forwards"""
++    
++    # Create project state
++    project_state = ProjectState()
++    
++    # First add the through model - this is key, it needs to be in the state before we reference it
++    project_state.add_model(ModelState(
++        app_label='fonte_variavel',
++        name='FonteVariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('variavel', models.ForeignKey('variavel.VariavelModel', on_delete=models.CASCADE)),
++            ('fonte', models.ForeignKey('fonte.FonteModel', on_delete=models.CASCADE)),
++        ],
++        options={
++            'db_table': 'fontes_variaveis',
++        }
++    ))
++    
++    # Add the variavel model
++    project_state.add_model(ModelState(
++        app_label='variavel',
++        name='VariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++        ],
++        options={
++            'db_table': 'variaveis',
++        }
++    ))
++    
++    # Now create the CreateModel operation for fonte with the through reference
++    create_fonte = CreateModel(
++        name='FonteModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++            ('data_inicial', models.DateField()),
++            ('data_final', models.DateField(blank=True, null=True)),
++            ('variaveis', models.ManyToManyField('variavel.VariavelModel', through='fonte_variavel.FonteVariavelModel')),
++        ],
++        options={
++            'db_table': 'fontes',
++        },
++    )
++    
++    # Apply state_forwards
++    new_state = project_state.clone()
++    create_fonte.state_forwards('fonte', new_state)
++    
++    # Now test database_forwards - this is where the bug happens
++    with connection.schema_editor() as schema_editor:
++        try:
++            create_fonte.database_forwards('fonte', schema_editor, project_state, new_state)
++            print("Database forwards succeeded!")
++            return True
++        except AttributeError as e:
++            print(f"ERROR during database_forwards: {e}")
++            # Let's debug what's happening
++            model = new_state.apps.get_model('fonte', 'FonteModel')
++            for field in model._meta.local_many_to_many:
++                print(f"Field name: {field.name}")
++                print(f"Through value: {field.remote_field.through}")
++                print(f"Through type: {type(field.remote_field.through)}")
++            return False
++
++if __name__ == "__main__":
++    success = test_m2m_through_database_forwards()
++    print(f"\nTest {'PASSED' if success else 'FAILED'}")
+diff --git a/test_migration_issue.py b/test_migration_issue.py
+new file mode 100644
+index 0000000000..33f48d1a15
+--- /dev/null
++++ b/test_migration_issue.py
+@@ -0,0 +1,98 @@
++"""
++Test the exact migration scenario from the issue
++"""
++
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.operations.models import CreateModel
++
++# Configure Django
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++def test_exact_migration_scenario():
++    """Test the exact scenario from the issue"""
++    
++    # Create initial project state
++    project_state = ProjectState()
++    
++    # First migration would be for variavel app
++    project_state.add_model(ModelState(
++        app_label='variavel',
++        name='VariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++        ],
++        options={
++            'db_table': 'variaveis',
++            'verbose_name': 'Variável',
++            'verbose_name_plural': 'Variáveis',
++        }
++    ))
++    
++    # Create the operation that would happen in fonte's migration
++    # This is the key - the through model doesn't exist yet in the state
++    create_fonte = CreateModel(
++        name='FonteModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++            ('data_inicial', models.DateField()),
++            ('data_final', models.DateField(blank=True, null=True)),
++            ('variaveis', models.ManyToManyField('variavel.VariavelModel', through='fonte_variavel.FonteVariavelModel')),
++        ],
++        options={
++            'verbose_name': 'Fonte',
++            'verbose_name_plural': 'Fontes',
++            'db_table': 'fontes',
++        },
++    )
++    
++    # Apply state forward - this adds FonteModel to state
++    new_state = project_state.clone()
++    create_fonte.state_forwards('fonte', new_state)
++    
++    # Now try database_forwards WITHOUT the through model in state
++    # This should trigger the error
++    print("Testing database_forwards without through model in state...")
++    with connection.schema_editor() as schema_editor:
++        try:
++            create_fonte.database_forwards('fonte', schema_editor, project_state, new_state)
++            print("ERROR: Expected AttributeError but operation succeeded!")
++            
++            # Debug what happened
++            model = new_state.apps.get_model('fonte', 'FonteModel')
++            field = model._meta.get_field('variaveis')
++            print(f"Through: {field.remote_field.through}")
++            print(f"Through type: {type(field.remote_field.through)}")
++            
++        except AttributeError as e:
++            print(f"SUCCESS: Got expected AttributeError: {e}")
++            return True
++    
++    return False
++
++
++if __name__ == "__main__":
++    test_exact_migration_scenario()
+diff --git a/test_real_issue.py b/test_real_issue.py
+new file mode 100644
+index 0000000000..ae1169439c
+--- /dev/null
++++ b/test_real_issue.py
+@@ -0,0 +1,156 @@
++"""
++Test to reproduce the actual issue from the bug report
++"""
++
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.migrations.state import ProjectState, ModelState
++from django.db.migrations.operations.models import CreateModel
++from django.db.backends.base.schema import BaseDatabaseSchemaEditor
++
++# Configure Django
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Override create_model to inject our test
++original_create_model = BaseDatabaseSchemaEditor.create_model
++
++def patched_create_model(self, model):
++    """Patched create_model that shows the issue"""
++    print(f"\nCREATE_MODEL called for {model._meta.label}")
++    
++    # This is the code from the original that causes the issue
++    for field in model._meta.local_many_to_many:
++        print(f"  Checking M2M field: {field.name}")
++        print(f"  Through: {field.remote_field.through}")
++        print(f"  Through type: {type(field.remote_field.through)}")
++        
++        # This line causes AttributeError when through is a string
++        try:
++            if field.remote_field.through._meta.auto_created:
++                print("    Auto-created through model")
++        except AttributeError as e:
++            print(f"  ERROR: {e}")
++            raise
++
++BaseDatabaseSchemaEditor.create_model = patched_create_model
++
++def test_string_through_reference():
++    """Test that reproduces the string through reference issue"""
++    
++    # Create a fresh project state
++    project_state = ProjectState()
++    
++    # Set up real_apps to include our test apps
++    project_state.real_apps = {'fonte', 'variavel', 'fonte_variavel'}
++    
++    # Add all three models to the state in order
++    # 1. VariavelModel
++    project_state.add_model(ModelState(
++        app_label='variavel',
++        name='VariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++        ],
++        options={
++            'db_table': 'variaveis',
++        }
++    ))
++    
++    # 2. Create the FonteModel with through as string - this is crucial
++    # The through model doesn't exist in state yet!
++    from django.db.models.fields.related import ManyToManyField
++    
++    # Create a M2M field with unresolved string through
++    m2m_field = ManyToManyField('variavel.VariavelModel', through='fonte_variavel.FonteVariavelModel')
++    m2m_field.name = 'variaveis'
++    
++    # Keep the through as a string to simulate the issue
++    m2m_field.remote_field.through = 'fonte_variavel.FonteVariavelModel'
++    
++    fonte_state = ModelState(
++        app_label='fonte',
++        name='FonteModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('nome', models.TextField(unique=True)),
++            ('descricao', models.TextField()),
++            ('data_inicial', models.DateField()),
++            ('data_final', models.DateField(blank=True, null=True)),
++            ('variaveis', m2m_field),
++        ],
++        options={
++            'db_table': 'fontes',
++        }
++    )
++    
++    # Apply the state  
++    new_state = project_state.clone()
++    new_state.add_model(fonte_state)
++    
++    # 3. Add the through model
++    new_state.add_model(ModelState(
++        app_label='fonte_variavel',
++        name='FonteVariavelModel',
++        fields=[
++            ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++            ('variavel', models.ForeignKey('variavel.VariavelModel', on_delete=models.CASCADE)),
++            ('fonte', models.ForeignKey('fonte.FonteModel', on_delete=models.CASCADE)),
++        ],
++        options={
++            'db_table': 'fontes_variaveis',
++        }
++    ))
++    
++    # Create the model from state - this should have the string through
++    try:
++        apps = new_state.apps
++        model = apps.get_model('fonte', 'FonteModel')
++        
++        # Verify the through is still a string
++        field = model._meta.get_field('variaveis')
++        print(f"\nBefore schema editor:")
++        print(f"Through: {field.remote_field.through}")
++        print(f"Through type: {type(field.remote_field.through)}")
++        
++        # Now use schema editor - this should fail
++        with connection.schema_editor() as schema_editor:
++            schema_editor.create_model(model)
++            
++    except AttributeError as e:
++        print(f"\nSUCCESS: Reproduced the issue!")
++        print(f"Error: {e}")
++        return True
++    except Exception as e:
++        print(f"\nUnexpected error: {type(e).__name__}: {e}")
++        return False
++        
++    print("\nERROR: Issue was not reproduced")
++    return False
++
++if __name__ == "__main__":
++    # Restore original after test
++    try:
++        success = test_string_through_reference()
++        print(f"\nTest result: {'PASSED' if success else 'FAILED'}")
++    finally:
++        BaseDatabaseSchemaEditor.create_model = original_create_model

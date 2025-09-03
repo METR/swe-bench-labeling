@@ -1,0 +1,27 @@
+diff --git a/lib/matplotlib/axes/_axes.py b/lib/matplotlib/axes/_axes.py
+index fdac0f3560..48cd6a7545 100644
+--- a/lib/matplotlib/axes/_axes.py
++++ b/lib/matplotlib/axes/_axes.py
+@@ -2204,6 +2204,10 @@ class Axes(_AxesBase):
+     @_preprocess_data()
+     @_docstring.dedent_interpd
+     def bar(self, x, height, width=0.8, bottom=None, *, align="center",
++
++        Notes
++        -----
++        If all x-values are NaN, an empty BarContainer will be returned.
+             **kwargs):
+         r"""
+         Make a bar plot.
+@@ -2252,6 +2256,11 @@ class Axes(_AxesBase):
+         edgecolor : color or list of color, optional
+             The colors of the bar edges.
+ 
++        # Handle the case where all x-values are NaN
++        if np.isnan(x).all():
++            return BarContainer([], None, None)
++
++
+         linewidth : float or array-like, optional
+             Width of the bar edge(s). If 0, don't draw edges.
+ 

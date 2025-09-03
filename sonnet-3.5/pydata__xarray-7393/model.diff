@@ -1,0 +1,67 @@
+diff --git a/test_stack_dtype.py b/test_stack_dtype.py
+new file mode 100644
+index 00000000..92ace1f7
+--- /dev/null
++++ b/test_stack_dtype.py
+@@ -0,0 +1,16 @@
++import xarray as xr
++import numpy as np
++
++ds = xr.Dataset(coords={'a': np.array([0], dtype='i4')})
++stacked = ds.stack(b=('a',))
++result = ds['a'].values.dtype == stacked['a'].values.dtype
++print(f"Data types are the same: {result}")
++print(f"Original dtype: {ds['a'].values.dtype}")
++print(f"Stacked dtype: {stacked['a'].values.dtype}")
++print(f"Stacked 'a' variable: {stacked['a']}")
++print(f"Stacked 'a' variable dtype: {stacked['a'].dtype}")
++print(f"Stacked 'a' variable values dtype: {stacked['a'].values.dtype}")
++print(f"Stacked coords: {stacked.coords}")
++print(f"Stacked 'b' coord: {stacked.coords['b']}")
++print(f"Stacked 'b' coord dtype: {stacked.coords['b'].dtype}")
++print(f"Stacked 'b' coord values dtype: {stacked.coords['b'].values.dtype}")
+diff --git a/xarray/core/indexes.py b/xarray/core/indexes.py
+index f3f03c94..ce39c46f 100644
+--- a/xarray/core/indexes.py
++++ b/xarray/core/indexes.py
+@@ -706,13 +706,37 @@ class PandasMultiIndex(PandasIndex):
+                     f"from variable {name!r} that wraps a multi-index"
+                 )
+ 
+-        split_labels, levels = zip(*[lev.factorize() for lev in level_indexes])
++        split_labels, levels = zip(*[
++            pd.factorize(lev, sort=True)
++            for lev in level_indexes
++        ])
+         labels_mesh = np.meshgrid(*split_labels, indexing="ij")
+-        labels = [x.ravel() for x in labels_mesh]
++        labels = [x.ravel().astype(variables[name].dtype) for name, x in zip(variables.keys(), labels_mesh)]
+ 
+-        index = pd.MultiIndex(levels, labels, sortorder=0, names=variables.keys())
++        print("Debug: Original dtypes:", {k: v.dtype for k, v in variables.items()})
++        print("Debug: Levels dtypes before:", [level.dtype for level in levels])
++
++        # Preserve original dtypes
++        levels = [
++            np.array(level, dtype=variables[name].dtype)
++            for name, level in zip(variables.keys(), levels)
++        ]
++
++        print("Debug: Levels dtypes after:", [level.dtype for level in levels])
++
++        class CustomMultiIndex(pd.MultiIndex):
++            @property
++            def dtypes(self):
++                return pd.Series({name: variables[name].dtype for name in self.names})
++
++        index = CustomMultiIndex(levels, labels, sortorder=0, names=variables.keys())
+         level_coords_dtype = {k: var.dtype for k, var in variables.items()}
+ 
++        print("Debug: MultiIndex dtypes:", index.dtypes)
++        print("Debug: level_coords_dtype:", level_coords_dtype)
++
++        return cls(index, dim, level_coords_dtype=level_coords_dtype)
++
+         return cls(index, dim, level_coords_dtype=level_coords_dtype)
+ 
+     def unstack(self) -> tuple[dict[Hashable, Index], pd.MultiIndex]:

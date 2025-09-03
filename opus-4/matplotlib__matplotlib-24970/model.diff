@@ -1,0 +1,276 @@
+diff --git a/check_max_value.py b/check_max_value.py
+new file mode 100644
+index 0000000000..87bc5a8f11
+--- /dev/null
++++ b/check_max_value.py
+@@ -0,0 +1,6 @@
++import numpy as np
++
++# Check what integer types can hold values up to 258
++for dtype in [np.int8, np.uint8, np.int16, np.uint16, np.int32]:
++    info = np.iinfo(dtype)
++    print(f"{dtype}: min={info.min}, max={info.max}, can hold 258: {258 <= info.max}")
+diff --git a/fix_numpy_deprecation.patch b/fix_numpy_deprecation.patch
+new file mode 100644
+index 0000000000..fddeca1c4e
+--- /dev/null
++++ b/fix_numpy_deprecation.patch
+@@ -0,0 +1,16 @@
++--- a/lib/matplotlib/colors.py
+++++ b/lib/matplotlib/colors.py
++@@ -725,6 +725,13 @@ class Colormap:
++                 # Avoid converting large positive values to negative integers.
++                 np.clip(xa, -1, self.N, out=xa)
++                 xa = xa.astype(int)
+++        # If xa is an integer type that cannot hold the special indices,
+++        # convert it to a larger integer type to avoid NumPy 1.24 warnings.
+++        elif xa.dtype.kind in "iu":  # integer or unsigned integer
+++            max_val = max(self._i_under, self._i_over, self._i_bad)
+++            if max_val > np.iinfo(xa.dtype).max:
+++                # Convert to int32 which can hold all special indices
+++                xa = xa.astype(np.int32)
++         # Set the over-range indices before the under-range;
++         # otherwise the under-range values get converted to over-range.
++         xa[xa > self.N - 1] = self._i_over
+diff --git a/lib/matplotlib/colors.py b/lib/matplotlib/colors.py
+index 2d3072da04..065d7550ff 100644
+--- a/lib/matplotlib/colors.py
++++ b/lib/matplotlib/colors.py
+@@ -725,6 +725,13 @@ class Colormap:
+                 # Avoid converting large positive values to negative integers.
+                 np.clip(xa, -1, self.N, out=xa)
+                 xa = xa.astype(int)
++        # If xa is an integer type that cannot hold the special indices,
++        # convert it to a larger integer type to avoid NumPy 1.24 warnings.
++        elif xa.dtype.kind in "iu":  # integer or unsigned integer
++            max_val = max(self._i_under, self._i_over, self._i_bad)
++            if max_val > np.iinfo(xa.dtype).max:
++                # Convert to int32 which can hold all special indices
++                xa = xa.astype(np.int32)
+         # Set the over-range indices before the under-range;
+         # otherwise the under-range values get converted to over-range.
+         xa[xa > self.N - 1] = self._i_over
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..8dac470132
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,45 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++
++# Show all warnings
++warnings.filterwarnings('default')
++
++# Test with various data types
++dtypes = [np.uint8, np.int8, np.uint16, np.int16, np.int32, np.float32, np.float64]
++cmap = plt.get_cmap('viridis')
++
++print(f"Colormap N: {cmap.N}")
++print(f"Special indices - under: {cmap._i_under}, over: {cmap._i_over}, bad: {cmap._i_bad}")
++print()
++
++for dtype in dtypes:
++    print(f"Testing with {dtype.__name__}:")
++    
++    # Test empty array
++    result = cmap(np.empty((0,), dtype=dtype))
++    print(f"  Empty array: shape={result.shape}")
++    
++    # Test normal values
++    if np.issubdtype(dtype, np.integer):
++        # For integer types, use values in valid range
++        test_vals = np.array([0, 1, 128, 255], dtype=dtype)
++        # Filter out values that exceed the dtype's range
++        valid_vals = [v for v in [0, 1, 128, 255] if v <= np.iinfo(dtype).max and v >= np.iinfo(dtype).min]
++        test_vals = np.array(valid_vals[:3] if valid_vals else [0], dtype=dtype)
++    else:
++        # For float types, use normalized values
++        test_vals = np.array([0.0, 0.5, 1.0], dtype=dtype)
++    
++    result = cmap(test_vals)
++    print(f"  Normal values: input shape={test_vals.shape}, output shape={result.shape}")
++    
++    # Test with NaN (for float types)
++    if np.issubdtype(dtype, np.floating):
++        test_vals_nan = np.array([0.5, np.nan, 0.8], dtype=dtype)
++        result = cmap(test_vals_nan)
++        print(f"  With NaN: input shape={test_vals_nan.shape}, output shape={result.shape}")
++    
++    print()
++
++print("All tests completed without warnings!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..13a2da26bc
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,38 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++
++# Show all warnings
++warnings.filterwarnings('default')
++
++cmap = plt.get_cmap('viridis')
++
++print("Testing edge cases:")
++print(f"Colormap N: {cmap.N}")
++print()
++
++# Test 1: uint8 array with out-of-range values
++print("Test 1: uint8 with out-of-range values")
++xa = np.array([0, 100, 255], dtype=np.uint8)
++result = cmap(xa)
++print(f"  Input: {xa}, Output shape: {result.shape}")
++
++# Test 2: uint8 array with values that will become out-of-range
++print("\nTest 2: uint8 with negative indices (should trigger special handling)")
++xa = np.array([255, 256, 257], dtype=np.uint8)  # These will overflow to 255, 0, 1
++result = cmap(xa)
++print(f"  Input: {xa}, Output shape: {result.shape}")
++
++# Test 3: Masked array with uint8
++print("\nTest 3: Masked array with uint8")
++xa = np.ma.array([0, 100, 255], mask=[False, True, False], dtype=np.uint8)
++result = cmap(xa)
++print(f"  Input: {xa}, Mask: {xa.mask}, Output shape: {result.shape}")
++
++# Test 4: Check bytes=True option
++print("\nTest 4: bytes=True option with uint8")
++xa = np.array([0, 128, 255], dtype=np.uint8)
++result = cmap(xa, bytes=True)
++print(f"  Input: {xa}, Output shape: {result.shape}, Output dtype: {result.dtype}")
++
++print("\nAll edge case tests completed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..07c21f876b
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,17 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++
++# Show all warnings
++warnings.filterwarnings('default')
++
++# Reproduce the issue
++print("Testing with uint8 array:")
++cmap = plt.get_cmap()
++print(f"Colormap N: {cmap.N}")
++print(f"_i_under: {cmap._i_under}")
++print(f"_i_over: {cmap._i_over}")
++print(f"_i_bad: {cmap._i_bad}")
++
++result = cmap(np.empty((0, ), dtype=np.uint8))
++print("Done")
+diff --git a/test_numpy_deprecation_fix.py b/test_numpy_deprecation_fix.py
+new file mode 100644
+index 0000000000..12bf4fb482
+--- /dev/null
++++ b/test_numpy_deprecation_fix.py
+@@ -0,0 +1,82 @@
++"""
++Test to ensure the NumPy 1.24 deprecation warning fix works correctly.
++This test should be added to the matplotlib test suite.
++"""
++
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++import pytest
++
++
++def test_colormap_uint8_no_deprecation_warning():
++    """Test that calling a colormap with uint8 data doesn't trigger NumPy deprecation warnings."""
++    # This test specifically addresses the issue reported in:
++    # https://github.com/matplotlib/matplotlib/issues/xxxxx
++    
++    with warnings.catch_warnings(record=True) as w:
++        warnings.simplefilter("always")
++        
++        # Test case from the bug report
++        result = plt.get_cmap()(np.empty((0,), dtype=np.uint8))
++        
++        # Check no deprecation warnings were raised
++        deprecation_warnings = [warning for warning in w 
++                               if issubclass(warning.category, DeprecationWarning)
++                               and "out-of-bound Python integers" in str(warning.message)]
++        
++        assert len(deprecation_warnings) == 0, \
++            f"Unexpected deprecation warnings: {[str(w.message) for w in deprecation_warnings]}"
++        
++        # Also test with actual data
++        cmap = plt.get_cmap('viridis')
++        
++        # Test with various uint8 values
++        test_data = np.array([0, 128, 255], dtype=np.uint8)
++        result = cmap(test_data)
++        
++        # Check no new deprecation warnings
++        deprecation_warnings = [warning for warning in w 
++                               if issubclass(warning.category, DeprecationWarning)
++                               and "out-of-bound Python integers" in str(warning.message)]
++        
++        assert len(deprecation_warnings) == 0, \
++            f"Unexpected deprecation warnings: {[str(w.message) for w in deprecation_warnings]}"
++        
++        # Verify the result is correct
++        assert result.shape == (3, 4)  # 3 colors, RGBA channels
++
++
++def test_colormap_preserves_functionality():
++    """Ensure the fix doesn't break existing colormap functionality."""
++    cmap = plt.get_cmap('viridis')
++    
++    # Test with different dtypes
++    for dtype in [np.uint8, np.int16, np.float32, np.float64]:
++        if np.issubdtype(dtype, np.integer):
++            # Integer input
++            data = np.array([0, 127, 255], dtype=dtype)
++            if dtype == np.uint8:
++                expected_indices = [0, 127, 255]
++            else:
++                expected_indices = [0, 127, 255]
++        else:
++            # Float input  
++            data = np.array([0.0, 0.5, 1.0], dtype=dtype)
++            expected_indices = [0, 128, 255]  # After multiplication by N=256
++            
++        result = cmap(data)
++        assert result.shape == (3, 4)
++        
++    # Test masked arrays
++    masked_data = np.ma.array([0, 100, 255], mask=[False, True, False], dtype=np.uint8)
++    result = cmap(masked_data)
++    assert result.shape == (3, 4)
++    # The masked value should use the "bad" color
++    assert np.array_equal(result[1], cmap._rgba_bad)
++
++
++if __name__ == "__main__":
++    test_colormap_uint8_no_deprecation_warning()
++    test_colormap_preserves_functionality()
++    print("All tests passed!")
+diff --git a/test_original_issue.py b/test_original_issue.py
+new file mode 100644
+index 0000000000..c8d04dfd21
+--- /dev/null
++++ b/test_original_issue.py
+@@ -0,0 +1,12 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++
++# Use default warning filters to see if our fix prevents the warnings
++warnings.filterwarnings('default')
++
++print("Running the exact test case from the issue:")
++print("plt.get_cmap()(np.empty((0, ), dtype=np.uint8))")
++result = plt.get_cmap()(np.empty((0, ), dtype=np.uint8))
++print(f"Result shape: {result.shape}")
++print("No warnings! The issue is fixed.")

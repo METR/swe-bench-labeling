@@ -1,0 +1,86 @@
+diff --git a/sympy/codegen/ast.py b/sympy/codegen/ast.py
+index a02714b174..f35ff4d4af 100644
+--- a/sympy/codegen/ast.py
++++ b/sympy/codegen/ast.py
+@@ -877,7 +877,8 @@ class String(Token):
+     Parameters
+     ==========
+ 
+-    text : str
++    text : str, optional
++        The string content. Defaults to an empty string.
+ 
+     Examples
+     ========
+@@ -895,9 +896,12 @@ class String(Token):
+ 
+     """
+     __slots__ = ('text',)
+-    not_in_args = ['text']
+     is_Atom = True
+ 
++    def __init__(self, text=''):
++        super().__init__()
++        self.text = self._construct_text(text)
++
+     @classmethod
+     def _construct_text(cls, text):
+         if not isinstance(text, str):
+@@ -907,6 +911,27 @@ def _construct_text(cls, text):
+     def _sympystr(self, printer, *args, **kwargs):
+         return self.text
+ 
++    def __eq__(self, other):
++        if isinstance(other, String):
++            return self.text == other.text
++        return NotImplemented
++
++    def __hash__(self):
++        return hash((type(self), self.text))
++
++    @property
++    def args(self):
++        return (self.text,)
++
++    def func(self, *args):
++        return type(self)(*args)
++
++    def __repr__(self):
++        return f"{self.__class__.__name__}('{self.text}')"
++
++    def __str__(self):
++        return self.text
++
+ 
+ class QuotedString(String):
+     """ Represents a string which should be printed with quotes. """
+diff --git a/test_string_invariance.py b/test_string_invariance.py
+new file mode 100644
+index 0000000000..03010b34d3
+--- /dev/null
++++ b/test_string_invariance.py
+@@ -0,0 +1,24 @@
++from sympy.codegen.ast import String
++
++def test_string_invariance():
++    s1 = String('hello')
++    s2 = String('hello')
++    s3 = String('world')
++
++    # Test equality
++    assert s1 == s2
++    assert s1 != s3
++
++    # Test argument invariance
++    assert s1.func(*s1.args) == s1
++    assert s2.func(*s2.args) == s2
++    assert s3.func(*s3.args) == s3
++
++    # Test hashability
++    d = {s1: 1, s3: 2}
++    assert len(d) == 2
++    assert d[s2] == 1  # s2 should hash to the same value as s1
++
++if __name__ == '__main__':
++    test_string_invariance()
++    print("All tests passed!")

@@ -1,0 +1,276 @@
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 00000000..db8d5530
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,46 @@
++import xarray as xr
++import numpy as np
++
++print("Testing edge cases for rolling window with centering...")
++
++# Edge case 1: Small array with large window
++data1 = xr.DataArray([1, 2, 3], dims="x")
++r1 = data1.rolling(x=5, center=True)
++result1a = r1.mean().values
++result1b = [w.mean().values.item() for _, w in r1]
++print(f"\nSmall array (3) with large window (5):")
++print(f"  Built-in: {result1a}")
++print(f"  Manual:   {result1b}")
++print(f"  Match:    {np.allclose(result1a, result1b, equal_nan=True)}")
++
++# Edge case 2: Window size equals array size
++data2 = xr.DataArray(np.arange(1, 6), dims="x")
++r2 = data2.rolling(x=5, center=True)
++result2a = r2.mean().values
++result2b = [w.mean().values.item() for _, w in r2]
++print(f"\nWindow size equals array size:")
++print(f"  Built-in: {result2a}")
++print(f"  Manual:   {result2b}")
++print(f"  Match:    {np.allclose(result2a, result2b, equal_nan=True)}")
++
++# Edge case 3: Single element array
++data3 = xr.DataArray([42], dims="x")
++r3 = data3.rolling(x=1, center=True)  # Changed window size to 1
++result3a = r3.mean().values
++result3b = [w.mean().values.item() for _, w in r3]
++print(f"\nSingle element array with window size 1:")
++print(f"  Built-in: {result3a}")
++print(f"  Manual:   {result3b}")
++print(f"  Match:    {np.allclose(result3a, result3b, equal_nan=True)}")
++
++# Edge case 4: Window size 2 (even) with small array
++data4 = xr.DataArray([1, 2, 3, 4], dims="x")
++r4 = data4.rolling(x=2, center=True)
++result4a = r4.mean().values
++result4b = [w.mean().values.item() for _, w in r4]
++print(f"\nEven window size (2) with small array:")
++print(f"  Built-in: {result4a}")
++print(f"  Manual:   {result4b}")
++print(f"  Match:    {np.allclose(result4a, result4b, equal_nan=True)}")
++
++print("\nAll edge case tests completed!")
+diff --git a/test_rolling_center_issue.py b/test_rolling_center_issue.py
+new file mode 100644
+index 00000000..4f7ad4ad
+--- /dev/null
++++ b/test_rolling_center_issue.py
+@@ -0,0 +1,19 @@
++import xarray as xr
++import numpy as np
++
++# Test the issue
++my_data = xr.DataArray(np.arange(1,10), dims="x")
++
++# Option 1: take a center-justified rolling average
++result1 = my_data.rolling(x=3, center=True).mean().values
++print("Result 1 (center=True with .mean()):", result1)
++
++# Option 2: try to manually iterate, but the result is not centered
++my_data_rolling = my_data.rolling(x=3, center=True)
++result2 = [window.mean().values.item() for label, window in my_data_rolling]
++print("Result 2 (center=True with manual iteration):", result2)
++
++# Let's also check what windows are being generated
++print("\nWindows from manual iteration:")
++for i, (label, window) in enumerate(my_data.rolling(x=3, center=True)):
++    print(f"Window {i} (label={label.values}): {window.values}")
+diff --git a/test_rolling_center_iter.py b/test_rolling_center_iter.py
+new file mode 100644
+index 00000000..e732fb47
+--- /dev/null
++++ b/test_rolling_center_iter.py
+@@ -0,0 +1,37 @@
++import xarray as xr
++import numpy as np
++import pytest
++
++
++def test_rolling_center_iteration():
++    """Test that center parameter is respected when manually iterating over DataArrayRolling"""
++    my_data = xr.DataArray(np.arange(1, 10), dims="x")
++    
++    # Option 1: take a center-justified rolling average
++    result1 = my_data.rolling(x=3, center=True).mean().values
++    
++    # Option 2: manually iterate
++    my_data_rolling = my_data.rolling(x=3, center=True)
++    result2 = [window.mean().values.item() for label, window in my_data_rolling]
++    
++    # Check that results are the same
++    np.testing.assert_allclose(result1, result2, equal_nan=True)
++    
++    # Check that the expected values are correct
++    expected = np.array([np.nan, 2., 3., 4., 5., 6., 7., 8., np.nan])
++    np.testing.assert_allclose(result1, expected, equal_nan=True)
++    
++    # Also test with center=False to ensure backward compatibility
++    result3 = my_data.rolling(x=3, center=False).mean().values
++    result4 = [window.mean().values.item() for label, window in my_data.rolling(x=3, center=False)]
++    np.testing.assert_allclose(result3, result4, equal_nan=True)
++    
++    # Test with even window size
++    result5 = my_data.rolling(x=4, center=True).mean().values
++    result6 = [window.mean().values.item() for label, window in my_data.rolling(x=4, center=True)]
++    np.testing.assert_allclose(result5, result6, equal_nan=True)
++
++
++if __name__ == "__main__":
++    test_rolling_center_iteration()
++    print("All tests passed!")
+diff --git a/test_rolling_comprehensive.py b/test_rolling_comprehensive.py
+new file mode 100644
+index 00000000..aa1a5fb2
+--- /dev/null
++++ b/test_rolling_comprehensive.py
+@@ -0,0 +1,52 @@
++import xarray as xr
++import numpy as np
++
++# Test 1: Basic test with window size 3
++print("=== Test 1: Window size 3 ===")
++my_data = xr.DataArray(np.arange(1, 10), dims="x")
++
++# Compare centered results
++result1 = my_data.rolling(x=3, center=True).mean().values
++result2 = [window.mean().values.item() for label, window in my_data.rolling(x=3, center=True)]
++print(f"Built-in mean with center=True: {result1}")
++print(f"Manual iteration with center=True: {result2}")
++print(f"Results match: {np.allclose(result1, result2, equal_nan=True)}")
++
++# Compare non-centered results
++result3 = my_data.rolling(x=3, center=False).mean().values
++result4 = [window.mean().values.item() for label, window in my_data.rolling(x=3, center=False)]
++print(f"\nBuilt-in mean with center=False: {result3}")
++print(f"Manual iteration with center=False: {result4}")
++print(f"Results match: {np.allclose(result3, result4, equal_nan=True)}")
++
++# Test 2: Even window size
++print("\n=== Test 2: Window size 4 (even) ===")
++result5 = my_data.rolling(x=4, center=True).mean().values
++result6 = [window.mean().values.item() for label, window in my_data.rolling(x=4, center=True)]
++print(f"Built-in mean with center=True: {result5}")
++print(f"Manual iteration with center=True: {result6}")
++print(f"Results match: {np.allclose(result5, result6, equal_nan=True)}")
++
++# Test 3: Larger window
++print("\n=== Test 3: Window size 5 ===")
++result7 = my_data.rolling(x=5, center=True).mean().values
++result8 = [window.mean().values.item() for label, window in my_data.rolling(x=5, center=True)]
++print(f"Built-in mean with center=True: {result7}")
++print(f"Manual iteration with center=True: {result8}")
++print(f"Results match: {np.allclose(result7, result8, equal_nan=True)}")
++
++# Test 4: With min_periods
++print("\n=== Test 4: Window size 3, min_periods=2 ===")
++result9 = my_data.rolling(x=3, center=True, min_periods=2).mean().values
++result10 = [window.mean().values.item() for label, window in my_data.rolling(x=3, center=True, min_periods=2)]
++print(f"Built-in mean with center=True: {result9}")
++print(f"Manual iteration with center=True: {result10}")
++print(f"Results match: {np.allclose(result9, result10, equal_nan=True)}")
++
++# Test 5: Edge case - window size 1
++print("\n=== Test 5: Window size 1 ===")
++result11 = my_data.rolling(x=1, center=True).mean().values
++result12 = [window.mean().values.item() for label, window in my_data.rolling(x=1, center=True)]
++print(f"Built-in mean with center=True: {result11}")
++print(f"Manual iteration with center=True: {result12}")
++print(f"Results match: {np.allclose(result11, result12, equal_nan=True)}")
+diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
+index aef290f6..12031b1f 100644
+--- a/xarray/core/rolling.py
++++ b/xarray/core/rolling.py
+@@ -270,16 +270,44 @@ class DataArrayRolling(Rolling["DataArray"]):
+     def __iter__(self) -> Iterator[tuple[RollingKey, DataArray]]:
+         if self.ndim > 1:
+             raise ValueError("__iter__ is only supported for 1d-rolling")
+-        stops = np.arange(1, len(self.window_labels) + 1)
+-        starts = stops - int(self.window[0])
+-        starts[: int(self.window[0])] = 0
+-        for (label, start, stop) in zip(self.window_labels, starts, stops):
+-            window = self.obj.isel({self.dim[0]: slice(start, stop)})
+-
+-            counts = window.count(dim=self.dim[0])
+-            window = window.where(counts >= self.min_periods)
+-
+-            yield (label, window)
++        
++        window_size = int(self.window[0])
++        n_labels = len(self.window_labels)
++        
++        if self.center[0]:
++            # For centered windows, we need to adjust the start/stop positions
++            offset = window_size // 2
++            
++            for i, label in enumerate(self.window_labels):
++                # Calculate centered window positions
++                start = i - offset
++                stop = i + window_size - offset
++                
++                # Handle boundaries
++                if start < 0:
++                    start = 0
++                if stop > n_labels:
++                    stop = n_labels
++                    
++                window = self.obj.isel({self.dim[0]: slice(start, stop)})
++                
++                counts = window.count(dim=self.dim[0])
++                window = window.where(counts >= self.min_periods)
++                
++                yield (label, window)
++        else:
++            # Original logic for non-centered windows
++            stops = np.arange(1, n_labels + 1)
++            starts = stops - window_size
++            starts[: window_size] = 0
++            
++            for (label, start, stop) in zip(self.window_labels, starts, stops):
++                window = self.obj.isel({self.dim[0]: slice(start, stop)})
++
++                counts = window.count(dim=self.dim[0])
++                window = window.where(counts >= self.min_periods)
++
++                yield (label, window)
+ 
+     def construct(
+         self,
+diff --git a/xarray/tests/test_rolling.py b/xarray/tests/test_rolling.py
+index 2d6efff7..0257ba7f 100644
+--- a/xarray/tests/test_rolling.py
++++ b/xarray/tests/test_rolling.py
+@@ -49,6 +49,34 @@ class TestDataArrayRolling:
+                     expected.values[expected.values.nonzero()],
+                 )
+ 
++    def test_rolling_iter_center(self) -> None:
++        """Test that center parameter is respected when manually iterating over DataArrayRolling"""
++        my_data = DataArray(np.arange(1, 10), dims="x")
++        
++        # Option 1: take a center-justified rolling average
++        result1 = my_data.rolling(x=3, center=True).mean().values
++        
++        # Option 2: manually iterate
++        my_data_rolling = my_data.rolling(x=3, center=True)
++        result2 = [window.mean().values.item() for label, window in my_data_rolling]
++        
++        # Check that results are the same
++        np.testing.assert_allclose(result1, result2, equal_nan=True)
++        
++        # Check that the expected values are correct
++        expected = np.array([np.nan, 2., 3., 4., 5., 6., 7., 8., np.nan])
++        np.testing.assert_allclose(result1, expected, equal_nan=True)
++        
++        # Also test with center=False to ensure backward compatibility
++        result3 = my_data.rolling(x=3, center=False).mean().values
++        result4 = [window.mean().values.item() for label, window in my_data.rolling(x=3, center=False)]
++        np.testing.assert_allclose(result3, result4, equal_nan=True)
++        
++        # Test with even window size
++        result5 = my_data.rolling(x=4, center=True).mean().values
++        result6 = [window.mean().values.item() for label, window in my_data.rolling(x=4, center=True)]
++        np.testing.assert_allclose(result5, result6, equal_nan=True)
++
+     @pytest.mark.parametrize("da", (1,), indirect=True)
+     def test_rolling_repr(self, da) -> None:
+         rolling_obj = da.rolling(time=7)

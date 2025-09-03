@@ -1,0 +1,418 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 81f8f79c71..384c502436 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1179,7 +1179,13 @@ class Subquery(BaseExpression, Combinable):
+         connection.ops.check_expression_support(self)
+         template_params = {**self.extra, **extra_context}
+         query = query or self.query
+-        subquery_sql, sql_params = query.as_sql(compiler, connection)
++        try:
++            subquery_sql, sql_params = query.as_sql(compiler, connection)
++        except EmptyResultSet:
++            # Empty subqueries should produce a valid SQL that returns no results.
++            # For EXISTS, this would be EXISTS(SELECT 1 WHERE 0 = 1)
++            subquery_sql = '(SELECT 1 WHERE 0 = 1)'
++            sql_params = []
+         template_params['subquery'] = subquery_sql[1:-1]
+ 
+         template = template or template_params.get('template', self.template)
+diff --git a/test_empty_query.py b/test_empty_query.py
+new file mode 100644
+index 0000000000..70ec50102b
+--- /dev/null
++++ b/test_empty_query.py
+@@ -0,0 +1,58 @@
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.apps import apps
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++        SECRET_KEY='secret-key',
++    )
++    django.setup()
++
++# Define a test model
++class MyModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the database tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(MyModel)
++
++# Let's see what happens with an empty query 
++print("Testing empty query behavior:")
++empty_qs = MyModel.objects.none()
++print(f"Empty queryset is_empty: {empty_qs.query.is_empty()}")
++
++# Let's see what exists() returns for an empty query
++exists_query = empty_qs.query.exists(using='default')
++print(f"exists() query is_empty: {exists_query.is_empty()}")
++
++# Let's try to get SQL for the exists query
++try:
++    compiler = exists_query.get_compiler('default')
++    sql, params = compiler.as_sql()
++    print(f"exists() SQL: {sql}")
++    print(f"exists() params: {params}")
++except Exception as e:
++    print(f"Error getting exists() SQL: {e.__class__.__name__}: {e}")
++    
++# Let's see what NOT EXISTS(empty) should be
++print("\nWhat should NOT EXISTS(empty query) evaluate to?")
++print("NOT EXISTS(SELECT 1 FROM table WHERE false) should be TRUE")
++print("Because there are no rows that match the condition")
+diff --git a/test_exists_empty_queryset.py b/test_exists_empty_queryset.py
+new file mode 100644
+index 0000000000..862182638b
+--- /dev/null
++++ b/test_exists_empty_queryset.py
+@@ -0,0 +1,100 @@
++from django.test import TestCase
++from django.db import models
++
++
++class ExistsEmptyQuerysetTest(TestCase):
++    """Test for the issue where filter on exists-subquery with empty queryset removes whole WHERE block"""
++    
++    @classmethod
++    def setUpTestData(cls):
++        # Create test model dynamically
++        class TestModel(models.Model):
++            name = models.CharField(max_length=100)
++            
++            class Meta:
++                app_label = 'test_app'
++        
++        cls.TestModel = TestModel
++        
++        # Create test data
++        cls.obj1 = TestModel.objects.create(name='test')
++        cls.obj2 = TestModel.objects.create(name='other')
++    
++    def test_exists_empty_queryset(self):
++        """Test that EXISTS with empty queryset produces valid SQL"""
++        qs = self.TestModel.objects.filter(models.Exists(self.TestModel.objects.none()), name='test')
++        
++        # Should not raise EmptyResultSet when getting query string
++        query_str = str(qs.query)
++        self.assertIn('EXISTS', query_str)
++        self.assertIn('0 = 1', query_str)
++        self.assertIn('name', query_str)
++        
++        # Should return no results since EXISTS(empty) is always FALSE
++        self.assertEqual(list(qs), [])
++    
++    def test_not_exists_empty_queryset(self):
++        """Test that NOT EXISTS with empty queryset produces valid SQL and correct results"""
++        qs = self.TestModel.objects.filter(~models.Exists(self.TestModel.objects.none()), name='test')
++        
++        # Should not raise EmptyResultSet when getting query string
++        query_str = str(qs.query)
++        self.assertIn('NOT EXISTS', query_str)
++        self.assertIn('0 = 1', query_str)
++        self.assertIn('name', query_str)
++        
++        # Should return the 'test' object since NOT EXISTS(empty) is always TRUE
++        results = list(qs)
++        self.assertEqual(len(results), 1)
++        self.assertEqual(results[0].name, 'test')
++    
++    def test_complex_query_with_exists_empty(self):
++        """Test complex queries with EXISTS on empty querysets"""
++        # Using Q objects
++        qs = self.TestModel.objects.filter(
++            models.Q(~models.Exists(self.TestModel.objects.none())) & models.Q(name='test')
++        )
++        results = list(qs)
++        self.assertEqual(len(results), 1)
++        self.assertEqual(results[0].name, 'test')
++        
++        # Multiple conditions
++        qs2 = self.TestModel.objects.filter(
++            ~models.Exists(self.TestModel.objects.none()),
++            name__startswith='t'
++        )
++        results2 = list(qs2)
++        self.assertEqual(len(results2), 1)
++        self.assertEqual(results2[0].name, 'test')
++
++
++if __name__ == '__main__':
++    # Run the tests
++    import django
++    from django.conf import settings
++    
++    if not settings.configured:
++        settings.configure(
++            DATABASES={
++                'default': {
++                    'ENGINE': 'django.db.backends.sqlite3',
++                    'NAME': ':memory:',
++                }
++            },
++            INSTALLED_APPS=[
++                'django.contrib.contenttypes',
++                'django.contrib.auth',
++            ],
++            USE_TZ=True,
++            SECRET_KEY='secret-key',
++        )
++        django.setup()
++    
++    from django.test.utils import get_runner
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner(verbosity=2)
++    failures = test_runner.run_tests(['__main__'])
++    
++    if failures:
++        import sys
++        sys.exit(1)
+diff --git a/test_exists_issue.py b/test_exists_issue.py
+new file mode 100644
+index 0000000000..fe3e5d6e85
+--- /dev/null
++++ b/test_exists_issue.py
+@@ -0,0 +1,57 @@
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.apps import apps
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++        SECRET_KEY='secret-key',
++    )
++    django.setup()
++
++# Define a test model
++class MyModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the database tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(MyModel)
++
++# Test the issue
++print("Testing ~Exists with empty queryset...")
++qs = MyModel.objects.filter(~models.Exists(MyModel.objects.none()), name='test')
++print(f"QuerySet: {qs}")
++print(f"Query: {qs.query}")
++
++# Try to see the actual SQL
++try:
++    from django.db import connection
++    with connection.cursor() as cursor:
++        sql, params = qs.query.get_compiler('default').as_sql()
++        print(f"SQL: {sql}")
++        print(f"Params: {params}")
++except Exception as e:
++    print(f"Error getting SQL: {e}")
++
++# Let's also test a regular Exists query
++print("\nTesting regular Exists:")
++qs2 = MyModel.objects.filter(models.Exists(MyModel.objects.all()), name='test')
++print(f"QuerySet: {qs2}")
++print(f"Query: {qs2.query}")
+diff --git a/test_exists_issue2.py b/test_exists_issue2.py
+new file mode 100644
+index 0000000000..675b4348aa
+--- /dev/null
++++ b/test_exists_issue2.py
+@@ -0,0 +1,84 @@
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.apps import apps
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++        SECRET_KEY='secret-key',
++    )
++    django.setup()
++
++# Define a test model
++class MyModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the database tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(MyModel)
++
++# Test the issue
++print("Testing ~Exists with empty queryset...")
++qs = MyModel.objects.filter(~models.Exists(MyModel.objects.none()), name='test')
++print(f"QuerySet: {qs}")
++try:
++    print(f"Query: {qs.query}")
++except Exception as e:
++    print(f"Error getting query string: {e.__class__.__name__}: {e}")
++
++# Try to see the actual SQL
++try:
++    from django.db import connection
++    with connection.cursor() as cursor:
++        sql, params = qs.query.get_compiler('default').as_sql()
++        print(f"SQL: {sql}")
++        print(f"Params: {params}")
++except Exception as e:
++    print(f"Error getting SQL: {e.__class__.__name__}: {e}")
++
++# Let's also test a regular Exists query
++print("\nTesting regular Exists:")
++qs2 = MyModel.objects.filter(models.Exists(MyModel.objects.all()), name='test')
++print(f"QuerySet: {qs2}")
++try:
++    print(f"Query: {qs2.query}")
++except Exception as e:
++    print(f"Error getting query string: {e.__class__.__name__}: {e}")
++
++# Test with just Exists (not negated)
++print("\nTesting Exists with empty queryset (not negated):")
++qs3 = MyModel.objects.filter(models.Exists(MyModel.objects.none()), name='test')
++print(f"QuerySet: {qs3}")
++try:
++    print(f"Query: {qs3.query}")
++except Exception as e:
++    print(f"Error getting query string: {e.__class__.__name__}: {e}")
++
++# Test with list() to see if we can execute the query
++print("\nTrying to execute queries:")
++try:
++    print(f"~Exists(none()) results: {list(qs)}")
++except Exception as e:
++    print(f"Error executing ~Exists(none()): {e.__class__.__name__}: {e}")
++
++try:
++    print(f"Exists(none()) results: {list(qs3)}")
++except Exception as e:
++    print(f"Error executing Exists(none()): {e.__class__.__name__}: {e}")
+diff --git a/test_full_scenario.py b/test_full_scenario.py
+new file mode 100644
+index 0000000000..1400fe0f5d
+--- /dev/null
++++ b/test_full_scenario.py
+@@ -0,0 +1,70 @@
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.apps import apps
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=True,
++        SECRET_KEY='secret-key',
++    )
++    django.setup()
++
++# Define a test model
++class MyModel(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the database tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(MyModel)
++
++# Create some test data
++MyModel.objects.create(name='test')
++MyModel.objects.create(name='other')
++
++# Test the issue scenarios
++print("Testing ~Exists with empty queryset...")
++qs = MyModel.objects.filter(~models.Exists(MyModel.objects.none()), name='test')
++print(f"Query: {qs.query}")
++results = list(qs)
++print(f"Results: {[m.name for m in results]}")
++print(f"Expected: ['test'] (because NOT EXISTS(empty) is always TRUE)")
++
++print("\nTesting Exists with empty queryset...")
++qs2 = MyModel.objects.filter(models.Exists(MyModel.objects.none()), name='test')
++print(f"Query: {qs2.query}")
++results2 = list(qs2)
++print(f"Results: {[m.name for m in results2]}")
++print(f"Expected: [] (because EXISTS(empty) is always FALSE)")
++
++print("\nTesting ~Exists with non-empty queryset...")
++qs3 = MyModel.objects.filter(~models.Exists(MyModel.objects.filter(name='other')), name='test')
++print(f"Query: {qs3.query}")
++results3 = list(qs3)
++print(f"Results: {[m.name for m in results3]}")
++print(f"Expected: [] (because EXISTS(name='other') is TRUE, so NOT EXISTS is FALSE)")
++
++print("\nTesting complex query with multiple conditions...")
++qs4 = MyModel.objects.filter(
++    models.Q(~models.Exists(MyModel.objects.none())) & models.Q(name='test')
++)
++print(f"Query: {qs4.query}")
++results4 = list(qs4)
++print(f"Results: {[m.name for m in results4]}")
++print(f"Expected: ['test']")

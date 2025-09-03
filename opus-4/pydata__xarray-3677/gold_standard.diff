@@ -1,0 +1,120 @@
+From c03c7c80c77bcce8e7260406461fe535de5f9928 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Thu, 9 Jan 2020 15:56:32 +0000
+Subject: [PATCH 1/5] Added mwe as test
+
+---
+ xarray/tests/test_merge.py | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/xarray/tests/test_merge.py b/xarray/tests/test_merge.py
+index c1e6c7a5ce8..ed786584af9 100644
+--- a/xarray/tests/test_merge.py
++++ b/xarray/tests/test_merge.py
+@@ -253,3 +253,9 @@ def test_merge_no_conflicts(self):
+         with pytest.raises(xr.MergeError):
+             ds3 = xr.Dataset({"a": ("y", [2, 3]), "y": [1, 2]})
+             ds1.merge(ds3, compat="no_conflicts")
++
++    def test_merge_dataarray(self):
++        ds = xr.Dataset({'a': 0})
++        da = xr.DataArray(data=1, name='b')
++
++        assert ds.merge(da).identical(xr.merge([ds, da]))
+
+From 211fa9acca42787fbb34ee3354b4f1c5d6ba1ab2 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Thu, 9 Jan 2020 15:56:48 +0000
+Subject: [PATCH 2/5] Cast to Dataset
+
+---
+ xarray/core/dataset.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index ac0a923db78..d597ec8cfb0 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -3604,6 +3604,7 @@ def merge(
+             If any variables conflict (see ``compat``).
+         """
+         _check_inplace(inplace)
++        other = other.to_dataset() if isinstance(other, xr.DataArray) else other
+         merge_result = dataset_merge_method(
+             self,
+             other,
+
+From 8a60abcbd68fa8d831226ed32df718c38b8131e2 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Thu, 9 Jan 2020 15:59:20 +0000
+Subject: [PATCH 3/5] Updated what's new
+
+---
+ doc/whats-new.rst | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 5a9f2497ed6..e69fbadea34 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -70,6 +70,8 @@ Bug fixes
+   By `Justus Magin <https://github.com/keewis>`_.
+ - :py:meth:`Dataset.rename`, :py:meth:`DataArray.rename` now check for conflicts with
+   MultiIndex level names.
++- :py:meth:`Dataset.merge` no longer fails when passed a `DataArray` instead of a `Dataset` object.
++  By `Tom Nicholas <https://github.com/TomNicholas>`_.
+ 
+ Documentation
+ ~~~~~~~~~~~~~
+
+From c0c809d6c5204ea27559752974ebbda3668ed887 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Thu, 9 Jan 2020 16:09:04 +0000
+Subject: [PATCH 4/5] black formatted
+
+---
+ xarray/tests/test_merge.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/xarray/tests/test_merge.py b/xarray/tests/test_merge.py
+index ed786584af9..e598994a619 100644
+--- a/xarray/tests/test_merge.py
++++ b/xarray/tests/test_merge.py
+@@ -255,7 +255,7 @@ def test_merge_no_conflicts(self):
+             ds1.merge(ds3, compat="no_conflicts")
+ 
+     def test_merge_dataarray(self):
+-        ds = xr.Dataset({'a': 0})
+-        da = xr.DataArray(data=1, name='b')
++        ds = xr.Dataset({"a": 0})
++        da = xr.DataArray(data=1, name="b")
+ 
+         assert ds.merge(da).identical(xr.merge([ds, da]))
+
+From 2901cacca452776d453c60b7e7af0393cdac95a9 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Thu, 9 Jan 2020 16:11:50 +0000
+Subject: [PATCH 5/5] Use assert_identical
+
+---
+ xarray/tests/test_merge.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/xarray/tests/test_merge.py b/xarray/tests/test_merge.py
+index e598994a619..6c8f3f65657 100644
+--- a/xarray/tests/test_merge.py
++++ b/xarray/tests/test_merge.py
+@@ -3,6 +3,7 @@
+ 
+ import xarray as xr
+ from xarray.core import dtypes, merge
++from xarray.testing import assert_identical
+ 
+ from . import raises_regex
+ from .test_dataset import create_test_data
+@@ -258,4 +259,4 @@ def test_merge_dataarray(self):
+         ds = xr.Dataset({"a": 0})
+         da = xr.DataArray(data=1, name="b")
+ 
+-        assert ds.merge(da).identical(xr.merge([ds, da]))
++        assert_identical(ds.merge(da), xr.merge([ds, da]))

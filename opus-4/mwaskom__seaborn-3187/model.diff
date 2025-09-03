@@ -1,0 +1,409 @@
+diff --git a/check_formatter.py b/check_formatter.py
+new file mode 100644
+index 00000000..6c4eb072
+--- /dev/null
++++ b/check_formatter.py
+@@ -0,0 +1,28 @@
++import matplotlib.pyplot as plt
++from matplotlib.ticker import ScalarFormatter
++import numpy as np
++
++# Create a formatter and test its methods
++formatter = ScalarFormatter()
++formatter.set_scientific(True)
++formatter.set_powerlimits((0, 0))
++
++# Create a dummy axis
++fig, ax = plt.subplots()
++ax.set_xlim(1e6, 5e6)
++formatter.axis = ax.xaxis
++
++# Test the formatter
++locs = np.linspace(1e6, 5e6, 5)
++labels = formatter.format_ticks(locs)
++
++print("Labels:", labels)
++print("Offset text:", formatter.get_offset())
++
++# Check if formatter has get_offset method
++print("\nFormatter methods:")
++for attr in dir(formatter):
++    if 'offset' in attr.lower():
++        print(f"  {attr}")
++
++plt.close(fig)
+diff --git a/check_offset_behavior.py b/check_offset_behavior.py
+new file mode 100644
+index 00000000..43b36623
+--- /dev/null
++++ b/check_offset_behavior.py
+@@ -0,0 +1,28 @@
++import matplotlib.pyplot as plt
++from matplotlib.ticker import ScalarFormatter
++import numpy as np
++
++# Check default offset behavior for different ranges
++ranges = [
++    (1, 10),
++    (100, 1000),
++    (1000, 10000),
++    (10000, 100000),
++    (100000, 1000000),
++    (1000000, 10000000),
++]
++
++for vmin, vmax in ranges:
++    fig, ax = plt.subplots()
++    ax.set_xlim(vmin, vmax)
++    
++    # Get the default formatter
++    formatter = ax.xaxis.get_major_formatter()
++    
++    # Format some ticks
++    locs = np.linspace(vmin, vmax, 5)
++    labels = formatter.format_ticks(locs)
++    offset = formatter.get_offset()
++    
++    print(f"Range {vmin:g} to {vmax:g}: Labels={labels[:3]}..., Offset='{offset}'")
++    plt.close(fig)
+diff --git a/seaborn/_core/plot.py b/seaborn/_core/plot.py
+index 8915616b..865bebb2 100644
+--- a/seaborn/_core/plot.py
++++ b/seaborn/_core/plot.py
+@@ -1562,25 +1562,32 @@ class Plotter:
+             var_legend = scales[var]._legend
+             if var_legend is not None:
+                 values, labels = var_legend
+-                for (_, part_id), part_vars, _ in schema:
++                for (_, part_id), part_vars, _, _ in schema:
+                     if data.ids[var] == part_id:
+                         # Allow multiple plot semantics to represent same data variable
+                         part_vars.append(var)
+                         break
+                 else:
+                     title = self._resolve_label(p, var, data.names[var])
+-                    entry = (title, data.ids[var]), [var], (values, labels)
++                    # Get the offset from the scale if available
++                    offset = getattr(scales[var], '_legend_offset', None)
++                    entry = (title, data.ids[var]), [var], (values, labels), offset
+                     schema.append(entry)
+ 
+         # Second pass, generate an artist corresponding to each value
+         contents: list[tuple[tuple[str, str | int], Any, list[str]]] = []
+-        for key, variables, (values, labels) in schema:
++        for key, variables, (values, labels), offset in schema:
+             artists = []
+             for val in values:
+                 artist = mark._legend_artist(variables, val, scales)
+                 if artist is not None:
+                     artists.append(artist)
+             if artists:
++                # Modify key to include offset in title if present
++                if offset:
++                    title, var_id = key
++                    title_with_offset = f"{title} ({offset})"
++                    key = (title_with_offset, var_id)
+                 contents.append((key, artists, labels))
+ 
+         self._legend_contents.extend(contents)
+diff --git a/seaborn/_core/scales.py b/seaborn/_core/scales.py
+index 55874bf2..7c708fdc 100644
+--- a/seaborn/_core/scales.py
++++ b/seaborn/_core/scales.py
+@@ -61,12 +61,14 @@ class Scale:
+     _matplotlib_scale: ScaleBase
+     _spacer: staticmethod
+     _legend: tuple[list[str], list[Any]] | None
++    _legend_offset: str | None
+ 
+     def __post_init__(self):
+ 
+         self._tick_params = None
+         self._label_params = None
+         self._legend = None
++        self._legend_offset = None
+ 
+     def tick(self):
+         raise NotImplementedError()
+@@ -135,6 +137,7 @@ class Scale:
+             _pipeline = []
+             _spacer = None
+             _legend = None
++            _legend_offset = None
+             _matplotlib_scale = None
+ 
+         return Identity()
+@@ -380,6 +383,10 @@ class ContinuousBase(Scale):
+             locs = locs[(vmin <= locs) & (locs <= vmax)]
+             labels = axis.major.formatter.format_ticks(locs)
+             new._legend = list(locs), list(labels)
++            
++            # Store the formatter offset for use in legend title
++            offset = axis.major.formatter.get_offset()
++            new._legend_offset = offset if offset else None
+ 
+         return new
+ 
+diff --git a/test_formatter_with_axis.py b/test_formatter_with_axis.py
+new file mode 100644
+index 00000000..779861c5
+--- /dev/null
++++ b/test_formatter_with_axis.py
+@@ -0,0 +1,33 @@
++import matplotlib.pyplot as plt
++from matplotlib.ticker import ScalarFormatter
++import numpy as np
++
++# Create a formatter and test its methods
++fig, ax = plt.subplots()
++ax.set_xlim(1e6, 5e6)
++
++# Get the formatter from the axis
++formatter = ax.xaxis.get_major_formatter()
++print(f"Formatter type: {type(formatter)}")
++
++# Set view interval to simulate what happens in the code
++ax.xaxis.set_view_interval(1e6, 5e6)
++
++# Get locs from locator
++locs = ax.xaxis.major.locator()
++print(f"Locs from locator: {locs}")
++
++# Filter locs
++vmin, vmax = 1e6, 5e6
++locs = locs[(vmin <= locs) & (locs <= vmax)]
++print(f"Filtered locs: {locs}")
++
++# Format ticks
++labels = ax.xaxis.major.formatter.format_ticks(locs)
++print(f"Labels: {labels}")
++
++# Get offset after formatting
++offset = ax.xaxis.major.formatter.get_offset()
++print(f"Offset: {offset}")
++
++plt.close(fig)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..1f80bac5
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,57 @@
++import numpy as np
++import pandas as pd
++import matplotlib.pyplot as plt
++import seaborn as sns
++import seaborn.objects as so
++
++# Create synthetic data with large values
++np.random.seed(42)
++n = 100
++data = pd.DataFrame({
++    'x': np.random.randn(n),
++    'y': np.random.randn(n),
++    'category': np.random.choice(['A', 'B', 'C'], n),
++    'size_small': np.random.uniform(1, 10, n),
++    'size_large': np.random.uniform(1e6, 5e6, n)  # Large values that will use offset
++})
++
++# Create plot with large values for pointsize
++plot = (
++    so.Plot(
++        data, x="x", y="y",
++        color="category", pointsize="size_large",
++    )
++    .add(so.Dot())
++)
++
++# Save the plot
++plot.save("test_plot_large.png", dpi=100)
++print("Plot saved as test_plot_large.png")
++
++# Also test with matplotlib's formatter to see the expected behavior
++fig, ax = plt.subplots(figsize=(6, 4))
++scatter = ax.scatter(data['x'], data['y'], s=data['size_large']/10000, c=data['category'].astype('category').cat.codes)
++ax.ticklabel_format(style='scientific', axis='both', scilimits=(0,0))
++plt.colorbar(scatter, ax=ax)
++plt.savefig("test_plot_mpl.png", dpi=100)
++print("Matplotlib plot saved as test_plot_mpl.png")
++
++# Let's also check what the formatter produces
++from matplotlib.ticker import ScalarFormatter
++formatter = ScalarFormatter()
++formatter.set_scientific(True)
++formatter.set_powerlimits((0, 0))
++
++# Simulate what happens in the code
++vmin, vmax = data['size_large'].min(), data['size_large'].max()
++print(f"\nValue range: {vmin:.2e} to {vmax:.2e}")
++
++# Create a dummy axis to use the formatter
++fig, ax = plt.subplots()
++ax.set_xlim(vmin, vmax)
++formatter.axis = ax.xaxis
++locs = np.linspace(vmin, vmax, 5)
++labels = formatter.format_ticks(locs)
++print(f"\nFormatter labels: {labels}")
++print(f"Formatter offset: {formatter.get_offset()}")
++plt.close(fig)
+diff --git a/test_legend_offset.py b/test_legend_offset.py
+new file mode 100644
+index 00000000..3242fb60
+--- /dev/null
++++ b/test_legend_offset.py
+@@ -0,0 +1,95 @@
++import numpy as np
++import pandas as pd
++import matplotlib.pyplot as plt
++import seaborn as sns
++import seaborn.objects as so
++
++# Create synthetic data with various ranges
++np.random.seed(42)
++n = 100
++
++# Test 1: Large values that should use offset
++data1 = pd.DataFrame({
++    'x': np.random.randn(n),
++    'y': np.random.randn(n),
++    'category': np.random.choice(['A', 'B', 'C'], n),
++    'size_large': np.random.uniform(1e6, 5e6, n)
++})
++
++print("Test 1: Large values (1e6 to 5e6)")
++plot1 = (
++    so.Plot(
++        data1, x="x", y="y",
++        color="category", pointsize="size_large",
++    )
++    .add(so.Dot())
++)
++plot1.save("test_offset_large.png", dpi=100)
++print("Plot saved as test_offset_large.png")
++
++# Test 2: Small values that should not use offset
++data2 = pd.DataFrame({
++    'x': np.random.randn(n),
++    'y': np.random.randn(n),
++    'category': np.random.choice(['A', 'B', 'C'], n),
++    'size_small': np.random.uniform(1, 10, n)
++})
++
++print("\nTest 2: Small values (1 to 10)")
++plot2 = (
++    so.Plot(
++        data2, x="x", y="y",
++        color="category", pointsize="size_small",
++    )
++    .add(so.Dot())
++)
++plot2.save("test_offset_small.png", dpi=100)
++print("Plot saved as test_offset_small.png")
++
++# Test 3: Very large values (1e9)
++data3 = pd.DataFrame({
++    'x': np.random.randn(n),
++    'y': np.random.randn(n), 
++    'category': np.random.choice(['A', 'B', 'C'], n),
++    'size_very_large': np.random.uniform(1e9, 5e9, n)
++})
++
++print("\nTest 3: Very large values (1e9 to 5e9)")
++plot3 = (
++    so.Plot(
++        data3, x="x", y="y",
++        color="category", pointsize="size_very_large",
++    )
++    .add(so.Dot())
++)
++plot3.save("test_offset_very_large.png", dpi=100)
++print("Plot saved as test_offset_very_large.png")
++
++# Let's also manually check what's happening with the legend
++from matplotlib.ticker import ScalarFormatter
++
++# For large values
++formatter = ScalarFormatter()
++formatter.set_powerlimits((0, 0))
++fig, ax = plt.subplots()
++ax.set_xlim(1e6, 5e6)
++formatter.axis = ax.xaxis
++locs = np.linspace(1e6, 5e6, 5)
++labels = formatter.format_ticks(locs)
++offset = formatter.get_offset()
++print(f"\nLarge values - Labels: {labels}, Offset: {offset}")
++plt.close(fig)
++
++# For small values
++fig, ax = plt.subplots()
++ax.set_xlim(1, 10)
++formatter.axis = ax.xaxis
++locs = np.linspace(1, 10, 5)
++labels = formatter.format_ticks(locs)
++offset = formatter.get_offset()
++print(f"Small values - Labels: {labels}, Offset: {offset}")
++plt.close(fig)
++
++# Check if legends were created correctly
++print("\nChecking if legends include offset information...")
++print("Expected: Large value legends should show offset (1e6), small value legends should not")
+diff --git a/test_offset_large.png b/test_offset_large.png
+new file mode 100644
+index 00000000..ef14a53b
+Binary files /dev/null and b/test_offset_large.png differ
+diff --git a/test_offset_small.png b/test_offset_small.png
+new file mode 100644
+index 00000000..8dd1cc97
+Binary files /dev/null and b/test_offset_small.png differ
+diff --git a/test_offset_very_large.png b/test_offset_very_large.png
+new file mode 100644
+index 00000000..f743d647
+Binary files /dev/null and b/test_offset_very_large.png differ
+diff --git a/test_original_issue.py b/test_original_issue.py
+new file mode 100644
+index 00000000..db6170ce
+--- /dev/null
++++ b/test_original_issue.py
+@@ -0,0 +1,34 @@
++import numpy as np
++import pandas as pd
++import seaborn as sns
++import seaborn.objects as so
++
++# Recreate the issue scenario from the bug report
++# Using synthetic data since we can't load penguins dataset
++np.random.seed(42)
++n = 200
++
++# Create penguin-like data
++penguins = pd.DataFrame({
++    'species': np.random.choice(['Adelie', 'Chinstrap', 'Gentoo'], n),
++    'bill_length_mm': np.random.normal(44, 5, n),
++    'bill_depth_mm': np.random.normal(17, 2, n),
++    'body_mass_g': np.random.normal(4200, 800, n)
++})
++
++# Add body_mass_mg column as in the original issue
++penguins["body_mass_mg"] = penguins["body_mass_g"] * 1000
++
++print(f"body_mass_mg range: {penguins['body_mass_mg'].min():.0f} to {penguins['body_mass_mg'].max():.0f}")
++
++# Create the plot from the issue
++(
++    so.Plot(
++        penguins, x="bill_length_mm", y="bill_depth_mm",
++        color="species", pointsize="body_mass_mg",
++    )
++    .add(so.Dot())
++).save("test_original_issue.png", dpi=100)
++
++print("Plot saved as test_original_issue.png")
++print("The legend for pointsize should now show 'body_mass_mg (1e6)' instead of just 'body_mass_mg'")
+diff --git a/test_plot_large.png b/test_plot_large.png
+new file mode 100644
+index 00000000..a0254cd8
+Binary files /dev/null and b/test_plot_large.png differ
+diff --git a/test_plot_mpl.png b/test_plot_mpl.png
+new file mode 100644
+index 00000000..dd3c0736
+Binary files /dev/null and b/test_plot_mpl.png differ

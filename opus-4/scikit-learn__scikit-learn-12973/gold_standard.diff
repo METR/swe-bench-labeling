@@ -1,0 +1,531 @@
+From aa282278be12c92ba3eed1a0b1e4a8e3fa97b387 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Sun, 13 Jan 2019 17:05:00 +0100
+Subject: [PATCH 1/8] added check in fit to prevent default value of copy_X
+ argument overwriting self.copy_X
+
+---
+ sklearn/linear_model/least_angle.py | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/linear_model/least_angle.py b/sklearn/linear_model/least_angle.py
+index 03b34a0dc0379..690444d3369ed 100644
+--- a/sklearn/linear_model/least_angle.py
++++ b/sklearn/linear_model/least_angle.py
+@@ -1479,7 +1479,7 @@ def __init__(self, criterion='aic', fit_intercept=True, verbose=False,
+         self.eps = eps
+         self.fit_path = True
+ 
+-    def fit(self, X, y, copy_X=True):
++    def fit(self, X, y, copy_X=None):
+         """Fit the model using X, y as training data.
+ 
+         Parameters
+@@ -1498,10 +1498,12 @@ def fit(self, X, y, copy_X=True):
+         self : object
+             returns an instance of self.
+         """
++        if copy_X is None:
++            copy_X = self.copy_X
+         X, y = check_X_y(X, y, y_numeric=True)
+ 
+         X, y, Xmean, ymean, Xstd = LinearModel._preprocess_data(
+-            X, y, self.fit_intercept, self.normalize, self.copy_X)
++            X, y, self.fit_intercept, self.normalize, copy_X)
+         max_iter = self.max_iter
+ 
+         Gram = self.precompute
+
+From 333532ec44d6e996ac62421b15305cf1a791a3fe Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Fri, 15 Feb 2019 17:05:21 +0100
+Subject: [PATCH 2/8] added two tests to verify that X is being copied when
+ user set copy_X = True and not copied when user set copy_X = False
+
+---
+ .../linear_model/tests/test_least_angle.py    | 101 +++++++++++++++++-
+ 1 file changed, 100 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/linear_model/tests/test_least_angle.py b/sklearn/linear_model/tests/test_least_angle.py
+index 21496efa67d31..543119dc9c101 100644
+--- a/sklearn/linear_model/tests/test_least_angle.py
++++ b/sklearn/linear_model/tests/test_least_angle.py
+@@ -18,7 +18,7 @@
+ from sklearn.utils.testing import TempMemmap
+ from sklearn.exceptions import ConvergenceWarning
+ from sklearn import linear_model, datasets
+-from sklearn.linear_model.least_angle import _lars_path_residues
++from sklearn.linear_model.least_angle import _lars_path_residues, LassoLarsIC
+ 
+ diabetes = datasets.load_diabetes()
+ X, y = diabetes.data, diabetes.target
+@@ -686,3 +686,102 @@ def test_lasso_lars_vs_R_implementation():
+ 
+     assert_array_almost_equal(r2, skl_betas2, decimal=12)
+     ###########################################################################
++
++def test_lasso_lars_copyX_behaviour1():
++    """
++    Test that user input regading copyX is not being overridden (it was until
++    at least version 0.21)
++
++    Correct behaviour is not to create a copy.
++
++    """
++    temp = np.asarray
++    def ident(x, *args, **kwargs):
++        return x
++
++    np.asarray = ident
++    lasso_lars = LassoLarsIC(copy_X=False, precompute=False)
++
++    class CopyCreated(Exception):
++        pass
++
++    class CopyWarningArray(np.ndarray):
++
++        def __new__(subtype, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, info=None):
++            # Create the ndarray instance of our type, given the usual
++            # ndarray input arguments.  This will call the standard
++            # ndarray constructor, but return an object of our type.
++            # It also triggers a call to InfoArray.__array_finalize__
++            obj = super(CopyWarningArray, subtype).__new__(subtype, shape, dtype, buffer, offset, strides, order)
++            # set the new 'info' attribute to the value passed
++            obj.info = info
++            # Finally, we must return the newly created object:
++            return obj
++
++        def copy(self, *args, **kwargs):
++            assert False, "Array is being copied when it should not be copied"
++
++        def __copy__(self, *args, **kwargs):
++            assert False, "Array is being copied when it should not be copied"
++
++        def __deepcopy__(self, *args, **kwargs):
++            assert False, "Array is being copied when it should not be copied"
++
++    X = CopyWarningArray(shape=(20,5), info="CopyWarningArray")
++    X[:,:] = 1
++    y = X[:,2]
++    lasso_lars.fit(X, y)
++    np.asarray = temp
++
++
++def test_lasso_lars_copyX_behaviour2():
++    """
++    Test that user input regading copyX is not being overridden (it was until
++    at least version 0.21)
++
++    Correct behaviour is to create a copy.
++
++    """
++    temp = np.asarray
++
++    def ident(x, *args, **kwargs):
++        return x
++
++    np.asarray = ident
++    np.array = ident
++    lasso_lars = LassoLarsIC(copy_X=True, precompute=False)
++
++    class CopyCreated(Exception):
++        pass
++
++    class CopyWarningArray(np.ndarray):
++
++        def __new__(subtype, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, info=None):
++            # Create the ndarray instance of our type, given the usual
++            # ndarray input arguments.  This will call the standard
++            # ndarray constructor, but return an object of our type.
++            # It also triggers a call to InfoArray.__array_finalize__
++            obj = super(CopyWarningArray, subtype).__new__(subtype, shape, dtype, buffer, offset, strides, order)
++            # set the new 'info' attribute to the value passed
++            obj.info = info
++            # Finally, we must return the newly created object:
++            return obj
++
++        def copy(self, *args, **kwargs):
++            raise CopyCreated
++
++        def __copy__(self, *args, **kwargs):
++            raise CopyCreated
++
++        def __deepcopy__(self, *args, **kwargs):
++            raise CopyCreated
++
++    X = CopyWarningArray(shape=(20, 5), info="CopyWarningArray")
++    X[:, :] = 1
++    y = X[:, 2]
++    # assert_raises(CopyCreated, lasso_lars.fit, X, y)
++    # lasso_lars.fit(X, y)
++    with pytest.raises(CopyCreated):
++        lasso_lars.fit(X, y)
++    np.asarray = temp
++    np.array = temp
+\ No newline at end of file
+
+From 74f44a5b82f308bce6e15a80c73d27148aee8752 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Fri, 15 Feb 2019 17:14:49 +0100
+Subject: [PATCH 3/8] fixed pep8 warnings
+
+---
+ .../linear_model/tests/test_least_angle.py    | 29 ++++++++++++-------
+ 1 file changed, 18 insertions(+), 11 deletions(-)
+
+diff --git a/sklearn/linear_model/tests/test_least_angle.py b/sklearn/linear_model/tests/test_least_angle.py
+index 543119dc9c101..17e26daaaf856 100644
+--- a/sklearn/linear_model/tests/test_least_angle.py
++++ b/sklearn/linear_model/tests/test_least_angle.py
+@@ -687,6 +687,7 @@ def test_lasso_lars_vs_R_implementation():
+     assert_array_almost_equal(r2, skl_betas2, decimal=12)
+     ###########################################################################
+ 
++
+ def test_lasso_lars_copyX_behaviour1():
+     """
+     Test that user input regading copyX is not being overridden (it was until
+@@ -696,23 +697,25 @@ def test_lasso_lars_copyX_behaviour1():
+ 
+     """
+     temp = np.asarray
++
+     def ident(x, *args, **kwargs):
+         return x
+ 
+     np.asarray = ident
+     lasso_lars = LassoLarsIC(copy_X=False, precompute=False)
+ 
+-    class CopyCreated(Exception):
+-        pass
+-
+     class CopyWarningArray(np.ndarray):
+ 
+-        def __new__(subtype, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, info=None):
++        def __new__(subtype, shape, dtype=float, buffer=None, offset=0,
++                    strides=None, order=None, info=None):
+             # Create the ndarray instance of our type, given the usual
+             # ndarray input arguments.  This will call the standard
+             # ndarray constructor, but return an object of our type.
+             # It also triggers a call to InfoArray.__array_finalize__
+-            obj = super(CopyWarningArray, subtype).__new__(subtype, shape, dtype, buffer, offset, strides, order)
++            obj = super(CopyWarningArray, subtype).__new__(subtype, shape,
++                                                           dtype, buffer,
++                                                           offset, strides,
++                                                           order)
+             # set the new 'info' attribute to the value passed
+             obj.info = info
+             # Finally, we must return the newly created object:
+@@ -727,9 +730,9 @@ def __copy__(self, *args, **kwargs):
+         def __deepcopy__(self, *args, **kwargs):
+             assert False, "Array is being copied when it should not be copied"
+ 
+-    X = CopyWarningArray(shape=(20,5), info="CopyWarningArray")
+-    X[:,:] = 1
+-    y = X[:,2]
++    X = CopyWarningArray(shape=(20, 5), info="CopyWarningArray")
++    X[:, :] = 1
++    y = X[:, 2]
+     lasso_lars.fit(X, y)
+     np.asarray = temp
+ 
+@@ -756,12 +759,16 @@ class CopyCreated(Exception):
+ 
+     class CopyWarningArray(np.ndarray):
+ 
+-        def __new__(subtype, shape, dtype=float, buffer=None, offset=0, strides=None, order=None, info=None):
++        def __new__(subtype, shape, dtype=float, buffer=None, offset=0,
++                    strides=None, order=None, info=None):
+             # Create the ndarray instance of our type, given the usual
+             # ndarray input arguments.  This will call the standard
+             # ndarray constructor, but return an object of our type.
+             # It also triggers a call to InfoArray.__array_finalize__
+-            obj = super(CopyWarningArray, subtype).__new__(subtype, shape, dtype, buffer, offset, strides, order)
++            obj = super(CopyWarningArray, subtype).__new__(subtype, shape,
++                                                           dtype, buffer,
++                                                           offset, strides,
++                                                           order)
+             # set the new 'info' attribute to the value passed
+             obj.info = info
+             # Finally, we must return the newly created object:
+@@ -784,4 +791,4 @@ def __deepcopy__(self, *args, **kwargs):
+     with pytest.raises(CopyCreated):
+         lasso_lars.fit(X, y)
+     np.asarray = temp
+-    np.array = temp
+\ No newline at end of file
++    np.array = temp
+
+From fb35b255d8fd27c930a7f4ab1905369fb8fee113 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Mon, 18 Feb 2019 23:00:16 +0100
+Subject: [PATCH 4/8] changed test to only focus on values being changed, not
+ directly on X being copied.
+
+---
+ .../linear_model/tests/test_least_angle.py    | 92 ++-----------------
+ 1 file changed, 9 insertions(+), 83 deletions(-)
+
+diff --git a/sklearn/linear_model/tests/test_least_angle.py b/sklearn/linear_model/tests/test_least_angle.py
+index 17e26daaaf856..be9e3ed265e6d 100644
+--- a/sklearn/linear_model/tests/test_least_angle.py
++++ b/sklearn/linear_model/tests/test_least_angle.py
+@@ -690,105 +690,31 @@ def test_lasso_lars_vs_R_implementation():
+ 
+ def test_lasso_lars_copyX_behaviour1():
+     """
+-    Test that user input regading copyX is not being overridden (it was until
++    Test that user input regarding copyX is not being overridden (it was until
+     at least version 0.21)
+ 
+     Correct behaviour is not to create a copy.
+ 
+     """
+-    temp = np.asarray
+-
+-    def ident(x, *args, **kwargs):
+-        return x
+-
+-    np.asarray = ident
+     lasso_lars = LassoLarsIC(copy_X=False, precompute=False)
+-
+-    class CopyWarningArray(np.ndarray):
+-
+-        def __new__(subtype, shape, dtype=float, buffer=None, offset=0,
+-                    strides=None, order=None, info=None):
+-            # Create the ndarray instance of our type, given the usual
+-            # ndarray input arguments.  This will call the standard
+-            # ndarray constructor, but return an object of our type.
+-            # It also triggers a call to InfoArray.__array_finalize__
+-            obj = super(CopyWarningArray, subtype).__new__(subtype, shape,
+-                                                           dtype, buffer,
+-                                                           offset, strides,
+-                                                           order)
+-            # set the new 'info' attribute to the value passed
+-            obj.info = info
+-            # Finally, we must return the newly created object:
+-            return obj
+-
+-        def copy(self, *args, **kwargs):
+-            assert False, "Array is being copied when it should not be copied"
+-
+-        def __copy__(self, *args, **kwargs):
+-            assert False, "Array is being copied when it should not be copied"
+-
+-        def __deepcopy__(self, *args, **kwargs):
+-            assert False, "Array is being copied when it should not be copied"
+-
+-    X = CopyWarningArray(shape=(20, 5), info="CopyWarningArray")
+-    X[:, :] = 1
++    X = np.random.normal(0, 1, (100, 5))
++    X_copy = X.copy()
+     y = X[:, 2]
+     lasso_lars.fit(X, y)
+-    np.asarray = temp
++    assert not np.array_equal(X, X_copy)
+ 
+ 
+ def test_lasso_lars_copyX_behaviour2():
+     """
+-    Test that user input regading copyX is not being overridden (it was until
++    Test that user input regarding copyX is not being overridden (it was until
+     at least version 0.21)
+ 
+     Correct behaviour is to create a copy.
+ 
+     """
+-    temp = np.asarray
+-
+-    def ident(x, *args, **kwargs):
+-        return x
+-
+-    np.asarray = ident
+-    np.array = ident
+     lasso_lars = LassoLarsIC(copy_X=True, precompute=False)
+-
+-    class CopyCreated(Exception):
+-        pass
+-
+-    class CopyWarningArray(np.ndarray):
+-
+-        def __new__(subtype, shape, dtype=float, buffer=None, offset=0,
+-                    strides=None, order=None, info=None):
+-            # Create the ndarray instance of our type, given the usual
+-            # ndarray input arguments.  This will call the standard
+-            # ndarray constructor, but return an object of our type.
+-            # It also triggers a call to InfoArray.__array_finalize__
+-            obj = super(CopyWarningArray, subtype).__new__(subtype, shape,
+-                                                           dtype, buffer,
+-                                                           offset, strides,
+-                                                           order)
+-            # set the new 'info' attribute to the value passed
+-            obj.info = info
+-            # Finally, we must return the newly created object:
+-            return obj
+-
+-        def copy(self, *args, **kwargs):
+-            raise CopyCreated
+-
+-        def __copy__(self, *args, **kwargs):
+-            raise CopyCreated
+-
+-        def __deepcopy__(self, *args, **kwargs):
+-            raise CopyCreated
+-
+-    X = CopyWarningArray(shape=(20, 5), info="CopyWarningArray")
+-    X[:, :] = 1
++    X = np.random.normal(0, 1, (100, 5))
++    X_copy = X.copy()
+     y = X[:, 2]
+-    # assert_raises(CopyCreated, lasso_lars.fit, X, y)
+-    # lasso_lars.fit(X, y)
+-    with pytest.raises(CopyCreated):
+-        lasso_lars.fit(X, y)
+-    np.asarray = temp
+-    np.array = temp
++    lasso_lars.fit(X, y)
++    assert np.array_equal(X, X_copy)
+
+From 2724514aa3ca0989afcd1c2ef26d429c7ee52509 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Wed, 20 Feb 2019 09:33:05 +0100
+Subject: [PATCH 5/8] parametrized test to avoid having two functions
+
+---
+ .../linear_model/tests/test_least_angle.py    | 26 ++++---------------
+ 1 file changed, 5 insertions(+), 21 deletions(-)
+
+diff --git a/sklearn/linear_model/tests/test_least_angle.py b/sklearn/linear_model/tests/test_least_angle.py
+index be9e3ed265e6d..7e0ab15aa8ce6 100644
+--- a/sklearn/linear_model/tests/test_least_angle.py
++++ b/sklearn/linear_model/tests/test_least_angle.py
+@@ -688,33 +688,17 @@ def test_lasso_lars_vs_R_implementation():
+     ###########################################################################
+ 
+ 
+-def test_lasso_lars_copyX_behaviour1():
++@pytest.mark.parametrize('copy_X', [True, False])
++def test_lasso_lars_copyX_behaviour(copy_X):
+     """
+-    Test that user input regarding copyX is not being overridden (it was until
++    Test that user input regarding copy_X is not being overridden (it was until
+     at least version 0.21)
+ 
+-    Correct behaviour is not to create a copy.
+-
+     """
+-    lasso_lars = LassoLarsIC(copy_X=False, precompute=False)
++    lasso_lars = LassoLarsIC(copy_X=copy_X, precompute=False)
+     X = np.random.normal(0, 1, (100, 5))
+     X_copy = X.copy()
+     y = X[:, 2]
+     lasso_lars.fit(X, y)
+-    assert not np.array_equal(X, X_copy)
+-
+-
+-def test_lasso_lars_copyX_behaviour2():
+-    """
+-    Test that user input regarding copyX is not being overridden (it was until
+-    at least version 0.21)
+-
+-    Correct behaviour is to create a copy.
++    assert copy_X == np.array_equal(X, X_copy)
+ 
+-    """
+-    lasso_lars = LassoLarsIC(copy_X=True, precompute=False)
+-    X = np.random.normal(0, 1, (100, 5))
+-    X_copy = X.copy()
+-    y = X[:, 2]
+-    lasso_lars.fit(X, y)
+-    assert np.array_equal(X, X_copy)
+
+From 5e2db9ccd6e8e4c32b6348b92b3c1717da733670 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Wed, 20 Feb 2019 11:17:35 +0100
+Subject: [PATCH 6/8] updated docstring
+
+---
+ sklearn/linear_model/least_angle.py | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/linear_model/least_angle.py b/sklearn/linear_model/least_angle.py
+index 690444d3369ed..82ecbc98855a2 100644
+--- a/sklearn/linear_model/least_angle.py
++++ b/sklearn/linear_model/least_angle.py
+@@ -1490,7 +1490,9 @@ def fit(self, X, y, copy_X=None):
+         y : array-like, shape (n_samples,)
+             target values. Will be cast to X's dtype if necessary
+ 
+-        copy_X : boolean, optional, default True
++        copy_X : boolean, optional, default None
++            If provided, this parameter will override the choice
++            of copy_X made at instance creation.
+             If ``True``, X will be copied; else, it may be overwritten.
+ 
+         Returns
+
+From 25f790e1ccff4565468c588ea0124bc70e12be31 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Wed, 20 Feb 2019 11:17:52 +0100
+Subject: [PATCH 7/8] added test for copy_X given to .fit
+
+---
+ sklearn/linear_model/tests/test_least_angle.py | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/linear_model/tests/test_least_angle.py b/sklearn/linear_model/tests/test_least_angle.py
+index 7e0ab15aa8ce6..958399eea41da 100644
+--- a/sklearn/linear_model/tests/test_least_angle.py
++++ b/sklearn/linear_model/tests/test_least_angle.py
+@@ -696,9 +696,24 @@ def test_lasso_lars_copyX_behaviour(copy_X):
+ 
+     """
+     lasso_lars = LassoLarsIC(copy_X=copy_X, precompute=False)
+-    X = np.random.normal(0, 1, (100, 5))
++    rng = np.random.RandomState(0)
++    X = rng.normal(0, 1, (100, 5))
+     X_copy = X.copy()
+     y = X[:, 2]
+     lasso_lars.fit(X, y)
+     assert copy_X == np.array_equal(X, X_copy)
+ 
++
++@pytest.mark.parametrize('copy_X', [True, False])
++def test_lasso_lars_fit_copyX_behaviour(copy_X):
++    """
++    Test that user input to .fit for copy_X overrides default __init__ value
++
++    """
++    lasso_lars = LassoLarsIC(precompute=False)
++    rng = np.random.RandomState(0)
++    X = rng.normal(0, 1, (100, 5))
++    X_copy = X.copy()
++    y = X[:, 2]
++    lasso_lars.fit(X, y, copy_X=copy_X)
++    assert copy_X == np.array_equal(X, X_copy)
+
+From 3acd4ab470fc3c75cff3a28a7fbd317b58850cc1 Mon Sep 17 00:00:00 2001
+From: luk-f-a <lucioarjona@hotmail.com>
+Date: Fri, 22 Feb 2019 11:27:11 +0100
+Subject: [PATCH 8/8] updated what's new document
+
+---
+ doc/whats_new/v0.21.rst | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 2f359ca87463f..6fd5b3538748d 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -117,6 +117,11 @@ Support for Python 3.4 and below has been officially dropped.
+   in version 0.21 and will be removed in version 0.23.
+   :issue:`12821` by :user:`Nicolas Hug <NicolasHug>`.
+ 
++- |Fix| Fixed a bug in :class:`linear_model.LassoLarsIC`, where user input
++   ``copy_X=False`` at instance creation would be overridden by default
++   parameter value ``copy_X=True`` in ``fit``. 
++   :issue:`12972` by :user:`Lucio Fernandez-Arjona <luk-f-a>`
++
+ :mod:`sklearn.manifold`
+ ............................
+ 

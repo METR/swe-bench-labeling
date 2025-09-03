@@ -1,0 +1,373 @@
+diff --git a/django/contrib/auth/__init__.py b/django/contrib/auth/__init__.py
+index 155330c596..498f8e9f94 100644
+--- a/django/contrib/auth/__init__.py
++++ b/django/contrib/auth/__init__.py
+@@ -5,7 +5,7 @@ from django.apps import apps as django_apps
+ from django.conf import settings
+ from django.core.exceptions import ImproperlyConfigured, PermissionDenied
+ from django.middleware.csrf import rotate_token
+-from django.utils.crypto import constant_time_compare
++from django.utils.crypto import constant_time_compare, salted_hmac
+ from django.utils.module_loading import import_string
+ from django.views.decorators.debug import sensitive_variables
+ 
+@@ -179,6 +179,42 @@ def get_user_model():
+         )
+ 
+ 
++def _verify_session_auth_hash(session_hash, user):
++    """
++    Verify the session auth hash against the user's password.
++    Try the current SECRET_KEY and then each key in SECRET_KEY_FALLBACKS.
++    """
++    if not session_hash:
++        return False
++    
++    # Same key_salt and algorithm as used in AbstractBaseUser.get_session_auth_hash()
++    key_salt = "django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash"
++    
++    # First try with current SECRET_KEY
++    current_hash = salted_hmac(
++        key_salt,
++        user.password,
++        algorithm="sha256",
++    ).hexdigest()
++    
++    if constant_time_compare(session_hash, current_hash):
++        return True
++    
++    # Try each fallback key
++    for fallback_key in settings.SECRET_KEY_FALLBACKS:
++        fallback_hash = salted_hmac(
++            key_salt,
++            user.password,
++            secret=fallback_key,
++            algorithm="sha256",
++        ).hexdigest()
++        
++        if constant_time_compare(session_hash, fallback_hash):
++            return True
++    
++    return False
++
++
+ def get_user(request):
+     """
+     Return the user model instance associated with the given request session.
+@@ -199,9 +235,7 @@ def get_user(request):
+             # Verify the session
+             if hasattr(user, "get_session_auth_hash"):
+                 session_hash = request.session.get(HASH_SESSION_KEY)
+-                session_hash_verified = session_hash and constant_time_compare(
+-                    session_hash, user.get_session_auth_hash()
+-                )
++                session_hash_verified = _verify_session_auth_hash(session_hash, user)
+                 if not session_hash_verified:
+                     request.session.flush()
+                     user = None
+diff --git a/test_comprehensive_fallback.py b/test_comprehensive_fallback.py
+new file mode 100644
+index 0000000000..46fe7aeaf4
+--- /dev/null
++++ b/test_comprehensive_fallback.py
+@@ -0,0 +1,124 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='current-secret-key',
++    SECRET_KEY_FALLBACKS=['old-secret-key', 'very-old-secret-key'],
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.sessions',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    MIDDLEWARE=[],
++    USE_TZ=False,
++)
++
++django.setup()
++
++# Import after Django setup
++from django.contrib.auth import get_user_model, login, get_user
++from django.contrib.auth.models import AnonymousUser
++from django.test import RequestFactory
++from django.contrib.sessions.backends.cache import SessionStore
++from django.http import HttpRequest
++
++# Create tables
++from django.core.management import execute_from_command_line
++execute_from_command_line(['manage.py', 'migrate', '--run-syncdb', '--verbosity', '0'])
++
++User = get_user_model()
++
++def test_scenario(scenario_name, initial_key, login_key, expected_authenticated):
++    """Test a specific scenario"""
++    print(f"\n=== Test: {scenario_name} ===")
++    
++    # Create a test user
++    user = User.objects.create_user(username=f'testuser_{scenario_name}', password='testpass')
++    
++    # Set the initial secret key
++    settings.SECRET_KEY = initial_key
++    
++    # Create a request with session
++    request = HttpRequest()
++    request.session = SessionStore()
++    
++    # Log in the user
++    login(request, user)
++    print(f"User logged in with key: {initial_key}")
++    print(f"Session auth hash: {request.session.get('_auth_user_hash')}")
++    
++    # Change the secret key for login verification
++    settings.SECRET_KEY = login_key
++    
++    # Create a new request with the same session
++    request2 = HttpRequest()
++    request2.session = SessionStore()
++    # Copy session data
++    for key, value in request.session.items():
++        request2.session[key] = value
++    
++    # Try to get the user
++    user_after = get_user(request2)
++    print(f"User authenticated after key change: {user_after.is_authenticated}")
++    
++    # Clean up
++    user.delete()
++    
++    # Verify the result
++    if user_after.is_authenticated == expected_authenticated:
++        print("✓ Test passed")
++        return True
++    else:
++        print("✗ Test failed")
++        return False
++
++# Test scenarios
++all_passed = True
++
++# Scenario 1: User logs in with old key, secret rotates to new key with old in fallbacks
++settings.SECRET_KEY_FALLBACKS = ['old-secret-key']
++all_passed &= test_scenario("rotate_with_fallback", 
++                           initial_key='old-secret-key', 
++                           login_key='new-secret-key',
++                           expected_authenticated=True)
++
++# Scenario 2: User logs in with very old key, secret rotates twice with both in fallbacks
++settings.SECRET_KEY_FALLBACKS = ['old-secret-key', 'very-old-secret-key']
++all_passed &= test_scenario("double_rotation_with_fallback", 
++                           initial_key='very-old-secret-key', 
++                           login_key='current-secret-key',
++                           expected_authenticated=True)
++
++# Scenario 3: User logs in with a key not in fallbacks (should fail)
++settings.SECRET_KEY_FALLBACKS = ['some-other-key']
++all_passed &= test_scenario("rotation_without_proper_fallback", 
++                           initial_key='forgotten-secret-key', 
++                           login_key='current-secret-key',
++                           expected_authenticated=False)
++
++# Scenario 4: No fallbacks configured (should fail if keys differ)
++settings.SECRET_KEY_FALLBACKS = []
++all_passed &= test_scenario("no_fallbacks_different_keys", 
++                           initial_key='old-secret-key', 
++                           login_key='new-secret-key',
++                           expected_authenticated=False)
++
++# Scenario 5: Same key (should always work)
++settings.SECRET_KEY_FALLBACKS = []
++all_passed &= test_scenario("same_key", 
++                           initial_key='same-secret-key', 
++                           login_key='same-secret-key',
++                           expected_authenticated=True)
++
++print(f"\n{'='*50}")
++print(f"All tests passed: {all_passed}")
+diff --git a/test_secret_key_fallback.py b/test_secret_key_fallback.py
+new file mode 100644
+index 0000000000..61231eae93
+--- /dev/null
++++ b/test_secret_key_fallback.py
+@@ -0,0 +1,72 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='old-secret-key',
++    SECRET_KEY_FALLBACKS=[],
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.sessions',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    MIDDLEWARE=[],
++    USE_TZ=False,
++)
++
++django.setup()
++
++# Import after Django setup
++from django.contrib.auth import get_user_model, login, get_user
++from django.contrib.auth.models import AnonymousUser
++from django.test import RequestFactory
++from django.contrib.sessions.backends.cache import SessionStore
++from django.http import HttpRequest
++
++# Create tables
++from django.core.management import execute_from_command_line
++execute_from_command_line(['manage.py', 'migrate', '--run-syncdb'])
++
++# Create a test user
++User = get_user_model()
++user = User.objects.create_user(username='testuser', password='testpass')
++
++# Create a request with session
++request = HttpRequest()
++request.session = SessionStore()
++
++# Log in the user with the old secret key
++login(request, user)
++
++# Verify user is logged in
++print(f"User logged in with old key: {get_user(request).is_authenticated}")
++print(f"Session auth hash: {request.session.get('_auth_user_hash')}")
++
++# Now rotate the secret key
++settings.SECRET_KEY = 'new-secret-key'
++settings.SECRET_KEY_FALLBACKS = ['old-secret-key']
++
++# Create a new request with the same session
++request2 = HttpRequest()
++request2.session = SessionStore()
++# Copy session data
++for key, value in request.session.items():
++    request2.session[key] = value
++
++# Try to get the user - this should fail with current implementation
++user_after_rotation = get_user(request2)
++print(f"\nUser after key rotation (current implementation): {user_after_rotation.is_authenticated}")
++
++if not user_after_rotation.is_authenticated:
++    print("BUG CONFIRMED: User is logged out after SECRET_KEY rotation!")
++else:
++    print("User remains logged in - no bug found")
+diff --git a/test_session_auth.py b/test_session_auth.py
+new file mode 100644
+index 0000000000..e2a78329c6
+--- /dev/null
++++ b/test_session_auth.py
+@@ -0,0 +1,92 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    SECRET_KEY_FALLBACKS=[],
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.sessions',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    MIDDLEWARE=[],
++    USE_TZ=False,
++)
++
++django.setup()
++
++# Import after Django setup
++from django.contrib.auth import get_user_model, login, logout, get_user, update_session_auth_hash
++from django.contrib.sessions.backends.cache import SessionStore
++from django.http import HttpRequest
++
++# Create tables
++from django.core.management import execute_from_command_line
++execute_from_command_line(['manage.py', 'migrate', '--run-syncdb', '--verbosity', '0'])
++
++User = get_user_model()
++
++print("Testing session authentication functionality...")
++
++# Test 1: Basic login/logout
++print("\n1. Testing basic login/logout")
++user = User.objects.create_user(username='testuser', password='testpass')
++request = HttpRequest()
++request.session = SessionStore()
++
++login(request, user)
++auth_user = get_user(request)
++print(f"   After login: user.is_authenticated = {auth_user.is_authenticated}")
++print(f"   Username: {auth_user.username}")
++
++logout(request)
++auth_user = get_user(request)
++print(f"   After logout: user.is_authenticated = {auth_user.is_authenticated}")
++
++# Test 2: Password change with session update
++print("\n2. Testing password change with session update")
++user = User.objects.create_user(username='testuser2', password='oldpass')
++request = HttpRequest()
++request.session = SessionStore()
++request.user = user
++
++login(request, user)
++old_session_hash = request.session.get('_auth_user_hash')
++print(f"   Session hash before password change: {old_session_hash}")
++
++# Change password and update session
++user.set_password('newpass')
++user.save()
++update_session_auth_hash(request, user)
++
++new_session_hash = request.session.get('_auth_user_hash')
++print(f"   Session hash after password change: {new_session_hash}")
++print(f"   Session hash changed: {old_session_hash != new_session_hash}")
++
++# Verify user still authenticated
++auth_user = get_user(request)
++print(f"   User still authenticated: {auth_user.is_authenticated}")
++
++# Test 3: Invalid session hash
++print("\n3. Testing invalid session hash")
++request = HttpRequest()
++request.session = SessionStore()
++request.session['_auth_user_id'] = str(user.pk)
++request.session['_auth_user_backend'] = 'django.contrib.auth.backends.ModelBackend'
++request.session['_auth_user_hash'] = 'invalid_hash'
++
++auth_user = get_user(request)
++print(f"   With invalid hash: user.is_authenticated = {auth_user.is_authenticated}")
++print(f"   Session flushed: {'_auth_user_id' not in request.session}")
++
++print("\nAll tests completed successfully!")

@@ -1,0 +1,122 @@
+diff --git a/pylint/config/__init__.py b/pylint/config/__init__.py
+index 84774d0e3..02f883598 100644
+--- a/pylint/config/__init__.py
++++ b/pylint/config/__init__.py
+@@ -56,14 +56,22 @@ __all__ = [
+ ]
+ 
+ USER_HOME = os.path.expanduser("~")
++
++# XDG Base Directory Specification support
+ if "PYLINTHOME" in os.environ:
+     PYLINT_HOME = os.environ["PYLINTHOME"]
+     if USER_HOME == "~":
+         USER_HOME = os.path.dirname(PYLINT_HOME)
+-elif USER_HOME == "~":
+-    PYLINT_HOME = ".pylint.d"
+ else:
+-    PYLINT_HOME = os.path.join(USER_HOME, ".pylint.d")
++    # Use XDG_DATA_HOME if available, otherwise use default
++    xdg_data_home = os.environ.get("XDG_DATA_HOME")
++    if xdg_data_home:
++        PYLINT_HOME = os.path.join(xdg_data_home, "pylint")
++    elif USER_HOME == "~":
++        PYLINT_HOME = ".pylint.d"
++    else:
++        # Default to XDG standard location
++        PYLINT_HOME = os.path.join(USER_HOME, ".local", "share", "pylint")
+ 
+ 
+ def _get_pdata_path(base_name, recurs):
+@@ -83,7 +91,7 @@ def load_results(base):
+ def save_results(results, base):
+     if not os.path.exists(PYLINT_HOME):
+         try:
+-            os.mkdir(PYLINT_HOME)
++            os.makedirs(PYLINT_HOME)
+         except OSError:
+             print("Unable to create directory %s" % PYLINT_HOME, file=sys.stderr)
+     data_file = _get_pdata_path(base, 1)
+@@ -94,6 +102,25 @@ def save_results(results, base):
+         print(f"Unable to create file {data_file}: {ex}", file=sys.stderr)
+ 
+ 
++def _migrate_old_pylint_home():
++    """Migrate data from old ~/.pylint.d to new XDG location if needed."""
++    # Only migrate if we're using XDG location and old directory exists
++    if ("PYLINTHOME" not in os.environ and 
++        USER_HOME != "~" and 
++        PYLINT_HOME != ".pylint.d"):
++        
++        old_home = os.path.join(USER_HOME, ".pylint.d")
++        if os.path.exists(old_home) and not os.path.exists(PYLINT_HOME):
++            try:
++                import shutil
++                os.makedirs(os.path.dirname(PYLINT_HOME), exist_ok=True)
++                shutil.move(old_home, PYLINT_HOME)
++                print(f"Migrated pylint data from {old_home} to {PYLINT_HOME}", 
++                      file=sys.stderr)
++            except Exception as ex:
++                print(f"Failed to migrate pylint data: {ex}", file=sys.stderr)
++
++
+ def find_pylintrc():
+     """search the pylint rc file and return its path if it find it, else None"""
+     for config_file in find_default_config_files():
+@@ -105,13 +132,16 @@ def find_pylintrc():
+ 
+ PYLINTRC = find_pylintrc()
+ 
++# Attempt to migrate old pylint home if needed
++_migrate_old_pylint_home()
++
+ ENV_HELP = (
+     """
+ The following environment variables are used:
+     * PYLINTHOME
+     Path to the directory where persistent data for the run will be stored. If
+-not found, it defaults to ~/.pylint.d/ or .pylint.d (in the current working
+-directory).
++not found, it defaults to $XDG_DATA_HOME/pylint (usually ~/.local/share/pylint)
++or .pylint.d (if the home directory cannot be determined).
+     * PYLINTRC
+     Path to the configuration file. See the documentation for the method used
+ to search for configuration file.
+diff --git a/tests/lint/unittest_lint.py b/tests/lint/unittest_lint.py
+index 004c29281..fbd27d89d 100644
+--- a/tests/lint/unittest_lint.py
++++ b/tests/lint/unittest_lint.py
+@@ -631,9 +631,11 @@ def test_pylint_home():
+     if uhome == "~":
+         expected = ".pylint.d"
+     else:
+-        expected = os.path.join(uhome, ".pylint.d")
++        # Should use XDG default location if XDG_DATA_HOME is not set
++        expected = os.path.join(uhome, ".local", "share", "pylint")
+     assert config.PYLINT_HOME == expected
+ 
++    # Test with custom PYLINTHOME
+     try:
+         pylintd = join(tempfile.gettempdir(), ".pylint.d")
+         os.environ["PYLINTHOME"] = pylintd
+@@ -647,6 +649,20 @@ def test_pylint_home():
+                 pass
+     finally:
+         del os.environ["PYLINTHOME"]
++        
++    # Test with XDG_DATA_HOME set
++    try:
++        xdg_data_home = join(tempfile.gettempdir(), "xdg_data")
++        os.environ["XDG_DATA_HOME"] = xdg_data_home
++        try:
++            reload(config)
++            expected_xdg = os.path.join(xdg_data_home, "pylint")
++            assert config.PYLINT_HOME == expected_xdg
++        finally:
++            pass
++    finally:
++        os.environ.pop("XDG_DATA_HOME", None)
++        reload(config)
+ 
+ 
+ @pytest.mark.usefixtures("pop_pylintrc")

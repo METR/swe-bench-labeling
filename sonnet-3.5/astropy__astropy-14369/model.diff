@@ -1,0 +1,93 @@
+diff --git a/astropy/io/ascii/cds.py b/astropy/io/ascii/cds.py
+index 7a83fc39be..b46921d0e3 100644
+--- a/astropy/io/ascii/cds.py
++++ b/astropy/io/ascii/cds.py
+@@ -130,7 +130,7 @@ class CdsHeader(core.BaseHeader):
+                 if unit == "---":
+                     col.unit = None  # "---" is the marker for no unit in CDS/MRT table
+                 else:
+-                    col.unit = Unit(unit, format="cds", parse_strict="warn")
++                    col.unit = Unit(unit.replace('+', 'e'), format="cds", parse_strict="warn")
+                 col.description = (match.group("descr") or "").strip()
+                 col.raw_type = match.group("format")
+                 col.type = self.get_col_type(col)
+diff --git a/pyproject.toml b/pyproject.toml
+index 5b691556b8..f24abc3b05 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/test_cds.txt b/test_cds.txt
+new file mode 100644
+index 0000000000..ebdb2d526a
+--- /dev/null
++++ b/test_cds.txt
+@@ -0,0 +1,14 @@
++Title: Test CDS file
++Authors: Test Author
++Table:
++================================================================================
++Byte-by-byte Description of file: test_cds.txt
++--------------------------------------------------------------------------------
++   Bytes Format Units          Label      Explanations
++--------------------------------------------------------------------------------
++   1- 10 A10    ---            ID         ID
++  12- 21 F10.5  10+3J/m/s/kpc2 SBCONT     Cont surface brightness
++  23- 32 F10.5  10-7J/s/kpc2   SBLINE     Line surface brightness
++--------------------------------------------------------------------------------
++ID0001     70.99200   38.51040
++ID0002     13.05120   28.19240
+diff --git a/test_cds_comprehensive.txt b/test_cds_comprehensive.txt
+new file mode 100644
+index 0000000000..54d3324d22
+--- /dev/null
++++ b/test_cds_comprehensive.txt
+@@ -0,0 +1,17 @@
++Title: Comprehensive Test CDS file
++Authors: Test Author
++Table:
++================================================================================
++Byte-by-byte Description of file: test_cds_comprehensive.txt
++--------------------------------------------------------------------------------
++   Bytes Format Units           Label  Explanations
++--------------------------------------------------------------------------------
++   1- 10 A10    ---             ID     ID
++  12- 21 F10.5  10+3J/m/s/kpc2  SBCONT Cont surface brightness
++  23- 32 F10.5  10-7J/s/kpc2    SBLINE Line surface brightness
++  34- 43 F10.5  erg/AA/s/kpc2   SBALT  Alternative surface brightness
++  45- 54 F10.5  10+3J/m2/s      FLUX   Flux
++--------------------------------------------------------------------------------
++ID0001     70.99200   38.51040   100.00000   50.00000
++ID0002     13.05120   28.19240    80.00000   40.00000
++ID0003      3.83610   10.98370    60.00000   30.00000
+diff --git a/test_cds_comprehensive_read.py b/test_cds_comprehensive_read.py
+new file mode 100644
+index 0000000000..8e155ffd79
+--- /dev/null
++++ b/test_cds_comprehensive_read.py
+@@ -0,0 +1,7 @@
++from astropy.table import Table
++
++dat = Table.read('test_cds_comprehensive.txt', format='ascii.cds')
++print(dat)
++print("\nColumn units:")
++for name in dat.colnames:
++    print(f"{name}: {dat[name].unit}")
+diff --git a/test_cds_read.py b/test_cds_read.py
+new file mode 100644
+index 0000000000..9ba7631e93
+--- /dev/null
++++ b/test_cds_read.py
+@@ -0,0 +1,7 @@
++from astropy.table import Table
++
++dat = Table.read('test_cds.txt', format='ascii.cds')
++print(dat)
++print("\nColumn units:")
++for name in dat.colnames:
++    print(f"{name}: {dat[name].unit}")

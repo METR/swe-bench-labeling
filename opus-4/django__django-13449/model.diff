@@ -1,0 +1,243 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 90d90119d0..1b5d1c943f 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1253,7 +1253,7 @@ class OrderBy(BaseExpression):
+         self.descending = True
+ 
+ 
+-class Window(Expression):
++class Window(SQLiteNumericMixin, Expression):
+     template = '%(expression)s OVER (%(window)s)'
+     # Although the main expression may either be an aggregate or an
+     # expression with an aggregate function, the GROUP BY that will
+diff --git a/test_lag_decimal.py b/test_lag_decimal.py
+new file mode 100644
+index 0000000000..4f7368c8e6
+--- /dev/null
++++ b/test_lag_decimal.py
+@@ -0,0 +1,57 @@
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.models import F
++from django.db.models.functions import Lag
++from django.db.models import Window
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++
++django.setup()
++
++# Define the test model
++class LagTest(models.Model):
++    modified = models.DateField()
++    data = models.FloatField()
++    amount = models.DecimalField(decimal_places=4, max_digits=7)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(LagTest)
++
++# Test the query that causes the issue
++try:
++    w = Window(expression=Lag('amount', 7), partition_by=[F('modified')], order_by=F('modified').asc())
++    q = LagTest.objects.all().annotate(w=w)
++    
++    # This should trigger the error
++    print("Query SQL:", q.query)
++    list(q)  # Force evaluation
++    print("Test FAILED - query should have raised an error")
++except Exception as e:
++    print("Test PASSED - Got expected error:", type(e).__name__, str(e))
++
++# Test that FloatField works correctly
++try:
++    w = Window(expression=Lag('data', 7), partition_by=[F('modified')], order_by=F('modified').asc())
++    q = LagTest.objects.all().annotate(w=w)
++    list(q)  # Force evaluation
++    print("FloatField test PASSED - no error")
++except Exception as e:
++    print("FloatField test FAILED - unexpected error:", type(e).__name__, str(e))
+diff --git a/test_mro.py b/test_mro.py
+new file mode 100644
+index 0000000000..7923aa513c
+--- /dev/null
++++ b/test_mro.py
+@@ -0,0 +1,30 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++)
++
++django.setup()
++
++from django.db.models.expressions import Window, SQLiteNumericMixin
++from django.db.models.functions import Lag
++
++print("Window MRO:", Window.__mro__)
++print("\nWindow has as_sqlite?", hasattr(Window, 'as_sqlite'))
++print("SQLiteNumericMixin has as_sqlite?", hasattr(SQLiteNumericMixin, 'as_sqlite'))
++
++# Check instance
++w = Window(expression=Lag('test', 1))
++print("\nWindow instance has as_sqlite?", hasattr(w, 'as_sqlite'))
++
++# Let's check the actual methods
++print("\nWindow methods:", [m for m in dir(Window) if 'as_' in m])
++print("SQLiteNumericMixin methods:", [m for m in dir(SQLiteNumericMixin) if 'as_' in m])
+diff --git a/test_sql_generation.py b/test_sql_generation.py
+new file mode 100644
+index 0000000000..126c2d68ca
+--- /dev/null
++++ b/test_sql_generation.py
+@@ -0,0 +1,59 @@
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.models import F
++from django.db.models.functions import Lag
++from django.db.models import Window
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++
++django.setup()
++
++# Define the test model
++class LagTest(models.Model):
++    modified = models.DateField()
++    data = models.FloatField()
++    amount = models.DecimalField(decimal_places=4, max_digits=7)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(LagTest)
++
++# Debug the SQL generation
++from django.db.models.sql import Query
++from django.db import connection
++
++# Create a Lag expression
++lag_expr = Lag('amount', 7)
++print("Lag output field type:", lag_expr.output_field.get_internal_type() if hasattr(lag_expr, 'output_field') else "No output field yet")
++
++# Create window
++w = Window(expression=lag_expr, partition_by=[F('modified')], order_by=F('modified').asc())
++print("Window output field type:", w.output_field.get_internal_type() if hasattr(w, 'output_field') else "No output field yet")
++
++# Check if the expression resolves output field
++q = LagTest.objects.all().annotate(w=w)
++compiler = q.query.get_compiler(connection=connection)
++
++# Let's trace through the compilation
++print("\nLet's see how the SQL is being built...")
++
++# Check if the Lag function has as_sqlite method
++print("Lag has as_sqlite?", hasattr(lag_expr, 'as_sqlite'))
++print("Window has as_sqlite?", hasattr(w, 'as_sqlite'))
+diff --git a/test_window_compile.py b/test_window_compile.py
+new file mode 100644
+index 0000000000..6ba9fe1f6c
+--- /dev/null
++++ b/test_window_compile.py
+@@ -0,0 +1,60 @@
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.models import F
++from django.db.models.functions import Lag
++from django.db.models import Window
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ]
++)
++
++django.setup()
++
++# Define the test model
++class LagTest(models.Model):
++    modified = models.DateField()
++    data = models.FloatField()
++    amount = models.DecimalField(decimal_places=4, max_digits=7)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(LagTest)
++
++# Test direct compilation of Window
++from django.db.models.sql import Query
++from django.db.models.sql.compiler import SQLCompiler
++
++# Create expressions
++lag_expr = Lag('amount', 7)
++w = Window(expression=lag_expr, partition_by=[F('modified')], order_by=F('modified').asc())
++
++# Create a query
++query = Query(LagTest)
++query.add_annotation(w, 'w')
++
++# Get compiler
++compiler = query.get_compiler(connection=connection)
++
++# Test what method gets called
++print("Testing direct Window compilation...")
++print("Window has as_sqlite?", hasattr(w, 'as_sqlite'))
++
++# Compile the window directly
++sql, params = compiler.compile(w)
++print("Window SQL:", sql)
++print("Window params:", params)

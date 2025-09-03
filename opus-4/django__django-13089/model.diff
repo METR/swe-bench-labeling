@@ -1,0 +1,371 @@
+diff --git a/django/core/cache/backends/db.py b/django/core/cache/backends/db.py
+index 33c79c5a14..ffc8c66d40 100644
+--- a/django/core/cache/backends/db.py
++++ b/django/core/cache/backends/db.py
+@@ -267,9 +267,11 @@ class DatabaseCache(BaseDatabaseCache):
+                 cursor.execute(
+                     connection.ops.cache_key_culling_sql() % table,
+                     [cull_num])
+-                cursor.execute("DELETE FROM %s "
+-                               "WHERE cache_key < %%s" % table,
+-                               [cursor.fetchone()[0]])
++                culling_key = cursor.fetchone()
++                if culling_key is not None:
++                    cursor.execute("DELETE FROM %s "
++                                   "WHERE cache_key < %%s" % table,
++                                   [culling_key[0]])
+ 
+     def clear(self):
+         db = router.db_for_write(self.cache_model_class)
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/proposed_test.py b/proposed_test.py
+new file mode 100644
+index 0000000000..ee3a774d87
+--- /dev/null
++++ b/proposed_test.py
+@@ -0,0 +1,43 @@
++"""
++Proposed test to add to Django's test suite for the cache culling fix.
++This test should be added to tests/cache/tests.py in the DBCacheTests class.
++"""
++
++def test_cull_with_no_result_from_culling_sql(self):
++    """
++    Test that cache culling handles gracefully when the culling SQL returns no results.
++    
++    This can happen when the calculated cull_num (num // cull_frequency) results 
++    in an OFFSET that exceeds the actual number of rows in the cache table.
++    
++    Regression test for issue where 'NoneType' object is not subscriptable error
++    occurred in _cull method.
++    """
++    # Create a cache with settings that will trigger the edge case
++    cache = self.cache_class(self._table_name, {
++        'MAX_ENTRIES': 2,
++        'CULL_FREQUENCY': 1,  # This makes cull_num = num // 1 = num
++    })
++    
++    cache.clear()
++    
++    # Add 3 entries (more than MAX_ENTRIES)
++    cache.set('key1', 'value1')
++    cache.set('key2', 'value2') 
++    cache.set('key3', 'value3')
++    
++    # This should trigger culling
++    # With 3 entries and CULL_FREQUENCY=1, cull_num = 3 // 1 = 3
++    # The culling SQL "SELECT cache_key FROM table LIMIT 1 OFFSET 3" will return no rows
++    # because we only have rows at indices 0, 1, 2
++    # Before the fix, this would crash with "'NoneType' object is not subscriptable"
++    
++    # This should not raise an exception
++    cache.set('trigger_key', 'trigger_value')
++    
++    # Verify the cache still works correctly
++    self.assertEqual(cache.get('trigger_key'), 'trigger_value')
++    
++    # The cache should have been culled to stay within MAX_ENTRIES
++    # But the exact number of entries depends on the culling implementation
++    # so we just verify it's working without errors
+diff --git a/test_cache_cull.py b/test_cache_cull.py
+new file mode 100644
+index 0000000000..c627a30a42
+--- /dev/null
++++ b/test_cache_cull.py
+@@ -0,0 +1,123 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        CACHES={
++            'default': {
++                'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
++                'LOCATION': 'test_cache_table',
++                'OPTIONS': {
++                    'MAX_ENTRIES': 10,
++                    'CULL_FREQUENCY': 3,
++                }
++            }
++        }
++    )
++
++django.setup()
++
++from django.core.management import call_command
++from django.core.cache import cache
++from django.db import connection
++
++# Create cache table
++call_command('createcachetable', 'test_cache_table')
++
++# Clear any existing cache
++cache.clear()
++
++# Add some cache entries but fewer than what would trigger the culling edge case
++# We need to have more than MAX_ENTRIES (10) to trigger culling, but the cull_num
++# calculation could result in trying to fetch a row that doesn't exist
++
++# First, let's understand the _cull logic:
++# - It deletes expired entries
++# - Counts remaining entries
++# - If count > MAX_ENTRIES, it calculates cull_num = count // CULL_FREQUENCY
++# - Then tries to get the cache_key at position cull_num using LIMIT 1 OFFSET cull_num
++
++# To reproduce the issue, we need a situation where after deleting expired entries,
++# the remaining count divided by CULL_FREQUENCY results in an offset >= actual row count
++
++# Let's manually trigger this by manipulating the database
++from datetime import datetime, timedelta
++
++# Add entries
++for i in range(12):  # More than MAX_ENTRIES (10)
++    cache.set(f'key_{i}', f'value_{i}', timeout=300)
++
++# Now manually update some entries to be expired
++with connection.cursor() as cursor:
++    # Make some entries expired
++    past_time = datetime.now() - timedelta(seconds=10)
++    cursor.execute(
++        "UPDATE test_cache_table SET expires = %s WHERE cache_key IN (%s, %s, %s)",
++        [past_time, 'key_0', 'key_1', 'key_2']
++    )
++
++# Now when we set a new key, it should trigger _cull
++# After deleting 3 expired entries, we'll have 9 entries
++# cull_num = 9 // 3 = 3
++# But if for some reason the table state is different, this could fail
++
++try:
++    cache.set('trigger_cull', 'value', timeout=300)
++    print("No error occurred - test may need adjustment")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++
++# Let's try a more direct approach to reproduce the issue
++# We'll manually call _cull with a specific database state
++
++from django.core.cache.backends.db import DatabaseCache
++
++# Create a custom test to directly test the _cull method
++db_cache = DatabaseCache('test_cache_table', {})
++
++# Clear the cache and set up a specific scenario
++cache.clear()
++
++# Add exactly 3 entries
++for i in range(3):
++    cache.set(f'key_{i}', f'value_{i}', timeout=300)
++
++# Now manually test _cull with parameters that would cause the issue
++# With 3 entries and CULL_FREQUENCY=3, cull_num would be 3//3 = 1
++# But with OFFSET 1, we're asking for the 2nd entry (0-indexed)
++# If there are only 1 or 0 entries after expired deletions, this fails
++
++with connection.cursor() as cursor:
++    # Simulate the _cull scenario where culling SQL returns no results
++    # First, let's see what happens with the actual cache_key_culling_sql
++    table = connection.ops.quote_name('test_cache_table')
++    
++    # Get count
++    cursor.execute("SELECT COUNT(*) FROM %s" % table)
++    count = cursor.fetchone()[0]
++    print(f"Current count: {count}")
++    
++    # Try the culling SQL with different offsets
++    for offset in range(5):
++        cursor.execute(
++            connection.ops.cache_key_culling_sql() % table,
++            [offset]
++        )
++        result = cursor.fetchone()
++        print(f"Offset {offset}: {result}")
++
++print("\nTest completed")
+diff --git a/test_cache_cull_error.py b/test_cache_cull_error.py
+new file mode 100644
+index 0000000000..380adadfb6
+--- /dev/null
++++ b/test_cache_cull_error.py
+@@ -0,0 +1,96 @@
++import os
++import django
++from django.conf import settings
++from django.db import connection
++from datetime import datetime
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        CACHES={
++            'default': {
++                'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
++                'LOCATION': 'test_cache_table',
++            }
++        }
++    )
++
++django.setup()
++
++from django.core.management import call_command
++from django.core.cache.backends.db import DatabaseCache
++
++# Create cache table
++call_command('createcachetable', 'test_cache_table')
++
++# Create a DatabaseCache instance with specific settings that will trigger the bug
++cache = DatabaseCache('test_cache_table', {
++    'MAX_ENTRIES': 2,
++    'CULL_FREQUENCY': 3,
++})
++
++# Clear any existing data
++cache.clear()
++
++# Add 3 entries to trigger culling when we add a 4th
++cache.set('key1', 'value1')
++cache.set('key2', 'value2')
++cache.set('key3', 'value3')
++
++# Directly test the _cull method with edge case
++# With 3 entries, MAX_ENTRIES=2, CULL_FREQUENCY=3
++# cull_num = 3 // 3 = 1
++# The culling SQL with OFFSET 1 will work (returns 2nd entry)
++
++# But let's create a scenario where it fails
++# We need a situation where cull_num is greater than or equal to the actual number of rows
++
++# Simulate by directly calling _cull
++db = 'default'
++with connection.cursor() as cursor:
++    now = datetime.now()
++    
++    # First delete any expired entries (none in our case)
++    table = connection.ops.quote_name('test_cache_table')
++    cursor.execute("DELETE FROM %s WHERE expires < %%s" % table,
++                   [connection.ops.adapt_datetimefield_value(now)])
++    
++    # Count entries
++    cursor.execute("SELECT COUNT(*) FROM %s" % table)
++    num = cursor.fetchone()[0]
++    print(f"Number of entries: {num}")
++    
++    # If we have a high CULL_FREQUENCY relative to the number of entries,
++    # cull_num could be 0, but that's still valid
++    # The issue happens when the offset is >= the number of rows
++    
++    # Let's force a scenario where this happens
++    # Manually execute the problematic code with a high offset
++    cull_num = 10  # Much higher than our 3 entries
++    
++    try:
++        cursor.execute(
++            connection.ops.cache_key_culling_sql() % table,
++            [cull_num])
++        result = cursor.fetchone()
++        if result is None:
++            print("fetchone() returned None - this would cause the error!")
++            # This is what causes the error in the original code:
++            cursor.execute("DELETE FROM %s WHERE cache_key < %%s" % table,
++                          [result[0]])  # This will fail!
++    except TypeError as e:
++        print(f"Got the expected error: {e}")
++
++print("\nTest completed")
+diff --git a/test_cull_edge_case.py b/test_cull_edge_case.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_fix2.py b/test_fix2.py
+new file mode 100644
+index 0000000000..c9e33efcd1
+--- /dev/null
++++ b/test_fix2.py
+@@ -0,0 +1,57 @@
++import os
++import django
++from django.conf import settings
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=['django.contrib.contenttypes', 'django.contrib.auth'],
++        CACHES={
++            'default': {
++                'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
++                'LOCATION': 'test_cache_table',
++            }
++        }
++    )
++
++django.setup()
++
++from django.core.management import call_command
++from django.core.cache.backends.db import DatabaseCache
++from django.db import connection
++from datetime import datetime
++
++# Create cache table
++call_command('createcachetable', 'test_cache_table')
++
++print("Testing the fix for cache culling issue...")
++
++# Test case that would previously fail
++cache = DatabaseCache('test_cache_table', {
++    'MAX_ENTRIES': 2,
++    'CULL_FREQUENCY': 1,
++})
++
++cache.clear()
++
++# Add 3 entries (more than MAX_ENTRIES)
++for i in range(3):
++    cache.set(f'key_{i}', f'value_{i}')
++
++# This should trigger culling
++# With 3 entries and CULL_FREQUENCY=1, cull_num = 3 // 1 = 3
++# The culling SQL with OFFSET 3 will return None (only indices 0,1,2 exist)
++try:
++    cache.set('trigger_key', 'trigger_value')
++    print("SUCCESS: No error occurred - the fix works!")
++except TypeError as e:
++    print(f"FAILURE: Error still occurs: {e}")
++
++print("Test completed.")

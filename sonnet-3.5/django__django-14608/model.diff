@@ -1,0 +1,47 @@
+diff --git a/django/forms/formsets.py b/django/forms/formsets.py
+index a89c35599f..35aed5c72b 100644
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -295,6 +295,8 @@ class BaseFormSet:
+         """
+         if self._non_form_errors is None:
+             self.full_clean()
++        if not isinstance(self._non_form_errors, self.error_class):
++            self._non_form_errors = self.error_class(self._non_form_errors, error_class='nonform')
+         return self._non_form_errors
+ 
+     @property
+@@ -333,7 +335,7 @@ class BaseFormSet:
+         self._non_form_errors.
+         """
+         self._errors = []
+-        self._non_form_errors = self.error_class()
++        self._non_form_errors = self.error_class(error_class='nonform')
+         empty_forms_count = 0
+ 
+         if not self.is_bound:  # Stop further processing.
+diff --git a/docs/topics/forms/formsets.txt b/docs/topics/forms/formsets.txt
+index 1f2c7c3fad..083ca08ebf 100644
+--- a/docs/topics/forms/formsets.txt
++++ b/docs/topics/forms/formsets.txt
+@@ -87,6 +87,20 @@ something like: ``ArticleFormSet(request.POST, initial=[...])``.
+ .. seealso::
+ 
+     :ref:`Creating formsets from models with model formsets <model-formsets>`.
++CSS classes for formset errors
++==============================
++
++When rendering formset errors, Django adds CSS classes to help with styling. For non-form errors in formsets (errors that are not associated with a specific form), Django adds the ``nonform`` CSS class to the error list. This is similar to how Django adds the ``nonfield`` CSS class for non-field errors in individual forms.
++
++For example, if you have non-form errors in your formset, they might be rendered like this:
++
++.. code-block:: html
++
++    <ul class="errorlist nonform">
++        <li>Please correct the errors below.</li>
++    </ul>
++
++You can use these CSS classes to style formset errors differently from form-specific errors in your templates.
+ 
+ .. _formsets-max-num:
+ 

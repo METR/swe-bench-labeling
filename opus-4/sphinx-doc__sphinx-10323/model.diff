@@ -1,0 +1,277 @@
+diff --git a/sphinx/directives/code.py b/sphinx/directives/code.py
+index dc44ed314..9437fe9a5 100644
+--- a/sphinx/directives/code.py
++++ b/sphinx/directives/code.py
+@@ -224,9 +224,9 @@ class LiteralIncludeReader:
+                        self.start_filter,
+                        self.end_filter,
+                        self.lines_filter,
++                       self.dedent_filter,
+                        self.prepend_filter,
+-                       self.append_filter,
+-                       self.dedent_filter]
++                       self.append_filter]
+             lines = self.read_file(self.filename, location=location)
+             for func in filters:
+                 lines = func(lines, location=location)
+diff --git a/test_append_issue.py b/test_append_issue.py
+new file mode 100644
+index 000000000..442cd55f0
+--- /dev/null
++++ b/test_append_issue.py
+@@ -0,0 +1,14 @@
++#!/usr/bin/env python3
++"""Test to understand the append issue."""
++
++# Simulating the issue
++lines = ['def method(self):\n', '    return self.value * 2']  # Note: last line has no newline
++
++# Append filter as currently implemented
++append_text = '    # End of method'
++lines.append(append_text + '\n')
++
++result = ''.join(lines)
++print(f"Result: {repr(result)}")
++expected = 'def method(self):\n    return self.value * 2\n    # End of method\n'
++print(f"Expected: {repr(expected)}")
+diff --git a/test_comprehensive_literalinclude.py b/test_comprehensive_literalinclude.py
+new file mode 100644
+index 000000000..3489025b9
+--- /dev/null
++++ b/test_comprehensive_literalinclude.py
+@@ -0,0 +1,124 @@
++#!/usr/bin/env python3
++"""Comprehensive test for literalinclude functionality."""
++
++import os
++import tempfile
++from sphinx.directives.code import LiteralIncludeReader
++from sphinx.config import Config
++
++# Create a minimal config
++config = Config({}, {})
++config.source_encoding = 'utf-8'
++
++# Create test content
++test_content = """def example_function():
++    '''A simple example function'''
++    x = 1
++    y = 2
++    return x + y
++
++class ExampleClass:
++    def __init__(self):
++        self.value = 42
++        
++    def method(self):
++        return self.value * 2"""
++
++# Write to temporary file
++with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
++    f.write(test_content)
++    temp_filename = f.name
++
++try:
++    # Test 1: Basic functionality (no changes expected)
++    print("Test 1: Basic functionality")
++    options = {}
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    print(f"Lines: {lines}")
++    assert lines == 12
++    print("✓ Basic read works")
++    print()
++    
++    # Test 2: Start-at and end-at
++    print("Test 2: Start-at and end-at")
++    options = {
++        'start-at': 'class ExampleClass:',
++        'end-at': 'self.value = 42'
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    print(f"Lines: {lines}")
++    assert "class ExampleClass:" in text
++    assert "self.value = 42" in text
++    assert "return x + y" not in text
++    print("✓ Start-at/end-at works")
++    print()
++    
++    # Test 3: Dedent only
++    print("Test 3: Dedent only")
++    options = {
++        'start-at': 'def method(self):',
++        'end-at': 'return self.value * 2',
++        'dedent': 4
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    print(f"Got text: {repr(text)}")
++    assert text == "def method(self):\n    return self.value * 2"
++    print("✓ Dedent works")
++    print()
++    
++    # Test 4: Prepend with dedent (the main fix)
++    print("Test 4: Prepend with dedent")
++    options = {
++        'prepend': '    class Wrapper:',
++        'start-at': 'def method(self):',
++        'end-at': 'return self.value * 2',
++        'dedent': 4
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    expected = "    class Wrapper:\ndef method(self):\n    return self.value * 2"
++    print(f"Expected:\n{repr(expected)}")
++    print(f"Got:\n{repr(text)}")
++    assert text == expected
++    print("✓ Prepend with dedent preserves prepend indentation")
++    print()
++    
++    # Test 5: Append with dedent
++    print("Test 5: Append with dedent")
++    options = {
++        'start-at': 'def method(self):',
++        'end-at': 'return self.value * 2',
++        'dedent': 4,
++        'append': '    # End of method'
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    # Note: The file content doesn't end with a newline, so append is on the same line  
++    expected = "def method(self):\n    return self.value * 2    # End of method\n"
++    assert text == expected
++    print("✓ Append with dedent preserves append indentation")
++    print()
++    
++    # Test 6: Prepend and append with dedent
++    print("Test 6: Prepend and append with dedent")
++    options = {
++        'prepend': '    # Start of method',
++        'start-at': 'def method(self):',
++        'end-at': 'return self.value * 2',
++        'dedent': 4,
++        'append': '    # End of method'
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    expected = "    # Start of method\ndef method(self):\n    return self.value * 2    # End of method\n"
++    assert text == expected
++    print("✓ Prepend and append with dedent preserves both indentations")
++    
++    print("\nAll tests passed! ✓")
++    
++finally:
++    # Clean up
++    os.unlink(temp_filename)
+diff --git a/test_file_reading.py b/test_file_reading.py
+new file mode 100644
+index 000000000..fcf86b44e
+--- /dev/null
++++ b/test_file_reading.py
+@@ -0,0 +1,11 @@
++#!/usr/bin/env python3
++"""Test how files are read."""
++
++content = """def method(self):
++    return self.value * 2"""
++
++# How splitlines(True) works
++lines = content.splitlines(True)
++print(f"Lines from splitlines(True): {lines}")
++newline_char = '\n'
++print(f"Last line ends with newline: {lines[-1].endswith(newline_char)}")
+diff --git a/test_literalinclude_prepend.py b/test_literalinclude_prepend.py
+new file mode 100644
+index 000000000..b7c66fae0
+--- /dev/null
++++ b/test_literalinclude_prepend.py
+@@ -0,0 +1,75 @@
++#!/usr/bin/env python3
++"""Test to reproduce the literalinclude prepend indentation issue."""
++
++import os
++import tempfile
++from sphinx.directives.code import LiteralIncludeReader
++from sphinx.config import Config
++
++# Create a minimal config
++config = Config({}, {})
++config.source_encoding = 'utf-8'
++
++# Create test XML file content
++xml_content = """<?xml version="1.0" encoding="UTF-8"?>
++<project>
++  <build>
++    <plugins>
++      <plugin>
++        <groupId>org.apache.maven.plugins</groupId>
++        <artifactId>maven-compiler-plugin</artifactId>
++        <version>3.8.0</version>
++        <configuration>
++          <source>1.8</source>
++          <target>1.8</target>
++          <debug>true</debug>
++          <encoding>UTF-8</encoding>
++        </configuration>
++      </plugin>
++      <plugin>
++        <groupId>com.github.ekryd.sortpom</groupId>
++        <artifactId>sortpom-maven-plugin</artifactId>
++        <version>2.15.0</version>
++        <configuration>
++          <verifyFailOn>strict</verifyFailOn>
++        </configuration>
++      </plugin>
++    </plugins>
++  </build>
++</project>"""
++
++# Write to temporary file
++with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
++    f.write(xml_content)
++    temp_filename = f.name
++
++try:
++    # Test case 1: Basic prepend without dedent
++    print("Test 1: Basic prepend without dedent")
++    options = {
++        'prepend': '      <plugin>',
++        'start-at': '<groupId>com.github.ekryd.sortpom</groupId>',
++        'end-at': '</plugin>'
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    print("Result:")
++    print(repr(text))
++    print()
++    
++    # Test case 2: Prepend with dedent
++    print("Test 2: Prepend with dedent")
++    options = {
++        'prepend': '      <plugin>',
++        'start-at': '<groupId>com.github.ekryd.sortpom</groupId>',
++        'end-at': '</plugin>',
++        'dedent': 6
++    }
++    reader = LiteralIncludeReader(temp_filename, options, config)
++    text, lines = reader.read()
++    print("Result:")
++    print(repr(text))
++    
++finally:
++    # Clean up
++    os.unlink(temp_filename)
+diff --git a/tox.ini b/tox.ini
+index f0afd779b..30ca90275 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:du-latest]
+ commands =

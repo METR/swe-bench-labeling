@@ -1,0 +1,80 @@
+diff --git a/django/db/backends/base/operations.py b/django/db/backends/base/operations.py
+index 2e283a3193..e4d1a0571f 100644
+--- a/django/db/backends/base/operations.py
++++ b/django/db/backends/base/operations.py
+@@ -580,7 +580,19 @@ class BaseDatabaseOperations:
+ 
+     def convert_durationfield_value(self, value, expression, connection):
+         if value is not None:
+-            return datetime.timedelta(0, 0, value)
++            if isinstance(value, int):
++                # SQLite and MySQL return an integer
++                return datetime.timedelta(microseconds=value)
++            elif isinstance(value, str):
++                # PostgreSQL returns a string
++                try:
++                    return datetime.timedelta(seconds=float(value))
++                except ValueError:
++                    raise ValueError("Unable to convert %r to a timedelta." % value)
++            elif isinstance(value, datetime.timedelta):
++                return value
++            else:
++                raise ValueError("Unsupported duration format: %r" % value)
+ 
+     def check_expression_support(self, expression):
+         """
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index af8cfd86b5..ff34e36b2e 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -1,3 +1,4 @@
++import datetime
+ import uuid
+ 
+ from django.conf import settings
+@@ -298,6 +299,8 @@ class DatabaseOperations(BaseDatabaseOperations):
+                 converters.append(self.convert_datetimefield_value)
+         elif internal_type == 'UUIDField':
+             converters.append(self.convert_uuidfield_value)
++        elif internal_type == 'DurationField':
++            converters.append(self.convert_durationfield_value)
+         return converters
+ 
+     def convert_booleanfield_value(self, value, expression, connection):
+@@ -315,6 +318,11 @@ class DatabaseOperations(BaseDatabaseOperations):
+             value = uuid.UUID(value)
+         return value
+ 
++    def convert_durationfield_value(self, value, expression, connection):
++        if value is not None:
++            return datetime.timedelta(microseconds=int(value))
++        return value
++
+     def binary_placeholder_sql(self, value):
+         return '_binary %s' if value is not None and not hasattr(value, 'as_sql') else '%s'
+ 
+diff --git a/django/db/backends/sqlite3/operations.py b/django/db/backends/sqlite3/operations.py
+index 9510b5edd9..8c8c30e3b4 100644
+--- a/django/db/backends/sqlite3/operations.py
++++ b/django/db/backends/sqlite3/operations.py
+@@ -275,6 +275,8 @@ class DatabaseOperations(BaseDatabaseOperations):
+             converters.append(self.convert_uuidfield_value)
+         elif internal_type in ('NullBooleanField', 'BooleanField'):
+             converters.append(self.convert_booleanfield_value)
++        elif internal_type == 'DurationField':
++            converters.append(self.convert_durationfield_value)
+         return converters
+ 
+     def convert_datetimefield_value(self, value, expression, connection):
+@@ -321,6 +323,11 @@ class DatabaseOperations(BaseDatabaseOperations):
+     def convert_booleanfield_value(self, value, expression, connection):
+         return bool(value) if value in (1, 0) else value
+ 
++    def convert_durationfield_value(self, value, expression, connection):
++        if value is not None:
++            return datetime.timedelta(microseconds=int(value))
++        return value
++
+     def bulk_insert_sql(self, fields, placeholder_rows):
+         return " UNION ALL ".join(
+             "SELECT %s" % ", ".join(row)

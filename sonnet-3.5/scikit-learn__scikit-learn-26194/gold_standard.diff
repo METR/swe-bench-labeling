@@ -1,0 +1,490 @@
+From cd1c8e18b1a852a8fcb57a1eaf310b3f02cec945 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Mon, 17 Apr 2023 18:31:28 +0200
+Subject: [PATCH 01/10] FIX thresholds should not exceed 1.0 with probabilities
+ in
+
+---
+ doc/whats_new/v1.3.rst                |  4 ++++
+ sklearn/metrics/_ranking.py           |  5 ++++-
+ sklearn/metrics/tests/test_ranking.py | 18 ++++++++++++++++--
+ 3 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index e47c74a54edd6..f4288fdb80ed8 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -366,6 +366,10 @@ Changelog
+ - |API| The `eps` parameter of the :func:`log_loss` has been deprecated and will be
+   removed in 1.5. :pr:`25299` by :user:`Omar Salman <OmarManzoor>`.
+ 
++- |Fix| Fixes a bug where `thresholds` provided by :func:`metrics.roc_curve` could be
++  larger than `1.0` even for `y_score` being a probability estimate.
++  :pr:`xxx` by :user:`Guillaume Lemaitre <glemaitre>`.
++
+ :mod:`sklearn.model_selection`
+ ..............................
+ 
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 0cdead9233898..d9b66f72c1c91 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1083,7 +1083,10 @@ def roc_curve(
+     # to make sure that the curve starts at (0, 0)
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+-    thresholds = np.r_[thresholds[0] + 1, thresholds]
++    # make sure to not have a thresholds exceeding 1 for what could look like a
++    # probability estimate and not a decision function
++    max_threshold = 1 if thresholds.max() <= 1 else thresholds[0] + 1
++    thresholds = np.r_[max_threshold, thresholds]
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+diff --git a/sklearn/metrics/tests/test_ranking.py b/sklearn/metrics/tests/test_ranking.py
+index f38f118c38c0a..b1c13f4473947 100644
+--- a/sklearn/metrics/tests/test_ranking.py
++++ b/sklearn/metrics/tests/test_ranking.py
+@@ -418,13 +418,13 @@ def test_roc_curve_drop_intermediate():
+     y_true = [0, 0, 0, 0, 1, 1]
+     y_score = [0.0, 0.2, 0.5, 0.6, 0.7, 1.0]
+     tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
+-    assert_array_almost_equal(thresholds, [2.0, 1.0, 0.7, 0.0])
++    assert_array_almost_equal(thresholds, [1.0, 1.0, 0.7, 0.0])
+ 
+     # Test dropping thresholds with repeating scores
+     y_true = [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
+     y_score = [0.0, 0.1, 0.6, 0.6, 0.7, 0.8, 0.9, 0.6, 0.7, 0.8, 0.9, 0.9, 1.0]
+     tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
+-    assert_array_almost_equal(thresholds, [2.0, 1.0, 0.9, 0.7, 0.6, 0.0])
++    assert_array_almost_equal(thresholds, [1.0, 1.0, 0.9, 0.7, 0.6, 0.0])
+ 
+ 
+ def test_roc_curve_fpr_tpr_increasing():
+@@ -2199,3 +2199,17 @@ def test_ranking_metric_pos_label_types(metric, classes):
+         assert not np.isnan(metric_1).any()
+         assert not np.isnan(metric_2).any()
+         assert not np.isnan(thresholds).any()
++
++
++def test_roc_curve_with_probablity_estimates():
++    """Check that thresholds do not exceed 1.0 when `y_score` is a probability
++    estimate.
++
++    Non-regression test for:
++    https://github.com/scikit-learn/scikit-learn/issues/26193
++    """
++    rng = np.random.RandomState(42)
++    y_true = rng.randint(0, 2, size=10)
++    y_score = rng.rand(10)
++    _, _, thresholds = roc_curve(y_true, y_score)
++    assert np.logical_or(thresholds <= 1, thresholds >= 0).all()
+
+From add5d6d94245cc6a5e7dab4a4025ef37eacd1090 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Mon, 17 Apr 2023 18:32:38 +0200
+Subject: [PATCH 02/10] iter
+
+---
+ sklearn/metrics/_ranking.py | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index d9b66f72c1c91..55f0303dffe22 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1085,7 +1085,9 @@ def roc_curve(
+     fps = np.r_[0, fps]
+     # make sure to not have a thresholds exceeding 1 for what could look like a
+     # probability estimate and not a decision function
+-    max_threshold = 1 if thresholds.max() <= 1 else thresholds[0] + 1
++    max_threshold = (
++        min(1, thresholds[0] + 1) if thresholds.max() <= 1 else thresholds[0] + 1
++    )
+     thresholds = np.r_[max_threshold, thresholds]
+ 
+     if fps[-1] <= 0:
+
+From 026b643446042c0379a04493d385e06c889130aa Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Mon, 17 Apr 2023 18:33:44 +0200
+Subject: [PATCH 03/10] DOC update changelog
+
+---
+ doc/whats_new/v1.3.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index f4288fdb80ed8..eb91072fddaba 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -368,7 +368,7 @@ Changelog
+ 
+ - |Fix| Fixes a bug where `thresholds` provided by :func:`metrics.roc_curve` could be
+   larger than `1.0` even for `y_score` being a probability estimate.
+-  :pr:`xxx` by :user:`Guillaume Lemaitre <glemaitre>`.
++  :pr:`26194` by :user:`Guillaume Lemaitre <glemaitre>`.
+ 
+ :mod:`sklearn.model_selection`
+ ..............................
+
+From 07592c5f5ac5462cb28198a71d2ea460d376f075 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Tue, 18 Apr 2023 10:22:03 +0200
+Subject: [PATCH 04/10] Update sklearn/metrics/_ranking.py
+
+Co-authored-by: Olivier Grisel <olivier.grisel@ensta.org>
+---
+ sklearn/metrics/_ranking.py | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 55f0303dffe22..8c9a844147969 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1083,11 +1083,14 @@ def roc_curve(
+     # to make sure that the curve starts at (0, 0)
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+-    # make sure to not have a thresholds exceeding 1 for what could look like a
+-    # probability estimate and not a decision function
+-    max_threshold = (
+-        min(1, thresholds[0] + 1) if thresholds.max() <= 1 else thresholds[0] + 1
+-    )
++    # _binary_clf_curve returns decreasing thresholds, hence:
++    max_threshold, min_threshold = thresholds[0], thresholds[-1]
++    if min_threshold >=0 and max_threshold <= 1:
++         # Ensure that probability thresholds stay in the [0-1] range.
++         max_threshold = min(1, max_threshold + 1)
++    else:
++         # Unbounded range for decision_function threshold values.
++         max_threshold = max_threshold + 1
+     thresholds = np.r_[max_threshold, thresholds]
+ 
+     if fps[-1] <= 0:
+
+From ba9e358c583de5dbe07ebe2e7bff068eb89cb578 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Tue, 18 Apr 2023 10:26:15 +0200
+Subject: [PATCH 05/10] update doctest
+
+---
+ sklearn/metrics/_ranking.py | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 8c9a844147969..c09325f0b581d 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1056,7 +1056,7 @@ def roc_curve(
+     >>> tpr
+     array([0. , 0.5, 0.5, 1. , 1. ])
+     >>> thresholds
+-    array([1.8 , 0.8 , 0.4 , 0.35, 0.1 ])
++    array([1.0 , 0.8 , 0.4 , 0.35, 0.1 ])
+     """
+     fps, tps, thresholds = _binary_clf_curve(
+         y_true, y_score, pos_label=pos_label, sample_weight=sample_weight
+@@ -1085,12 +1085,12 @@ def roc_curve(
+     fps = np.r_[0, fps]
+     # _binary_clf_curve returns decreasing thresholds, hence:
+     max_threshold, min_threshold = thresholds[0], thresholds[-1]
+-    if min_threshold >=0 and max_threshold <= 1:
+-         # Ensure that probability thresholds stay in the [0-1] range.
+-         max_threshold = min(1, max_threshold + 1)
++    if min_threshold >= 0 and max_threshold <= 1:
++        # Ensure that probability thresholds stay in the [0-1] range.
++        max_threshold = min(1, max_threshold + 1)
+     else:
+-         # Unbounded range for decision_function threshold values.
+-         max_threshold = max_threshold + 1
++        # Unbounded range for decision_function threshold values.
++        max_threshold = max_threshold + 1
+     thresholds = np.r_[max_threshold, thresholds]
+ 
+     if fps[-1] <= 0:
+
+From 8d85771ab82f857270d2d12a8952114267323b7f Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Tue, 18 Apr 2023 11:59:39 +0200
+Subject: [PATCH 06/10] more conservative
+
+---
+ doc/whats_new/v1.3.rst      |  5 +++--
+ sklearn/metrics/_ranking.py | 19 +++++++++----------
+ 2 files changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index eb91072fddaba..d8c3016e247be 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -366,8 +366,9 @@ Changelog
+ - |API| The `eps` parameter of the :func:`log_loss` has been deprecated and will be
+   removed in 1.5. :pr:`25299` by :user:`Omar Salman <OmarManzoor>`.
+ 
+-- |Fix| Fixes a bug where `thresholds` provided by :func:`metrics.roc_curve` could be
+-  larger than `1.0` even for `y_score` being a probability estimate.
++- |Fix| Fixes a bug in :func:`metrics.roc_curve` where we add `eps` instead of 1.0
++  to `max(y_score)` for the starting point `tpr=0` and `fpr=0`. It avoids to have values
++  outised of [0, 1] range for probability estimates.
+   :pr:`26194` by :user:`Guillaume Lemaitre <glemaitre>`.
+ 
+ :mod:`sklearn.model_selection`
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index c09325f0b581d..eb609547b986f 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1036,6 +1036,10 @@ def roc_curve(
+     are reversed upon returning them to ensure they correspond to both ``fpr``
+     and ``tpr``, which are sorted in reversed order during their calculation.
+ 
++    An arbritrary threshold is added for the case `tpr=0` and `fpr=0` to
++    ensure that the curve starts at `(0, 0)`. This threshold corresponds to the
++    `max(y_score) + eps`.
++
+     References
+     ----------
+     .. [1] `Wikipedia entry for the Receiver operating characteristic
+@@ -1056,7 +1060,7 @@ def roc_curve(
+     >>> tpr
+     array([0. , 0.5, 0.5, 1. , 1. ])
+     >>> thresholds
+-    array([1.0 , 0.8 , 0.4 , 0.35, 0.1 ])
++    array([0.8 , 0.8 , 0.4 , 0.35, 0.1 ])
+     """
+     fps, tps, thresholds = _binary_clf_curve(
+         y_true, y_score, pos_label=pos_label, sample_weight=sample_weight
+@@ -1083,15 +1087,10 @@ def roc_curve(
+     # to make sure that the curve starts at (0, 0)
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+-    # _binary_clf_curve returns decreasing thresholds, hence:
+-    max_threshold, min_threshold = thresholds[0], thresholds[-1]
+-    if min_threshold >= 0 and max_threshold <= 1:
+-        # Ensure that probability thresholds stay in the [0-1] range.
+-        max_threshold = min(1, max_threshold + 1)
+-    else:
+-        # Unbounded range for decision_function threshold values.
+-        max_threshold = max_threshold + 1
+-    thresholds = np.r_[max_threshold, thresholds]
++    # get dtype of `y_score` even if it is an array-like
++    score_dtype = getattr(y_score, "dtype", np.float64)
++    dtype = score_dtype if score_dtype in (np.float32, np.float64) else np.float64
++    thresholds = np.r_[thresholds[0] + np.finfo(dtype).eps, thresholds]
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+
+From 973ee1a4477d02a3fa62c0616c50722f1e3ea3ff Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Tue, 18 Apr 2023 18:30:10 +0200
+Subject: [PATCH 07/10] Update the documentation
+
+---
+ doc/modules/model_evaluation.rst      | 2 +-
+ sklearn/metrics/_ranking.py           | 4 ++--
+ sklearn/metrics/tests/test_ranking.py | 8 +++++---
+ 3 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/doc/modules/model_evaluation.rst b/doc/modules/model_evaluation.rst
+index 537f23e49d2dc..15eee7cde726e 100644
+--- a/doc/modules/model_evaluation.rst
++++ b/doc/modules/model_evaluation.rst
+@@ -1366,7 +1366,7 @@ function::
+     >>> tpr
+     array([0. , 0.5, 0.5, 1. , 1. ])
+     >>> thresholds
+-    array([1.8 , 0.8 , 0.4 , 0.35, 0.1 ])
++    array([0.8 , 0.8 , 0.4 , 0.35, 0.1 ])
+ 
+ Compared to metrics such as the subset accuracy, the Hamming loss, or the
+ F1 score, ROC doesn't require optimizing a threshold for each label.
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index eb609547b986f..ead6be2d85138 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1016,10 +1016,10 @@ def roc_curve(
+         Increasing true positive rates such that element `i` is the true
+         positive rate of predictions with score >= `thresholds[i]`.
+ 
+-    thresholds : ndarray of shape = (n_thresholds,)
++    thresholds : ndarray of shape (n_thresholds,)
+         Decreasing thresholds on the decision function used to compute
+         fpr and tpr. `thresholds[0]` represents no instances being predicted
+-        and is arbitrarily set to `max(y_score) + 1`.
++        and is arbitrarily set to `max(y_score) + eps`.
+ 
+     See Also
+     --------
+diff --git a/sklearn/metrics/tests/test_ranking.py b/sklearn/metrics/tests/test_ranking.py
+index b1c13f4473947..35f5073b580e0 100644
+--- a/sklearn/metrics/tests/test_ranking.py
++++ b/sklearn/metrics/tests/test_ranking.py
+@@ -2201,15 +2201,17 @@ def test_ranking_metric_pos_label_types(metric, classes):
+         assert not np.isnan(thresholds).any()
+ 
+ 
+-def test_roc_curve_with_probablity_estimates():
++def test_roc_curve_with_probablity_estimates(global_random_seed):
+     """Check that thresholds do not exceed 1.0 when `y_score` is a probability
+     estimate.
+ 
+     Non-regression test for:
+     https://github.com/scikit-learn/scikit-learn/issues/26193
+     """
+-    rng = np.random.RandomState(42)
++    rng = np.random.RandomState(global_random_seed)
+     y_true = rng.randint(0, 2, size=10)
+     y_score = rng.rand(10)
+     _, _, thresholds = roc_curve(y_true, y_score)
+-    assert np.logical_or(thresholds <= 1, thresholds >= 0).all()
++    assert np.logical_or(
++        thresholds <= 1 + np.info(y_score.dtype).eps, thresholds >= 0
++    ).all()
+
+From 326da9739c6f8e879ab53756f5fc672d373f5b09 Mon Sep 17 00:00:00 2001
+From: Olivier Grisel <olivier.grisel@ensta.org>
+Date: Fri, 21 Apr 2023 17:29:55 +0200
+Subject: [PATCH 08/10] Wording
+
+---
+ doc/whats_new/v1.3.rst | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index d8c3016e247be..12b302bbfd287 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -367,8 +367,8 @@ Changelog
+   removed in 1.5. :pr:`25299` by :user:`Omar Salman <OmarManzoor>`.
+ 
+ - |Fix| Fixes a bug in :func:`metrics.roc_curve` where we add `eps` instead of 1.0
+-  to `max(y_score)` for the starting point `tpr=0` and `fpr=0`. It avoids to have values
+-  outised of [0, 1] range for probability estimates.
++  to `max(y_score)` for the starting point `tpr=0` and `fpr=0`. It avoids getting
++  values significantly outside of the [0, 1] range for probability estimates.
+   :pr:`26194` by :user:`Guillaume Lemaitre <glemaitre>`.
+ 
+ :mod:`sklearn.model_selection`
+
+From eb57cb0bb0672383e26a6bf23b810b53be5d95cc Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Tue, 2 May 2023 14:53:59 +0200
+Subject: [PATCH 09/10] use np.inf
+
+---
+ doc/whats_new/v1.3.rst                |  6 +++---
+ sklearn/metrics/_ranking.py           | 10 ++++------
+ sklearn/metrics/tests/test_ranking.py |  8 +++-----
+ 3 files changed, 10 insertions(+), 14 deletions(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index 12b302bbfd287..6a5c0812a8622 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -366,9 +366,9 @@ Changelog
+ - |API| The `eps` parameter of the :func:`log_loss` has been deprecated and will be
+   removed in 1.5. :pr:`25299` by :user:`Omar Salman <OmarManzoor>`.
+ 
+-- |Fix| Fixes a bug in :func:`metrics.roc_curve` where we add `eps` instead of 1.0
+-  to `max(y_score)` for the starting point `tpr=0` and `fpr=0`. It avoids getting
+-  values significantly outside of the [0, 1] range for probability estimates.
++- |Fix| In :func:`metrics.roc_curve`, use the threshold value `np.inf` instead of
++  arbritrary `max(y_score) + 1`. This threshold is associated with the ROC curve point
++  `tpr=0` and `fpr=0`.
+   :pr:`26194` by :user:`Guillaume Lemaitre <glemaitre>`.
+ 
+ :mod:`sklearn.model_selection`
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index ead6be2d85138..7a3b7f0cc2663 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -1019,7 +1019,7 @@ def roc_curve(
+     thresholds : ndarray of shape (n_thresholds,)
+         Decreasing thresholds on the decision function used to compute
+         fpr and tpr. `thresholds[0]` represents no instances being predicted
+-        and is arbitrarily set to `max(y_score) + eps`.
++        and is arbitrarily set to `np.inf`.
+ 
+     See Also
+     --------
+@@ -1038,7 +1038,7 @@ def roc_curve(
+ 
+     An arbritrary threshold is added for the case `tpr=0` and `fpr=0` to
+     ensure that the curve starts at `(0, 0)`. This threshold corresponds to the
+-    `max(y_score) + eps`.
++    `np.inf`.
+ 
+     References
+     ----------
+@@ -1060,7 +1060,7 @@ def roc_curve(
+     >>> tpr
+     array([0. , 0.5, 0.5, 1. , 1. ])
+     >>> thresholds
+-    array([0.8 , 0.8 , 0.4 , 0.35, 0.1 ])
++    array([ inf, 0.8 , 0.4 , 0.35, 0.1 ])
+     """
+     fps, tps, thresholds = _binary_clf_curve(
+         y_true, y_score, pos_label=pos_label, sample_weight=sample_weight
+@@ -1088,9 +1088,7 @@ def roc_curve(
+     tps = np.r_[0, tps]
+     fps = np.r_[0, fps]
+     # get dtype of `y_score` even if it is an array-like
+-    score_dtype = getattr(y_score, "dtype", np.float64)
+-    dtype = score_dtype if score_dtype in (np.float32, np.float64) else np.float64
+-    thresholds = np.r_[thresholds[0] + np.finfo(dtype).eps, thresholds]
++    thresholds = np.r_[np.inf, thresholds]
+ 
+     if fps[-1] <= 0:
+         warnings.warn(
+diff --git a/sklearn/metrics/tests/test_ranking.py b/sklearn/metrics/tests/test_ranking.py
+index 35f5073b580e0..d40e48456fe9d 100644
+--- a/sklearn/metrics/tests/test_ranking.py
++++ b/sklearn/metrics/tests/test_ranking.py
+@@ -418,13 +418,13 @@ def test_roc_curve_drop_intermediate():
+     y_true = [0, 0, 0, 0, 1, 1]
+     y_score = [0.0, 0.2, 0.5, 0.6, 0.7, 1.0]
+     tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
+-    assert_array_almost_equal(thresholds, [1.0, 1.0, 0.7, 0.0])
++    assert_array_almost_equal(thresholds, [np.inf, 1.0, 0.7, 0.0])
+ 
+     # Test dropping thresholds with repeating scores
+     y_true = [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
+     y_score = [0.0, 0.1, 0.6, 0.6, 0.7, 0.8, 0.9, 0.6, 0.7, 0.8, 0.9, 0.9, 1.0]
+     tpr, fpr, thresholds = roc_curve(y_true, y_score, drop_intermediate=True)
+-    assert_array_almost_equal(thresholds, [1.0, 1.0, 0.9, 0.7, 0.6, 0.0])
++    assert_array_almost_equal(thresholds, [np.inf, 1.0, 0.9, 0.7, 0.6, 0.0])
+ 
+ 
+ def test_roc_curve_fpr_tpr_increasing():
+@@ -2212,6 +2212,4 @@ def test_roc_curve_with_probablity_estimates(global_random_seed):
+     y_true = rng.randint(0, 2, size=10)
+     y_score = rng.rand(10)
+     _, _, thresholds = roc_curve(y_true, y_score)
+-    assert np.logical_or(
+-        thresholds <= 1 + np.info(y_score.dtype).eps, thresholds >= 0
+-    ).all()
++    assert np.isinf(thresholds[0])
+
+From 5cfc9b40e47cbcb37913c473a163eff53b383ce6 Mon Sep 17 00:00:00 2001
+From: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+Date: Tue, 2 May 2023 16:03:19 +0200
+Subject: [PATCH 10/10] iter
+
+---
+ doc/modules/model_evaluation.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/doc/modules/model_evaluation.rst b/doc/modules/model_evaluation.rst
+index 15eee7cde726e..c0b0ab67de786 100644
+--- a/doc/modules/model_evaluation.rst
++++ b/doc/modules/model_evaluation.rst
+@@ -1366,7 +1366,7 @@ function::
+     >>> tpr
+     array([0. , 0.5, 0.5, 1. , 1. ])
+     >>> thresholds
+-    array([0.8 , 0.8 , 0.4 , 0.35, 0.1 ])
++    array([ inf, 0.8 , 0.4 , 0.35, 0.1 ])
+ 
+ Compared to metrics such as the subset accuracy, the Hamming loss, or the
+ F1 score, ROC doesn't require optimizing a threshold for each label.

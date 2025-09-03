@@ -1,0 +1,91 @@
+From c1f7de8acc187a3899f7f3cda47edbc2f4142d7d Mon Sep 17 00:00:00 2001
+From: Hasan Ramezani <hasan.r67@gmail.com>
+Date: Wed, 10 Jun 2020 11:10:15 +0200
+Subject: [PATCH 1/2] Refs #31657 -- Added test for ordering by
+ self-referential ForeignKeys.
+
+---
+ tests/ordering/models.py |  1 +
+ tests/ordering/tests.py  | 11 +++++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/tests/ordering/models.py b/tests/ordering/models.py
+index 2efb743e44b6..95780c6a16c8 100644
+--- a/tests/ordering/models.py
++++ b/tests/ordering/models.py
+@@ -18,6 +18,7 @@
+ 
+ class Author(models.Model):
+     name = models.CharField(max_length=63, null=True, blank=True)
++    editor = models.ForeignKey('self', models.CASCADE, null=True)
+ 
+     class Meta:
+         ordering = ('-pk',)
+diff --git a/tests/ordering/tests.py b/tests/ordering/tests.py
+index a9cc729c4513..aa59b5abb506 100644
+--- a/tests/ordering/tests.py
++++ b/tests/ordering/tests.py
+@@ -343,6 +343,17 @@ def test_order_by_fk_attname(self):
+             attrgetter("headline")
+         )
+ 
++    def test_order_by_self_referential_fk(self):
++        self.a1.author = Author.objects.create(editor=self.author_1)
++        self.a1.save()
++        self.a2.author = Author.objects.create(editor=self.author_2)
++        self.a2.save()
++        self.assertQuerysetEqual(
++            Article.objects.filter(author__isnull=False).order_by('author__editor'),
++            ['Article 2', 'Article 1'],
++            attrgetter('headline'),
++        )
++
+     def test_order_by_f_expression(self):
+         self.assertQuerysetEqual(
+             Article.objects.order_by(F('headline')), [
+
+From 037a624120b676858be4b93c4d0adda45916fd2a Mon Sep 17 00:00:00 2001
+From: Hasan Ramezani <hasan.r67@gmail.com>
+Date: Sun, 7 Jun 2020 16:50:47 +0200
+Subject: [PATCH 2/2] Fixed #31657 -- Fixed ordering by attnames of
+ self-referential ForeignKeys.
+
+---
+ django/db/models/sql/compiler.py | 7 ++++++-
+ tests/ordering/tests.py          | 5 +++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index abbb1e37cb87..686e75c979d0 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -727,7 +727,12 @@ def find_ordering_name(self, name, opts, alias=None, default_order='ASC',
+         # If we get to this point and the field is a relation to another model,
+         # append the default ordering for that model unless it is the pk
+         # shortcut or the attribute name of the field that is specified.
+-        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name and name != 'pk':
++        if (
++            field.is_relation and
++            opts.ordering and
++            getattr(field, 'attname', None) != pieces[-1] and
++            name != 'pk'
++        ):
+             # Firstly, avoid infinite loops.
+             already_seen = already_seen or set()
+             join_tuple = tuple(getattr(self.query.alias_map[j], 'join_cols', None) for j in joins)
+diff --git a/tests/ordering/tests.py b/tests/ordering/tests.py
+index aa59b5abb506..61ec3a859224 100644
+--- a/tests/ordering/tests.py
++++ b/tests/ordering/tests.py
+@@ -353,6 +353,11 @@ def test_order_by_self_referential_fk(self):
+             ['Article 2', 'Article 1'],
+             attrgetter('headline'),
+         )
++        self.assertQuerysetEqual(
++            Article.objects.filter(author__isnull=False).order_by('author__editor_id'),
++            ['Article 1', 'Article 2'],
++            attrgetter('headline'),
++        )
+ 
+     def test_order_by_f_expression(self):
+         self.assertQuerysetEqual(

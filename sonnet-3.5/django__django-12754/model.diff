@@ -1,0 +1,53 @@
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+index 30616c0172..9efdfd5d2d 100644
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -183,6 +183,9 @@ class MigrationAutodetector:
+         self.generate_renamed_fields()
+         self.generate_removed_fields()
+         self.generate_added_fields()
++
++        # Reorder operations to handle field moves from base class to subclass
++        self.reorder_field_operations()
+         self.generate_altered_fields()
+         self.generate_altered_unique_together()
+         self.generate_altered_index_together()
+@@ -197,6 +200,38 @@ class MigrationAutodetector:
+ 
+         return self.migrations
+ 
++    def reorder_field_operations(self):
++        """
++        Reorder operations to ensure that when a field is moved from a base class to a subclass,
++        the CreateModel operation for the subclass comes before the RemoveField operation for the base class.
++        """
++        for app_label, app_operations in self.generated_operations.items():
++            create_model_ops = []
++            remove_field_ops = []
++            other_ops = []
++
++            for operation in app_operations:
++                if isinstance(operation, operations.CreateModel):
++                    create_model_ops.append(operation)
++                elif isinstance(operation, operations.RemoveField):
++                    remove_field_ops.append(operation)
++                else:
++                    other_ops.append(operation)
++
++            # Check if there are any fields that have been moved from a base class to a subclass
++            for remove_op in remove_field_ops:
++                for create_op in create_model_ops:
++                    if any(field.name == remove_op.name for field, _ in create_op.fields):
++                        # Move the CreateModel operation before the RemoveField operation
++                        create_index = app_operations.index(create_op)
++                        remove_index = app_operations.index(remove_op)
++                        if create_index > remove_index:
++                            app_operations.remove(create_op)
++                            app_operations.insert(remove_index, create_op)
++
++            # Update the generated_operations with the reordered operations
++            self.generated_operations[app_label] = app_operations
++
+     def _prepare_field_lists(self):
+         """
+         Prepare field lists and a list of the fields that used through models

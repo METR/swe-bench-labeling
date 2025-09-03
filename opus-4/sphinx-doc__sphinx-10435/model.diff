@@ -1,0 +1,195 @@
+diff --git a/sphinx/writers/latex.py b/sphinx/writers/latex.py
+index e0c7d56f8..94facf320 100644
+--- a/sphinx/writers/latex.py
++++ b/sphinx/writers/latex.py
+@@ -1709,10 +1709,16 @@ class LaTeXTranslator(SphinxTranslator):
+             node.astext(), lang, opts=opts, location=node)
+         # TODO: Use nowrap option once LaTeX formatter supports it
+         # https://github.com/pygments/pygments/pull/1343
++        # Remove the newline after \begin{Verbatim}[...] to avoid inline code whitespace
++        hlcode = hlcode.replace(r'\begin{Verbatim}[commandchars=\\\{\}]' + '\n',
++                                r'\sphinxcode{\sphinxupquote{')
++        # If no newline after the pattern, replace without it
+         hlcode = hlcode.replace(r'\begin{Verbatim}[commandchars=\\\{\}]',
+                                 r'\sphinxcode{\sphinxupquote{')
+-        # get consistent trailer
+-        hlcode = hlcode.rstrip()[:-14]  # strip \end{Verbatim}
++        # get consistent trailer - strip newline before \end{Verbatim}
++        hlcode = hlcode.rstrip()
++        if hlcode.endswith(r'\end{Verbatim}'):
++            hlcode = hlcode[:-14]  # strip \end{Verbatim}
+         self.body.append(hlcode)
+         self.body.append('}}')
+         raise nodes.SkipNode
+diff --git a/test_inline_code.py b/test_inline_code.py
+new file mode 100644
+index 000000000..c1b26065a
+--- /dev/null
++++ b/test_inline_code.py
+@@ -0,0 +1,63 @@
++#!/usr/bin/env python
++"""Test script to reproduce the inline code highlighting issue."""
++
++import tempfile
++import os
++import shutil
++from sphinx.application import Sphinx
++
++# Create a temporary directory
++tmpdir = tempfile.mkdtemp()
++srcdir = os.path.join(tmpdir, 'source')
++outdir = os.path.join(tmpdir, 'build')
++os.makedirs(srcdir)
++
++# Create conf.py
++conf_content = """
++project = 'Test'
++extensions = []
++master_doc = 'index'
++exclude_patterns = []
++html_theme = 'alabaster'
++"""
++
++with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create index.rst with the test content
++index_content = """
++.. role:: python(code)
++   :language: python
++   :class: highlight
++
++Inline :python:`def foo(1 + 2 + None + "abc"): pass` code block
++
++.. code-block:: python
++
++   def foo(1 + 2 + None + "abc"): pass
++"""
++
++with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Build LaTeX
++app = Sphinx(srcdir, srcdir, outdir, outdir + '/.doctrees', 'latex')
++app.build()
++
++# Read the generated LaTeX file
++latex_file = os.path.join(outdir, 'test.tex')
++with open(latex_file, 'r') as f:
++    content = f.read()
++
++# Look for the inline code part
++import re
++pattern = r'Inline\\sphinxcode\{\\sphinxupquote\{([^}]+)\}\}'
++match = re.search(pattern, content)
++if match:
++    print("Found inline code:")
++    print(repr(match.group(1)))
++    print("\nFull match:")
++    print(repr(match.group(0)))
++
++# Clean up
++shutil.rmtree(tmpdir)
+diff --git a/test_inline_code_fix.py b/test_inline_code_fix.py
+new file mode 100644
+index 000000000..6fe2a0bf4
+--- /dev/null
++++ b/test_inline_code_fix.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++"""Test to verify the inline code highlighting fix."""
++
++import tempfile
++import os
++import shutil
++from sphinx.application import Sphinx
++import re
++
++def test_inline_code_no_whitespace():
++    # Create a temporary directory
++    tmpdir = tempfile.mkdtemp()
++    srcdir = os.path.join(tmpdir, 'source')
++    outdir = os.path.join(tmpdir, 'build')
++    os.makedirs(srcdir)
++
++    # Create conf.py
++    conf_content = """
++project = 'Test'
++extensions = []
++master_doc = 'index'
++exclude_patterns = []
++html_theme = 'alabaster'
++"""
++
++    with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++        f.write(conf_content)
++
++    # Create index.rst with the test content
++    index_content = """
++.. role:: python(code)
++   :language: python
++   :class: highlight
++
++Inline :python:`def foo(1 + 2 + None + "abc"): pass` code block
++
++.. code-block:: python
++
++   def foo(1 + 2 + None + "abc"): pass
++"""
++
++    with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++        f.write(index_content)
++
++    # Build LaTeX
++    app = Sphinx(srcdir, srcdir, outdir, outdir + '/.doctrees', 'latex')
++    app.build()
++
++    # Read the generated LaTeX file
++    latex_file = os.path.join(outdir, 'test.tex')
++    with open(latex_file, 'r') as f:
++        content = f.read()
++
++    # Check that inline code doesn't have newlines after \sphinxcode{\sphinxupquote{
++    # Look for the specific pattern
++    lines = content.split('\n')
++    found_inline = False
++    
++    for i, line in enumerate(lines):
++        if 'Inline' in line and r'\sphinxcode{\sphinxupquote{' in line:
++            found_inline = True
++            # Check if the highlighted code is on the same line
++            if r'\PYG{k}{def}' in line:
++                print("SUCCESS: Inline code is on the same line as the command")
++                print(f"Line {i}: {repr(line)}")
++                # Make sure no newline before the code
++                assert not line.endswith(r'\sphinxcode{\sphinxupquote{'), \
++                    "Code should not be on a separate line from \\sphinxcode{\\sphinxupquote{"
++            else:
++                # Check next line
++                if i + 1 < len(lines) and r'\PYG{k}{def}' in lines[i+1]:
++                    print("FAIL: Inline code is on the next line (whitespace issue)")
++                    print(f"Line {i}: {repr(line)}")
++                    print(f"Line {i+1}: {repr(lines[i+1])}")
++                    assert False, "Inline code has unwanted newline after \\sphinxcode{\\sphinxupquote{"
++                    
++    assert found_inline, "Could not find inline code in LaTeX output"
++    print("Test passed! Inline code has no extra whitespace.")
++
++    # Clean up
++    shutil.rmtree(tmpdir)
++
++if __name__ == '__main__':
++    test_inline_code_no_whitespace()
+diff --git a/tox.ini b/tox.ini
+index 105a02597..90ada0821 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -29,7 +29,7 @@ setenv =
+     PYTHONWARNINGS = all
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -X warn_default_encoding -m pytest --durations 25 {posargs}
++    python -X dev -X warn_default_encoding -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:du-latest]
+ commands =

@@ -1,0 +1,331 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index b48d0df9c0..a27130f720 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -211,6 +211,9 @@ class QuerySet:
+     @query.setter
+     def query(self, value):
+         self._query = value
++        # When assigning a query, check if it's a values query and set the appropriate iterable class
++        if hasattr(value, 'values_select') and value.values_select:
++            self._iterable_class = ValuesIterable
+ 
+     def as_manager(cls):
+         # Address the circular dependency between `Queryset` and `Manager`.
+diff --git a/test_fix_verification.py b/test_fix_verification.py
+new file mode 100644
+index 0000000000..3f9d4f9e20
+--- /dev/null
++++ b/test_fix_verification.py
+@@ -0,0 +1,127 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++# Setup Django
++django.setup()
++
++# Now we can import Django components
++import pickle
++from django.db import models, connection
++from django.db.models import Sum
++
++# Define a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=16)
++    category = models.CharField(max_length=16)
++    value = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_model'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(TestModel)
++
++# Create test data
++TestModel.objects.create(name='item1', category='A', value=10)
++TestModel.objects.create(name='item2', category='B', value=20)
++TestModel.objects.create(name='item3', category='A', value=30)
++TestModel.objects.create(name='item4', category='B', value=40)
++
++print("Testing values() with annotate() after pickling/unpickling...")
++print("=" * 60)
++
++# Test 1: values() with annotate()
++print("\nTest 1: values() with annotate()")
++qs1 = TestModel.objects.values('category').annotate(total=Sum('value'))
++print("Original queryset:")
++for item in qs1:
++    print(f"  {item}")
++print(f"Type of first result: {type(qs1[0])}")
++
++# Pickle and unpickle the query
++pickled = pickle.dumps(qs1.query)
++qs2 = TestModel.objects.all()
++qs2.query = pickle.loads(pickled)
++
++print("\nAfter unpickling:")
++try:
++    for item in qs2:
++        print(f"  {item}")
++    print(f"Type of first result: {type(qs2[0])}")
++    print("SUCCESS: Query works correctly!")
++except Exception as e:
++    print(f"ERROR: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test 2: Just values() without annotate
++print("\n" + "=" * 60)
++print("\nTest 2: values() without annotate()")
++qs3 = TestModel.objects.values('category', 'name')
++print("Original queryset:")
++for item in qs3:
++    print(f"  {item}")
++print(f"Type of first result: {type(qs3[0])}")
++
++# Pickle and unpickle the query
++pickled = pickle.dumps(qs3.query)
++qs4 = TestModel.objects.all()
++qs4.query = pickle.loads(pickled)
++
++print("\nAfter unpickling:")
++try:
++    for item in qs4:
++        print(f"  {item}")
++    print(f"Type of first result: {type(qs4[0])}")
++    print("SUCCESS: Query works correctly!")
++except Exception as e:
++    print(f"ERROR: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Test 3: Regular query (no values)
++print("\n" + "=" * 60)
++print("\nTest 3: Regular query (no values)")
++qs5 = TestModel.objects.filter(category='A')
++print("Original queryset:")
++for item in qs5:
++    print(f"  {item.name} - {item.category} - {item.value}")
++
++# Pickle and unpickle the query
++pickled = pickle.dumps(qs5.query)
++qs6 = TestModel.objects.all()
++qs6.query = pickle.loads(pickled)
++
++print("\nAfter unpickling:")
++try:
++    for item in qs6:
++        print(f"  {item.name} - {item.category} - {item.value}")
++    print("SUCCESS: Query works correctly!")
++except Exception as e:
++    print(f"ERROR: {e}")
++    import traceback
++    traceback.print_exc()
++
++print("\n" + "=" * 60)
++print("All tests completed!")
+diff --git a/test_pickle_fix.py b/test_pickle_fix.py
+new file mode 100644
+index 0000000000..b44cf23fee
+--- /dev/null
++++ b/test_pickle_fix.py
+@@ -0,0 +1,50 @@
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++django.setup()
++
++import pickle
++from django.db.models import Sum
++from aggregation.models import Author, Book, Publisher
++
++# Clear existing data and create test data
++Author.objects.all().delete()
++Publisher.objects.all().delete()
++Book.objects.all().delete()
++
++# Create test data
++a1 = Author.objects.create(name='Author1', age=30)
++a2 = Author.objects.create(name='Author2', age=40)
++p1 = Publisher.objects.create(name='Publisher1', num_awards=5)
++b1 = Book.objects.create(isbn='123', name='Book1', pages=100, rating=4.5, price=20.00, 
++                         contact=a1, publisher=p1, pubdate='2023-01-01')
++b2 = Book.objects.create(isbn='456', name='Book2', pages=200, rating=4.0, price=30.00,
++                         contact=a2, publisher=p1, pubdate='2023-01-02')
++
++# Original query with values and annotate
++prices = Book.objects.values('publisher').annotate(total=Sum('price'))
++print("Original query results:")
++for item in prices:
++    print(f"  {item}")
++print(f"Type of first result: {type(prices[0])}")
++print(f"Original queryset _iterable_class: {prices._iterable_class}")
++print(f"Original query values_select: {prices.query.values_select}")
++
++# Pickle and unpickle the query
++pickled_query = pickle.dumps(prices.query)
++
++# Create new queryset with unpickled query
++prices2 = Book.objects.all()
++prices2.query = pickle.loads(pickled_query)
++
++print(f"\nUnpickled queryset _iterable_class: {prices2._iterable_class}")
++print("Unpickled query results:")
++try:
++    for item in prices2:
++        print(f"  {item}")
++except Exception as e:
++    print(f"Error: {e}")
++    print(f"Error type: {type(e)}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_pickle_values_issue.py b/test_pickle_values_issue.py
+new file mode 100644
+index 0000000000..4471e6bd4d
+--- /dev/null
++++ b/test_pickle_values_issue.py
+@@ -0,0 +1,72 @@
++import django
++from django.conf import settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++
++django.setup()
++
++import pickle
++from django.db import models
++from django.db.models import Sum
++from django.test import TestCase
++
++
++class Toy(models.Model):
++    name = models.CharField(max_length=16)
++    material = models.CharField(max_length=16)
++    price = models.PositiveIntegerField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++if __name__ == "__main__":
++    # Create table
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Toy)
++    
++    # Create test data
++    Toy.objects.create(name='foo', price=10, material='wood')
++    Toy.objects.create(name='bar', price=20, material='plastic')
++    Toy.objects.create(name='baz', price=100, material='wood')
++    
++    # Original query with values and annotate
++    prices = Toy.objects.values('material').annotate(total_price=Sum('price'))
++    print("Original query results:")
++    for item in prices:
++        print(f"  {item}")
++    print(f"Type of first result: {type(prices[0])}")
++    print(f"Original queryset _iterable_class: {prices._iterable_class}")
++    print(f"Original query values_select: {prices.query.values_select}")
++    print(f"Original query annotation_select: {prices.query.annotation_select}")
++    
++    # Pickle and unpickle the query
++    pickled_query = pickle.dumps(prices.query)
++    
++    # Create new queryset with unpickled query
++    prices2 = Toy.objects.all()
++    unpickled_query = pickle.loads(pickled_query)
++    print(f"\nUnpickled query values_select: {unpickled_query.values_select}")
++    print(f"Unpickled query annotation_select: {unpickled_query.annotation_select}")
++    
++    prices2.query = unpickled_query
++    
++    print(f"\nUnpickled queryset _iterable_class: {prices2._iterable_class}")
++    print(f"Type of first result: {type(prices2[0])}")
++    
++    # This should work but currently crashes
++    for item in prices2:
++        print(f"  {item}")
+diff --git a/test_simple_pickle.py b/test_simple_pickle.py
+new file mode 100644
+index 0000000000..acb864f2ce
+--- /dev/null
++++ b/test_simple_pickle.py
+@@ -0,0 +1,44 @@
++import os
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++
++import django
++django.setup()
++
++import pickle
++from django.db.models import Sum
++from queries.models import Number
++
++# Clear existing data
++Number.objects.all().delete()
++
++# Create test data
++Number.objects.create(num=10, other_num=1)
++Number.objects.create(num=20, other_num=1)
++Number.objects.create(num=30, other_num=2)
++
++# Original query with values and annotate
++prices = Number.objects.values('other_num').annotate(total=Sum('num'))
++print("Original query results:")
++for item in prices:
++    print(f"  {item}")
++print(f"Type of first result: {type(prices[0])}")
++print(f"Original queryset _iterable_class: {prices._iterable_class}")
++print(f"Original query values_select: {prices.query.values_select}")
++
++# Pickle and unpickle the query
++pickled_query = pickle.dumps(prices.query)
++
++# Create new queryset with unpickled query
++prices2 = Number.objects.all()
++prices2.query = pickle.loads(pickled_query)
++
++print(f"\nUnpickled queryset _iterable_class: {prices2._iterable_class}")
++print("Unpickled query results:")
++try:
++    for item in prices2:
++        print(f"  {item}")
++except Exception as e:
++    print(f"Error: {e}")
++    print(f"Error type: {type(e)}")
++    import traceback
++    traceback.print_exc()

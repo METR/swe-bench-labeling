@@ -1,0 +1,43 @@
+From b0237e064961e1cb003672936e2f45b637f5eddb Mon Sep 17 00:00:00 2001
+From: arnaudstiegler <arnaud.stiegler@gmail.com>
+Date: Fri, 21 Jun 2019 16:15:44 -0400
+Subject: [PATCH 1/2] updating dependency list
+
+---
+ sklearn/utils/_show_versions.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sklearn/utils/_show_versions.py b/sklearn/utils/_show_versions.py
+index e5d3141bf0a17..ecba9ec68bea5 100644
+--- a/sklearn/utils/_show_versions.py
++++ b/sklearn/utils/_show_versions.py
+@@ -48,6 +48,7 @@ def _get_deps_info():
+         "Cython",
+         "pandas",
+         "matplotlib",
++        "joblib",
+     ]
+ 
+     def get_version(module):
+
+From 11bd838a2d53bd33fa935f3e4f520f3aab027bf1 Mon Sep 17 00:00:00 2001
+From: arnaudstiegler <arnaud.stiegler@gmail.com>
+Date: Fri, 21 Jun 2019 17:28:55 -0400
+Subject: [PATCH 2/2] added assert for joblib in test_show_versions
+
+---
+ sklearn/utils/tests/test_show_versions.py | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sklearn/utils/tests/test_show_versions.py b/sklearn/utils/tests/test_show_versions.py
+index 31153c96c7b8f..b8ad843f7849a 100644
+--- a/sklearn/utils/tests/test_show_versions.py
++++ b/sklearn/utils/tests/test_show_versions.py
+@@ -23,6 +23,7 @@ def test_get_deps_info():
+     assert 'Cython' in deps_info
+     assert 'pandas' in deps_info
+     assert 'matplotlib' in deps_info
++    assert 'joblib' in deps_info
+ 
+ 
+ def test_show_versions_with_blas(capsys):

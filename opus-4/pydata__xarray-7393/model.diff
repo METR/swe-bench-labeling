@@ -1,0 +1,67 @@
+diff --git a/test_stack_dtype_preservation.py b/test_stack_dtype_preservation.py
+new file mode 100644
+index 00000000..2f5d9b29
+--- /dev/null
++++ b/test_stack_dtype_preservation.py
+@@ -0,0 +1,37 @@
++"""Test that stack preserves coordinate dtypes"""
++import xarray as xr
++import numpy as np
++
++
++def test_stack_preserves_dtype():
++    """Test that stacking preserves the dtype of coordinates"""
++    # Test with int32
++    ds = xr.Dataset(coords={'a': np.array([0], dtype='i4')})
++    stacked = ds.stack(b=('a',))
++    assert ds['a'].values.dtype == stacked['a'].values.dtype, \
++        f"Expected {ds['a'].values.dtype}, got {stacked['a'].values.dtype}"
++    
++    # Test with various dtypes
++    for dtype in ['i1', 'i2', 'i4', 'i8', 'u1', 'u2', 'u4', 'u8', 'f4', 'f8']:
++        arr = np.array([0, 1, 2], dtype=dtype)
++        ds = xr.Dataset(coords={'a': arr})
++        stacked = ds.stack(b=('a',))
++        original_dtype = ds['a'].values.dtype
++        stacked_dtype = stacked['a'].values.dtype
++        assert original_dtype == stacked_dtype, \
++            f"dtype {dtype}: Expected {original_dtype}, got {stacked_dtype}"
++    
++    # Test with 2D stacking
++    ds = xr.Dataset(coords={
++        'x': np.array([0, 1], dtype='i4'),
++        'y': np.array([10, 20, 30], dtype='i2')
++    })
++    stacked = ds.stack(z=('x', 'y'))
++    assert ds['x'].values.dtype == stacked['x'].values.dtype
++    assert ds['y'].values.dtype == stacked['y'].values.dtype
++    
++    print("All tests passed!")
++
++
++if __name__ == "__main__":
++    test_stack_preserves_dtype()
+diff --git a/xarray/core/indexing.py b/xarray/core/indexing.py
+index ba937183..704b239a 100644
+--- a/xarray/core/indexing.py
++++ b/xarray/core/indexing.py
+@@ -1532,7 +1532,9 @@ class PandasMultiIndexingAdapter(PandasIndexingAdapter):
+ 
+     def __array__(self, dtype: DTypeLike = None) -> np.ndarray:
+         if self.level is not None:
+-            return self.array.get_level_values(self.level).values
++            if dtype is None:
++                dtype = self.dtype
++            return np.asarray(self.array.get_level_values(self.level).values, dtype=dtype)
+         else:
+             return super().__array__(dtype)
+ 
+@@ -1568,7 +1570,7 @@ class PandasMultiIndexingAdapter(PandasIndexingAdapter):
+         else:
+             subset = self
+ 
+-        return np.asarray(subset)
++        return np.asarray(subset, dtype=self.dtype)
+ 
+     def _repr_inline_(self, max_width: int) -> str:
+         from xarray.core.formatting import format_array_flat

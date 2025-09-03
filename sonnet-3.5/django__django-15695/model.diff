@@ -1,0 +1,148 @@
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index d17232e4ec..d0faebbf98 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -896,7 +896,7 @@ class RenameIndex(IndexOperation):
+ 
+     @cached_property
+     def old_name_lower(self):
+-        return self.old_name.lower()
++        return self.old_name.lower() if self.old_name else None
+ 
+     @cached_property
+     def new_name_lower(self):
+@@ -914,22 +914,17 @@ class RenameIndex(IndexOperation):
+         return (self.__class__.__qualname__, [], kwargs)
+ 
+     def state_forwards(self, app_label, state):
++        model_state = state.models[app_label, self.model_name_lower]
+         if self.old_fields:
+-            state.add_index(
+-                app_label,
+-                self.model_name_lower,
+-                models.Index(fields=self.old_fields, name=self.new_name),
+-            )
+-            state.remove_model_options(
+-                app_label,
+-                self.model_name_lower,
+-                AlterIndexTogether.option_name,
+-                self.old_fields,
+-            )
++            for index in model_state.options.get('indexes', []):
++                if index.fields == self.old_fields:
++                    index.name = self.new_name
++                    break
+         else:
+-            state.rename_index(
+-                app_label, self.model_name_lower, self.old_name, self.new_name
+-            )
++            for index in model_state.options.get('indexes', []):
++                if index.name == self.old_name:
++                    index.name = self.new_name
++                    break
+ 
+     def database_forwards(self, app_label, schema_editor, from_state, to_state):
+         model = to_state.apps.get_model(app_label, self.model_name)
+@@ -953,36 +948,27 @@ class RenameIndex(IndexOperation):
+                         ", ".join(columns),
+                     )
+                 )
+-            old_index = models.Index(
+-                fields=self.old_fields,
+-                name=matching_index_name[0],
+-            )
++            old_name = matching_index_name[0]
+         else:
+-            from_model_state = from_state.models[app_label, self.model_name_lower]
+-            old_index = from_model_state.get_index_by_name(self.old_name)
++            old_name = self.old_name
+ 
+-        to_model_state = to_state.models[app_label, self.model_name_lower]
+-        new_index = to_model_state.get_index_by_name(self.new_name)
+-        schema_editor.rename_index(model, old_index, new_index)
++        schema_editor.alter_index(model, old_name, self.new_name)
+ 
+     def database_backwards(self, app_label, schema_editor, from_state, to_state):
+-        if self.old_fields:
+-            # Backward operation with unnamed index is a no-op.
++        model = from_state.apps.get_model(app_label, self.model_name)
++        if not self.allow_migrate_model(schema_editor.connection.alias, model):
+             return
+ 
+-        self.new_name_lower, self.old_name_lower = (
+-            self.old_name_lower,
+-            self.new_name_lower,
+-        )
+-        self.new_name, self.old_name = self.old_name, self.new_name
+-
+-        self.database_forwards(app_label, schema_editor, from_state, to_state)
++        if self.old_fields:
++            to_model = to_state.apps.get_model(app_label, self.model_name)
++            columns = [
++                to_model._meta.get_field(field).column for field in self.old_fields
++            ]
++            old_name = schema_editor._create_index_name(model, columns, suffix="_idx")
++        else:
++            old_name = self.old_name
+ 
+-        self.new_name_lower, self.old_name_lower = (
+-            self.old_name_lower,
+-            self.new_name_lower,
+-        )
+-        self.new_name, self.old_name = self.old_name, self.new_name
++        schema_editor.alter_index(model, self.new_name, old_name)
+ 
+     def describe(self):
+         if self.old_name:
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index cfd28b1b39..92b374b36c 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -17,6 +17,47 @@ class Mixin:
+ 
+ 
+ class OperationTests(OperationTestBase):
++    def test_rename_index_unnamed(self):
++        app_label = "test_rename_index_unnamed"
++        table_name = f"{app_label}_pony"
++        project_state = self.set_up_test_model(app_label)
++
++        # Create an unnamed index
++        index = models.Index(fields=["name"], name=None)
++        operation = migrations.AddIndex("Pony", index)
++        new_state = project_state.clone()
++        operation.state_forwards(app_label, new_state)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++
++        # Rename the unnamed index
++        project_state = new_state
++        operation = migrations.RenameIndex("Pony", new_name="named_index", old_fields=["name"])
++        new_state = project_state.clone()
++        operation.state_forwards(app_label, new_state)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        self.assertIndexNameExists(table_name, "named_index")
++
++        # Test backwards operation
++        with connection.schema_editor() as editor:
++            operation.database_backwards(app_label, editor, new_state, project_state)
++
++        # Check that the index name is reverted to the auto-generated name
++        with connection.cursor() as cursor:
++            constraints = connection.introspection.get_constraints(cursor, table_name)
++        self.assertTrue(any(
++            info["columns"] == ["name"] and info["index"] and not info["unique"]
++            for name, info in constraints.items()
++        ))
++        self.assertIndexNameNotExists(table_name, "named_index")
++
++        # Ensure that indexes are working correctly
++        Pony = new_state.apps.get_model(app_label, "Pony")
++        Pony.objects.create(name="a"), Pony.objects.create(name="b")
++        self.assertIs(Pony.objects.filter(name="a").exists(), True)
++        self.assertIs(Pony.objects.filter(name="b").exists(), True)
++        self.assertIs(Pony.objects.filter(name="c").exists(), False)
+     """
+     Tests running the operations and making sure they do what they say they do.
+     Each test looks at their state changing, and then their database operation -

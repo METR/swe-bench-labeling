@@ -1,0 +1,97 @@
+From c6dda9c04b73a8c297f6d574d95660d9cb664554 Mon Sep 17 00:00:00 2001
+From: Abhinav Anand <abhinav.anand2807@gmail.com>
+Date: Tue, 31 Dec 2019 21:11:00 +0530
+Subject: [PATCH 1/4] added permute = true
+
+---
+ sympy/solvers/diophantine.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index e8c354efd051..be8ea6c5e31a 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -182,7 +182,7 @@ def diophantine(eq, param=symbols("t", integer=True), syms=None,
+             if syms != var:
+                 dict_sym_index = dict(zip(syms, range(len(syms))))
+                 return {tuple([t[dict_sym_index[i]] for i in var])
+-                            for t in diophantine(eq, param)}
++                            for t in diophantine(eq, param, permute = permute)}
+         n, d = eq.as_numer_denom()
+         if n.is_number:
+             return set()
+
+From b8fe22fc52d4c3aadcdad2fd604c960831ffa24c Mon Sep 17 00:00:00 2001
+From: Abhinav Anand <abhinav.anand2807@gmail.com>
+Date: Tue, 31 Dec 2019 23:26:36 +0530
+Subject: [PATCH 2/4] added test cases
+
+---
+ sympy/solvers/tests/test_diophantine.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/sympy/solvers/tests/test_diophantine.py b/sympy/solvers/tests/test_diophantine.py
+index bf78f8e46cdf..8c79b162894a 100644
+--- a/sympy/solvers/tests/test_diophantine.py
++++ b/sympy/solvers/tests/test_diophantine.py
+@@ -540,6 +540,14 @@ def test_diophantine():
+     assert diophantine(x**2 + y**2 +3*x- 5, permute=True) == \
+         set([(-1, 1), (-4, -1), (1, -1), (1, 1), (-4, 1), (-1, -1), (4, 1), (4, -1)])
+ 
++    #test issue 18186
++    assert diophantine(y**4 + x**4 - 2**4 - 3**4, syms=(x, y), permute=True) == \
++        set([(-3, -2), (-3, 2), (-2, -3), (-2, 3), (2, -3), (2, 3), (3, -2), (3, 2)])
++    assert diophantine(y**4 + x**4 - 2**4 - 3**4, syms=(y, x), permute=True) == \
++        set([(-3, -2), (-3, 2), (-2, -3), (-2, 3), (2, -3), (2, 3), (3, -2), (3, 2)])
++
++
++
+ 
+ def test_general_pythagorean():
+     from sympy.abc import a, b, c, d, e
+
+From bfdc2d49528834c59e08e48e7f90447412e7bd3a Mon Sep 17 00:00:00 2001
+From: Abhinav Anand <abhinav.anand2807@gmail.com>
+Date: Tue, 31 Dec 2019 23:37:28 +0530
+Subject: [PATCH 3/4] removed white spaces
+
+---
+ sympy/solvers/diophantine.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index be8ea6c5e31a..10823d3db136 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -182,7 +182,7 @@ def diophantine(eq, param=symbols("t", integer=True), syms=None,
+             if syms != var:
+                 dict_sym_index = dict(zip(syms, range(len(syms))))
+                 return {tuple([t[dict_sym_index[i]] for i in var])
+-                            for t in diophantine(eq, param, permute = permute)}
++                            for t in diophantine(eq, param, permute=permute)}
+         n, d = eq.as_numer_denom()
+         if n.is_number:
+             return set()
+
+From 8715d0b137f8d300dfbb8ebd179fa5278e9443f6 Mon Sep 17 00:00:00 2001
+From: Abhinav Anand <abhinav.anand2807@gmail.com>
+Date: Tue, 31 Dec 2019 23:40:14 +0530
+Subject: [PATCH 4/4] minor changes
+
+---
+ sympy/solvers/tests/test_diophantine.py | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/sympy/solvers/tests/test_diophantine.py b/sympy/solvers/tests/test_diophantine.py
+index 8c79b162894a..cf050d1761ed 100644
+--- a/sympy/solvers/tests/test_diophantine.py
++++ b/sympy/solvers/tests/test_diophantine.py
+@@ -547,8 +547,6 @@ def test_diophantine():
+         set([(-3, -2), (-3, 2), (-2, -3), (-2, 3), (2, -3), (2, 3), (3, -2), (3, 2)])
+ 
+ 
+-
+-
+ def test_general_pythagorean():
+     from sympy.abc import a, b, c, d, e
+ 

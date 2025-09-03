@@ -1,0 +1,246 @@
+diff --git a/django/core/files/locks.py b/django/core/files/locks.py
+index c46b00b905..4938347ea7 100644
+--- a/django/core/files/locks.py
++++ b/django/core/files/locks.py
+@@ -107,9 +107,15 @@ else:
+             return True
+     else:
+         def lock(f, flags):
+-            ret = fcntl.flock(_fd(f), flags)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), flags)
++                return True
++            except OSError:
++                return False
+ 
+         def unlock(f):
+-            ret = fcntl.flock(_fd(f), fcntl.LOCK_UN)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), fcntl.LOCK_UN)
++                return True
++            except OSError:
++                return False
+diff --git a/django/core/files/locks.py.backup b/django/core/files/locks.py.backup
+new file mode 100644
+index 0000000000..8a45509106
+--- /dev/null
++++ b/django/core/files/locks.py.backup
+@@ -0,0 +1,118 @@
++"""
++Portable file locking utilities.
++
++Based partially on an example by Jonathan Feignberg in the Python
++Cookbook [1] (licensed under the Python Software License) and a ctypes port by
++Anatoly Techtonik for Roundup [2] (license [3]).
++
++[1] http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/65203
++[2] https://sourceforge.net/p/roundup/code/ci/default/tree/roundup/backends/portalocker.py
++[3] https://sourceforge.net/p/roundup/code/ci/default/tree/COPYING.txt
++
++Example Usage::
++
++    >>> from django.core.files import locks
++    >>> with open('./file', 'wb') as f:
++    ...     locks.lock(f, locks.LOCK_EX)
++    ...     f.write('Django')
++"""
++import os
++
++__all__ = ('LOCK_EX', 'LOCK_SH', 'LOCK_NB', 'lock', 'unlock')
++
++
++def _fd(f):
++    """Get a filedescriptor from something which could be a file or an fd."""
++    return f.fileno() if hasattr(f, 'fileno') else f
++
++
++if os.name == 'nt':
++    import msvcrt
++    from ctypes import (
++        POINTER, Structure, Union, byref, c_int64, c_ulong, c_void_p, sizeof,
++        windll,
++    )
++    from ctypes.wintypes import BOOL, DWORD, HANDLE
++
++    LOCK_SH = 0  # the default
++    LOCK_NB = 0x1  # LOCKFILE_FAIL_IMMEDIATELY
++    LOCK_EX = 0x2  # LOCKFILE_EXCLUSIVE_LOCK
++
++    # --- Adapted from the pyserial project ---
++    # detect size of ULONG_PTR
++    if sizeof(c_ulong) != sizeof(c_void_p):
++        ULONG_PTR = c_int64
++    else:
++        ULONG_PTR = c_ulong
++    PVOID = c_void_p
++
++    # --- Union inside Structure by stackoverflow:3480240 ---
++    class _OFFSET(Structure):
++        _fields_ = [
++            ('Offset', DWORD),
++            ('OffsetHigh', DWORD)]
++
++    class _OFFSET_UNION(Union):
++        _anonymous_ = ['_offset']
++        _fields_ = [
++            ('_offset', _OFFSET),
++            ('Pointer', PVOID)]
++
++    class OVERLAPPED(Structure):
++        _anonymous_ = ['_offset_union']
++        _fields_ = [
++            ('Internal', ULONG_PTR),
++            ('InternalHigh', ULONG_PTR),
++            ('_offset_union', _OFFSET_UNION),
++            ('hEvent', HANDLE)]
++
++    LPOVERLAPPED = POINTER(OVERLAPPED)
++
++    # --- Define function prototypes for extra safety ---
++    LockFileEx = windll.kernel32.LockFileEx
++    LockFileEx.restype = BOOL
++    LockFileEx.argtypes = [HANDLE, DWORD, DWORD, DWORD, DWORD, LPOVERLAPPED]
++    UnlockFileEx = windll.kernel32.UnlockFileEx
++    UnlockFileEx.restype = BOOL
++    UnlockFileEx.argtypes = [HANDLE, DWORD, DWORD, DWORD, LPOVERLAPPED]
++
++    def lock(f, flags):
++        hfile = msvcrt.get_osfhandle(_fd(f))
++        overlapped = OVERLAPPED()
++        ret = LockFileEx(hfile, flags, 0, 0, 0xFFFF0000, byref(overlapped))
++        return bool(ret)
++
++    def unlock(f):
++        hfile = msvcrt.get_osfhandle(_fd(f))
++        overlapped = OVERLAPPED()
++        ret = UnlockFileEx(hfile, 0, 0, 0xFFFF0000, byref(overlapped))
++        return bool(ret)
++else:
++    try:
++        import fcntl
++        LOCK_SH = fcntl.LOCK_SH  # shared lock
++        LOCK_NB = fcntl.LOCK_NB  # non-blocking
++        LOCK_EX = fcntl.LOCK_EX
++    except (ImportError, AttributeError):
++        # File locking is not supported.
++        LOCK_EX = LOCK_SH = LOCK_NB = 0
++
++        # Dummy functions that don't do anything.
++        def lock(f, flags):
++            # File is not locked
++            return False
++
++        def unlock(f):
++            # File is unlocked
++            return True
++    else:
++        def lock(f, flags):
++            try:
++                fcntl.flock(_fd(f), flags)
++                return True
++            except OSError:
++                return False
++
++        def unlock(f):
++            ret = fcntl.flock(_fd(f), fcntl.LOCK_UN)
++            return ret == 0
+diff --git a/fix_locks.py b/fix_locks.py
+new file mode 100644
+index 0000000000..24129d1db4
+--- /dev/null
++++ b/fix_locks.py
+@@ -0,0 +1,40 @@
++#!/usr/bin/env python
++"""Script to fix the locks.py file"""
++
++# Read the file
++with open('/testbed/django/core/files/locks.py', 'r') as f:
++    content = f.read()
++
++# Replace the problematic lock function
++old_lock = """        def lock(f, flags):
++            ret = fcntl.flock(_fd(f), flags)
++            return ret == 0"""
++
++new_lock = """        def lock(f, flags):
++            try:
++                fcntl.flock(_fd(f), flags)
++                return True
++            except OSError:
++                return False"""
++
++content = content.replace(old_lock, new_lock)
++
++# Replace the problematic unlock function
++old_unlock = """        def unlock(f):
++            ret = fcntl.flock(_fd(f), fcntl.LOCK_UN)
++            return ret == 0"""
++
++new_unlock = """        def unlock(f):
++            try:
++                fcntl.flock(_fd(f), fcntl.LOCK_UN)
++                return True
++            except OSError:
++                return False"""
++
++content = content.replace(old_unlock, new_unlock)
++
++# Write the fixed content back
++with open('/testbed/django/core/files/locks.py', 'w') as f:
++    f.write(content)
++
++print("File fixed successfully!")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_locks.py b/test_locks.py
+new file mode 100644
+index 0000000000..14dfb56d41
+--- /dev/null
++++ b/test_locks.py
+@@ -0,0 +1,40 @@
++#!/usr/bin/env python
++"""Test script to verify the lock behavior"""
++
++import os
++import tempfile
++from django.core.files import locks
++
++# Create a temporary file for testing
++with tempfile.NamedTemporaryFile(delete=False) as f:
++    test_file_path = f.name
++    f.write(b"test content")
++
++try:
++    # Test the lock function
++    with open(test_file_path, 'rb') as f:
++        print("Testing lock with LOCK_EX...")
++        result = locks.lock(f, locks.LOCK_EX)
++        print(f"Lock result: {result}, type: {type(result)}")
++        print(f"Expected: True (lock should succeed)")
++        
++        # Try to lock again with non-blocking to test failure case
++        with open(test_file_path, 'rb') as f2:
++            print("\nTesting lock with LOCK_EX | LOCK_NB on already locked file...")
++            try:
++                result2 = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++                print(f"Second lock result: {result2}, type: {type(result2)}")
++                print(f"Expected: False (lock should fail since file is already locked)")
++            except Exception as e:
++                print(f"Exception raised: {type(e).__name__}: {e}")
++                print("This shows the current implementation is broken - it raises exception instead of returning False")
++        
++        # Unlock the file
++        print("\nTesting unlock...")
++        unlock_result = locks.unlock(f)
++        print(f"Unlock result: {unlock_result}, type: {type(unlock_result)}")
++        print(f"Expected: True (unlock should succeed)")
++        
++finally:
++    # Clean up
++    os.unlink(test_file_path)
+diff --git a/test_locks_comprehensive.py b/test_locks_comprehensive.py
+new file mode 100644
+index 0000000000..e69de29bb2

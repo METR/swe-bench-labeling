@@ -1,0 +1,250 @@
+diff --git a/django/forms/boundfield.py b/django/forms/boundfield.py
+index 88adadb37d..f9bf35606f 100644
+--- a/django/forms/boundfield.py
++++ b/django/forms/boundfield.py
+@@ -1,6 +1,7 @@
+ import datetime
+ import re
+ 
++from django.core.exceptions import ValidationError
+ from django.forms.utils import flatatt, pretty_name
+ from django.forms.widgets import Textarea, TextInput
+ from django.utils.functional import cached_property
+@@ -231,6 +232,25 @@ class BoundField:
+     @property
+     def widget_type(self):
+         return re.sub(r'widget$|input$', '', self.field.widget.__class__.__name__.lower())
++    
++    def _did_change(self):
++        """
++        Return True if data differs from initial for this field.
++        """
++        data_value = self.data
++        if not self.field.show_hidden_initial:
++            initial_value = self.initial
++        else:
++            initial_prefixed_name = self.form.add_initial_prefix(self.name)
++            hidden_widget = self.field.hidden_widget()
++            try:
++                initial_value = self.field.to_python(
++                    self.form._widget_data_value(hidden_widget, initial_prefixed_name)
++                )
++            except ValidationError:
++                # Always assume data has changed if validation fails.
++                return True
++        return self.field.has_changed(initial_value, data_value)
+ 
+ 
+ @html_safe
+diff --git a/django/forms/forms.py b/django/forms/forms.py
+index d14037bfe9..77a78ca230 100644
+--- a/django/forms/forms.py
++++ b/django/forms/forms.py
+@@ -177,6 +177,13 @@ class BaseForm:
+     def is_valid(self):
+         """Return True if the form has no errors, or False otherwise."""
+         return self.is_bound and not self.errors
++    
++    def _bound_items(self):
++        """
++        Yield (name, bound_field) pairs for iterating over all bound fields.
++        """
++        for name in self.fields:
++            yield name, self[name]
+ 
+     def add_prefix(self, field_name):
+         """
+@@ -387,14 +394,15 @@ class BaseForm:
+         self._post_clean()
+ 
+     def _clean_fields(self):
+-        for name, field in self.fields.items():
++        for name, bf in self._bound_items():
++            field = bf.field
+             if field.disabled:
+-                value = self.get_initial_for_field(field, name)
++                value = bf.initial
+             else:
+-                value = self._field_data_value(field, self.add_prefix(name))
++                value = bf.data
+             try:
+                 if isinstance(field, FileField):
+-                    initial = self.get_initial_for_field(field, name)
++                    initial = bf.initial
+                     value = field.clean(value, initial)
+                 else:
+                     value = field.clean(value)
+@@ -436,27 +444,7 @@ class BaseForm:
+ 
+     @cached_property
+     def changed_data(self):
+-        data = []
+-        for name, field in self.fields.items():
+-            data_value = self._field_data_value(field, self.add_prefix(name))
+-            if not field.show_hidden_initial:
+-                # Use the BoundField's initial as this is the value passed to
+-                # the widget.
+-                initial_value = self[name].initial
+-            else:
+-                initial_prefixed_name = self.add_initial_prefix(name)
+-                hidden_widget = field.hidden_widget()
+-                try:
+-                    initial_value = field.to_python(
+-                        self._widget_data_value(hidden_widget, initial_prefixed_name)
+-                    )
+-                except ValidationError:
+-                    # Always assume data has changed if validation fails.
+-                    data.append(name)
+-                    continue
+-            if field.has_changed(initial_value, data_value):
+-                data.append(name)
+-        return data
++        return [name for name, bf in self._bound_items() if bf._did_change()]
+ 
+     @property
+     def media(self):
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..a6ef7ba875
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,50 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Minimal Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django import forms
++from datetime import datetime
++
++# Test case to show current behavior
++class DateTimeForm(forms.Form):
++    dt = forms.DateTimeField(initial=lambda: datetime(2006, 10, 25, 14, 30, 45, 123456), disabled=True)
++
++# Create form instance
++form = DateTimeForm({})
++
++# Access through BoundField
++bf = form['dt']
++print(f"BoundField initial: {bf.initial}")
++
++# Access through _clean_fields()
++form.full_clean()
++print(f"Cleaned data: {form.cleaned_data['dt']}")
++
++# Check if they're the same
++print(f"Are they equal? {bf.initial == form.cleaned_data['dt']}")
++
++# Test changed_data
++print(f"\nTesting changed_data:")
++form2 = DateTimeForm({'dt': '2006-10-25 14:30:45'})
++print(f"Changed data: {form2.changed_data}")
++print(f"BoundField initial: {form2['dt'].initial}")
++print(f"BoundField data: {form2['dt'].data}")
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..b8d112ae2f
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,83 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Minimal Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django import forms
++from datetime import datetime
++
++# Test case to show that the issue is fixed
++class DateTimeForm(forms.Form):
++    dt = forms.DateTimeField(initial=lambda: datetime(2006, 10, 25, 14, 30, 45, 123456), disabled=True)
++
++# Create form instance
++form = DateTimeForm({})
++
++# Access through BoundField
++bf = form['dt']
++print(f"BoundField initial: {bf.initial}")
++
++# Access through _clean_fields()
++form.full_clean()
++print(f"Cleaned data: {form.cleaned_data['dt']}")
++
++# Check if they're the same (comparing just the datetime part without timezone)
++initial_dt = bf.initial
++cleaned_dt = form.cleaned_data['dt']
++
++# Convert cleaned_dt to naive datetime for comparison
++if hasattr(cleaned_dt, 'replace'):
++    cleaned_dt_naive = cleaned_dt.replace(tzinfo=None)
++else:
++    cleaned_dt_naive = cleaned_dt
++
++print(f"Are they equal (without timezone)? {initial_dt == cleaned_dt_naive}")
++
++# Test changed_data
++print(f"\nTesting changed_data:")
++form2 = DateTimeForm({'dt': '2006-10-25 14:30:45'})
++print(f"Changed data: {form2.changed_data}")
++print(f"BoundField initial: {form2['dt'].initial}")
++print(f"BoundField data: {form2['dt'].data}")
++
++# Test that _clean_fields uses BoundField values
++print(f"\nTesting that _clean_fields uses BoundField values:")
++class TestForm(forms.Form):
++    dt = forms.DateTimeField(initial=lambda: datetime(2006, 10, 25, 14, 30, 45, 123456), disabled=True)
++    
++form3 = TestForm({})
++# Access the BoundField first to cache the initial value with microseconds stripped
++bf3 = form3['dt']
++print(f"BoundField initial (microseconds stripped): {bf3.initial}")
++
++# Now clean the form  
++form3.full_clean()
++cleaned_value = form3.cleaned_data['dt']
++print(f"Cleaned value: {cleaned_value}")
++
++# Since we're using BoundField.initial in _clean_fields, it should use the microsecond-stripped version
++if hasattr(cleaned_value, 'replace'):
++    cleaned_value_naive = cleaned_value.replace(tzinfo=None)
++else:
++    cleaned_value_naive = cleaned_value
++
++print(f"Initial vs cleaned (without timezone): {bf3.initial} == {cleaned_value_naive}")
++print(f"Are they equal? {bf3.initial == cleaned_value_naive}")

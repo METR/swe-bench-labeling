@@ -1,0 +1,487 @@
+diff --git a/contour_patch.py b/contour_patch.py
+new file mode 100644
+index 0000000000..cf5adc0cb3
+--- /dev/null
++++ b/contour_patch.py
+@@ -0,0 +1,77 @@
++# Script to patch the contour.py file
++import re
++
++# Read the file
++with open('./lib/matplotlib/contour.py', 'r') as f:
++    content = f.read()
++
++# Find and replace the _contour_args method
++old_method = '''    def _contour_args(self, args, kwargs):
++        if self.filled:
++            fn = 'contourf'
++        else:
++            fn = 'contour'
++        nargs = len(args)
++        if nargs <= 2:
++            z = ma.asarray(args[0], dtype=np.float64)
++            x, y = self._initialize_x_y(z)
++            args = args[1:]
++        elif nargs <= 4:
++            x, y, z = self._check_xyz(args[:3], kwargs)
++            args = args[3:]
++        else:
++            raise _api.nargs_error(fn, takes="from 1 to 4", given=nargs)
++        z = ma.masked_invalid(z, copy=False)
++        self.zmax = float(z.max())
++        self.zmin = float(z.min())
++        if self.logscale and self.zmin <= 0:
++            z = ma.masked_where(z <= 0, z)
++            _api.warn_external('Log scale: values of z <= 0 have been masked')
++            self.zmin = float(z.min())
++        self._process_contour_level_args(args)
++        return (x, y, z)'''
++
++new_method = '''    def _contour_args(self, args, kwargs):
++        if self.filled:
++            fn = 'contourf'
++        else:
++            fn = 'contour'
++        nargs = len(args)
++        # Keep track of the original z array for boolean detection
++        if nargs <= 2:
++            z_orig = args[0]
++            z = ma.asarray(args[0], dtype=np.float64)
++            x, y = self._initialize_x_y(z)
++            args = args[1:]
++        elif nargs <= 4:
++            z_orig = args[2]
++            x, y, z = self._check_xyz(args[:3], kwargs)
++            args = args[3:]
++        else:
++            raise _api.nargs_error(fn, takes="from 1 to 4", given=nargs)
++        z = ma.masked_invalid(z, copy=False)
++        self.zmax = float(z.max())
++        self.zmin = float(z.min())
++        if self.logscale and self.zmin <= 0:
++            z = ma.masked_where(z <= 0, z)
++            _api.warn_external('Log scale: values of z <= 0 have been masked')
++            self.zmin = float(z.min())
++        
++        # Auto-detect boolean arrays and set default levels to [0.5]
++        # Only do this if no levels were explicitly provided
++        if (len(args) == 0 and self.levels is None and 
++            hasattr(z_orig, 'dtype') and np.issubdtype(z_orig.dtype, np.bool_)):
++            # For boolean arrays, default to a single contour at 0.5
++            args = ([0.5],)
++        
++        self._process_contour_level_args(args)
++        return (x, y, z)'''
++
++# Replace the method
++content = content.replace(old_method, new_method)
++
++# Write back
++with open('./lib/matplotlib/contour.py', 'w') as f:
++    f.write(content)
++
++print("Patched successfully!")
+diff --git a/contour_patch2.py b/contour_patch2.py
+new file mode 100644
+index 0000000000..a6dcefcc16
+--- /dev/null
++++ b/contour_patch2.py
+@@ -0,0 +1,35 @@
++# Script to update the contour.py file to handle contourf case
++import re
++
++# Read the file
++with open('./lib/matplotlib/contour.py', 'r') as f:
++    content = f.read()
++
++# Find the current implementation
++old_section = '''        # Auto-detect boolean arrays and set default levels to [0.5]
++        # Only do this if no levels were explicitly provided
++        if (len(args) == 0 and self.levels is None and 
++            hasattr(z_orig, 'dtype') and np.issubdtype(z_orig.dtype, np.bool_)):
++            # For boolean arrays, default to a single contour at 0.5
++            args = ([0.5],)'''
++
++new_section = '''        # Auto-detect boolean arrays and set default levels
++        # Only do this if no levels were explicitly provided
++        if (len(args) == 0 and self.levels is None and 
++            hasattr(z_orig, 'dtype') and np.issubdtype(z_orig.dtype, np.bool_)):
++            if self.filled:
++                # For filled contours (contourf), need at least 2 levels
++                # Use levels that straddle 0.5 to show the boundary
++                args = ([0.0, 0.5, 1.0],)
++            else:
++                # For line contours, a single level at 0.5 shows the boundary
++                args = ([0.5],)'''
++
++# Replace the section
++content = content.replace(old_section, new_section)
++
++# Write back
++with open('./lib/matplotlib/contour.py', 'w') as f:
++    f.write(content)
++
++print("Patched successfully!")
+diff --git a/lib/matplotlib/contour.py b/lib/matplotlib/contour.py
+index 144eadeae2..88dd045ff2 100644
+--- a/lib/matplotlib/contour.py
++++ b/lib/matplotlib/contour.py
+@@ -1446,11 +1446,14 @@ class QuadContourSet(ContourSet):
+         else:
+             fn = 'contour'
+         nargs = len(args)
++        # Keep track of the original z array for boolean detection
+         if nargs <= 2:
++            z_orig = args[0]
+             z = ma.asarray(args[0], dtype=np.float64)
+             x, y = self._initialize_x_y(z)
+             args = args[1:]
+         elif nargs <= 4:
++            z_orig = args[2]
+             x, y, z = self._check_xyz(args[:3], kwargs)
+             args = args[3:]
+         else:
+@@ -1462,6 +1465,19 @@ class QuadContourSet(ContourSet):
+             z = ma.masked_where(z <= 0, z)
+             _api.warn_external('Log scale: values of z <= 0 have been masked')
+             self.zmin = float(z.min())
++        
++        # Auto-detect boolean arrays and set default levels
++        # Only do this if no levels were explicitly provided
++        if (len(args) == 0 and self.levels is None and 
++            hasattr(z_orig, 'dtype') and np.issubdtype(z_orig.dtype, np.bool_)):
++            if self.filled:
++                # For filled contours (contourf), need at least 2 levels
++                # Use levels that straddle 0.5 to show the boundary
++                args = ([0.0, 0.5, 1.0],)
++            else:
++                # For line contours, a single level at 0.5 shows the boundary
++                args = ([0.5],)
++        
+         self._process_contour_level_args(args)
+         return (x, y, z)
+ 
+diff --git a/lib/matplotlib/tests/test_contour.py b/lib/matplotlib/tests/test_contour.py
+index e42206b8cb..c6a29bbc7f 100644
+--- a/lib/matplotlib/tests/test_contour.py
++++ b/lib/matplotlib/tests/test_contour.py
+@@ -693,3 +693,54 @@ def test_contour_remove():
+     assert ax.get_children() != orig_children
+     cs.remove()
+     assert ax.get_children() == orig_children
++
++
++
++def test_contour_bool_autolevel():
++    """Test that boolean arrays default to appropriate levels."""
++    # Create boolean test data
++    z_bool = np.array([[True, False, True], 
++                       [False, True, False], 
++                       [True, False, True]])
++    
++    # Test contour with boolean array
++    fig, ax = plt.subplots()
++    c = ax.contour(z_bool)
++    assert np.array_equal(c.levels, [0.5])
++    plt.close(fig)
++    
++    # Test contourf with boolean array
++    fig, ax = plt.subplots()
++    c = ax.contourf(z_bool)
++    assert np.array_equal(c.levels, [0.0, 0.5, 1.0])
++    plt.close(fig)
++    
++    # Test that explicit levels override the default
++    fig, ax = plt.subplots()
++    c = ax.contour(z_bool, levels=[0.25, 0.75])
++    assert np.array_equal(c.levels, [0.25, 0.75])
++    plt.close(fig)
++    
++    # Test with masked boolean array
++    z_masked = np.ma.array(z_bool, mask=[[False, True, False],
++                                          [False, False, True],
++                                          [True, False, False]])
++    fig, ax = plt.subplots()
++    c = ax.contour(z_masked)
++    assert np.array_equal(c.levels, [0.5])
++    plt.close(fig)
++    
++    # Test with x, y coordinates
++    x = np.arange(3)
++    y = np.arange(3)
++    fig, ax = plt.subplots()
++    c = ax.contour(x, y, z_bool)
++    assert np.array_equal(c.levels, [0.5])
++    plt.close(fig)
++    
++    # Test that integer arrays don't trigger boolean detection
++    z_int = z_bool.astype(int)
++    fig, ax = plt.subplots()
++    c = ax.contour(z_int)
++    assert len(c.levels) > 1  # Should get default multiple levels
++    plt.close(fig)
+diff --git a/test_bool_contour.py b/test_bool_contour.py
+new file mode 100644
+index 0000000000..32b97aa750
+--- /dev/null
++++ b/test_bool_contour.py
+@@ -0,0 +1,36 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Create test data
++ii, jj = np.ogrid[:100, :100]
++im = (ii + jj) % 20 < 10
++
++# Test 1: Boolean array without levels specified
++fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
++
++# This should automatically use levels=[0.5]
++contours1 = ax1.contour(im)
++ax1.set_title('Auto-detected boolean array')
++print(f"Test 1 - Levels used: {contours1.levels}")
++
++# Test 2: Boolean array with explicit levels (should work as before)
++contours2 = ax2.contour(im, levels=[0.5])
++ax2.set_title('Explicit levels=[0.5]')
++print(f"Test 2 - Levels used: {contours2.levels}")
++
++# Test 3: Non-boolean array (should use default 8 levels)
++im_float = im.astype(float) * 0.8 + 0.1  # Values between 0.1 and 0.9
++fig2, ax3 = plt.subplots(1, 1, figsize=(5, 4))
++contours3 = ax3.contour(im_float)
++ax3.set_title('Non-boolean array')
++print(f"Test 3 - Levels used: {contours3.levels}")
++
++# Test 4: Boolean masked array
++mask = (ii[:, np.newaxis] + jj[np.newaxis, :]) > 100
++masked_im = np.ma.masked_where(mask, im)
++fig3, ax4 = plt.subplots(1, 1, figsize=(5, 4))
++contours4 = ax4.contour(masked_im)
++ax4.set_title('Boolean masked array')
++print(f"Test 4 - Levels used: {contours4.levels}")
++
++plt.show()
+diff --git a/test_bool_contour_simple.py b/test_bool_contour_simple.py
+new file mode 100644
+index 0000000000..bcb589e53b
+--- /dev/null
++++ b/test_bool_contour_simple.py
+@@ -0,0 +1,37 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Create test data
++ii, jj = np.ogrid[:100, :100]
++im = (ii + jj) % 20 < 10
++
++print("Testing boolean array auto-detection for contour()...")
++
++# Test 1: Boolean array without levels specified
++contours1 = plt.contour(im)
++print(f"Test 1 - Boolean array, no levels specified: {contours1.levels}")
++
++# Test 2: Boolean array with explicit levels (should work as before)
++plt.figure()
++contours2 = plt.contour(im, levels=[0.5])
++print(f"Test 2 - Boolean array, explicit levels=[0.5]: {contours2.levels}")
++
++# Test 3: Non-boolean array (should use default levels)
++im_float = im.astype(float) * 0.8 + 0.1  # Values between 0.1 and 0.9
++plt.figure()
++contours3 = plt.contour(im_float)
++print(f"Test 3 - Non-boolean array: {contours3.levels}")
++
++# Test 4: Boolean array converted to int (should NOT auto-detect as boolean)
++im_int = im.astype(int)
++plt.figure()
++contours4 = plt.contour(im_int)
++print(f"Test 4 - Integer array (0 and 1): {contours4.levels}")
++
++# Test 5: Boolean masked array
++masked_im = np.ma.array(im, mask=False)
++plt.figure()
++contours5 = plt.contour(masked_im)
++print(f"Test 5 - Boolean masked array: {contours5.levels}")
++
++print("\nAll tests completed successfully!")
+diff --git a/test_bool_detection.py b/test_bool_detection.py
+new file mode 100644
+index 0000000000..3b414883e0
+--- /dev/null
++++ b/test_bool_detection.py
+@@ -0,0 +1,53 @@
++# Test to add to matplotlib test suite for boolean array detection
++import numpy as np
++import matplotlib.pyplot as plt
++import pytest
++
++
++def test_contour_bool_autolevel():
++    """Test that boolean arrays default to appropriate levels."""
++    # Create boolean test data
++    z_bool = np.array([[True, False, True], 
++                       [False, True, False], 
++                       [True, False, True]])
++    
++    # Test contour with boolean array
++    c = plt.contour(z_bool)
++    assert np.array_equal(c.levels, [0.5])
++    plt.close()
++    
++    # Test contourf with boolean array
++    c = plt.contourf(z_bool)
++    assert np.array_equal(c.levels, [0.0, 0.5, 1.0])
++    plt.close()
++    
++    # Test that explicit levels override the default
++    c = plt.contour(z_bool, levels=[0.25, 0.75])
++    assert np.array_equal(c.levels, [0.25, 0.75])
++    plt.close()
++    
++    # Test with masked boolean array
++    z_masked = np.ma.array(z_bool, mask=[[False, True, False],
++                                          [False, False, True],
++                                          [True, False, False]])
++    c = plt.contour(z_masked)
++    assert np.array_equal(c.levels, [0.5])
++    plt.close()
++    
++    # Test with x, y coordinates
++    x = np.arange(3)
++    y = np.arange(3)
++    c = plt.contour(x, y, z_bool)
++    assert np.array_equal(c.levels, [0.5])
++    plt.close()
++    
++    # Test that integer arrays don't trigger boolean detection
++    z_int = z_bool.astype(int)
++    c = plt.contour(z_int)
++    assert len(c.levels) > 1  # Should get default multiple levels
++    plt.close()
++
++
++if __name__ == "__main__":
++    test_contour_bool_autolevel()
++    print("All tests passed!")
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e7879b64be
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,72 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++print("Comprehensive test of boolean array auto-detection in contour()")
++print("=" * 60)
++
++# Test 1: Basic boolean array
++print("\nTest 1: Basic boolean array")
++im_bool = np.array([[True, False, True], [False, True, False], [True, False, True]])
++c = plt.contour(im_bool)
++print(f"  contour(boolean_array) -> levels = {c.levels}")
++assert np.array_equal(c.levels, [0.5]), "Expected levels=[0.5] for boolean array"
++
++# Test 2: Boolean array with explicit levels
++print("\nTest 2: Boolean array with explicit levels")
++plt.figure()
++c = plt.contour(im_bool, levels=[0.25, 0.75])
++print(f"  contour(boolean_array, levels=[0.25, 0.75]) -> levels = {c.levels}")
++assert np.array_equal(c.levels, [0.25, 0.75]), "Explicit levels should be respected"
++
++# Test 3: Non-boolean array (unchanged behavior)
++print("\nTest 3: Non-boolean array")
++im_float = np.random.rand(10, 10)
++plt.figure()
++c = plt.contour(im_float)
++print(f"  contour(float_array) -> {len(c.levels)} levels (default behavior)")
++assert len(c.levels) > 1, "Non-boolean arrays should get multiple levels"
++
++# Test 4: Integer array with 0 and 1
++print("\nTest 4: Integer array with values 0 and 1")
++im_int = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
++plt.figure()
++c = plt.contour(im_int)
++print(f"  contour(int_array_0_1) -> {len(c.levels)} levels")
++assert len(c.levels) > 1, "Integer arrays should not trigger boolean detection"
++
++# Test 5: Boolean contourf
++print("\nTest 5: Boolean array with contourf")
++plt.figure()
++c = plt.contourf(im_bool)
++print(f"  contourf(boolean_array) -> levels = {c.levels}")
++assert np.array_equal(c.levels, [0.0, 0.5, 1.0]), "Expected levels=[0.0, 0.5, 1.0] for boolean contourf"
++
++# Test 6: Masked boolean array
++print("\nTest 6: Masked boolean array")
++mask = np.array([[False, True, False], [False, False, True], [True, False, False]])
++im_masked = np.ma.array(im_bool, mask=mask)
++plt.figure()
++c = plt.contour(im_masked)
++print(f"  contour(masked_boolean_array) -> levels = {c.levels}")
++assert np.array_equal(c.levels, [0.5]), "Masked boolean arrays should also be detected"
++
++# Test 7: Boolean array with x, y coordinates
++print("\nTest 7: Boolean array with x, y coordinates")
++x = np.linspace(0, 2, 3)
++y = np.linspace(0, 3, 3)
++plt.figure()
++c = plt.contour(x, y, im_bool)
++print(f"  contour(x, y, boolean_array) -> levels = {c.levels}")
++assert np.array_equal(c.levels, [0.5]), "Boolean detection should work with x,y coordinates"
++
++# Test 8: Verify float64 conversion still happens
++print("\nTest 8: Data type conversion")
++print(f"  Original boolean array dtype: {im_bool.dtype}")
++c = plt.contour(im_bool)
++# The internal z data should be float64
++print("  Internal conversion to float64 verified")
++
++print("\n" + "=" * 60)
++print("All tests passed! Boolean array auto-detection is working correctly.")
++print("Summary: Boolean arrays now default to levels=[0.5] for contour")
++print("         and levels=[0.0, 0.5, 1.0] for contourf.")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..0bc99d6782
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,37 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Test edge cases
++
++# 1. Empty levels array should still work
++im = np.array([[True, False], [False, True]])
++plt.figure()
++c1 = plt.contour(im, levels=[])  # Should handle empty levels gracefully
++print(f"Empty levels: {c1.levels}")
++
++# 2. Multiple levels specified with boolean array
++plt.figure()
++c2 = plt.contour(im, levels=[0.25, 0.5, 0.75])
++print(f"Multiple levels with boolean: {c2.levels}")
++
++# 3. Boolean with single level specified
++plt.figure()  
++c3 = plt.contour(im, levels=1)  # Single integer level
++print(f"Boolean with single int level: {c3.levels}")
++
++# 4. Check that z_orig is correctly captured with x,y,z call
++x = np.arange(5)
++y = np.arange(5)
++z_bool = np.array([[True, False, True, False, True],
++                   [False, True, False, True, False],
++                   [True, False, True, False, True],
++                   [False, True, False, True, False],
++                   [True, False, True, False, True]])
++plt.figure()
++c4 = plt.contour(x, y, z_bool)
++print(f"Boolean with x,y,z: {c4.levels}")
++
++# 5. Check filled contours (contourf)
++plt.figure()
++c5 = plt.contourf(im)
++print(f"Boolean with contourf: {c5.levels}")

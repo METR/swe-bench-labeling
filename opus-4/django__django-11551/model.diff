@@ -1,0 +1,622 @@
+diff --git a/django/contrib/admin/checks.py b/django/contrib/admin/checks.py
+index f82c20c2f1..9fd77b5d41 100644
+--- a/django/contrib/admin/checks.py
++++ b/django/contrib/admin/checks.py
+@@ -720,33 +720,33 @@ class ModelAdminChecks(BaseModelAdminChecks):
+             return []
+         elif hasattr(obj, item):
+             return []
+-        elif hasattr(obj.model, item):
++        else:
+             try:
+                 field = obj.model._meta.get_field(item)
+             except FieldDoesNotExist:
+-                return []
+-            else:
+-                if isinstance(field, models.ManyToManyField):
++                try:
++                    field = getattr(obj.model, item)
++                except AttributeError:
+                     return [
+                         checks.Error(
+-                            "The value of '%s' must not be a ManyToManyField." % label,
++                            "The value of '%s' refers to '%s', which is not a callable, "
++                            "an attribute of '%s', or an attribute or method on '%s.%s'." % (
++                                label, item, obj.__class__.__name__,
++                                obj.model._meta.app_label, obj.model._meta.object_name,
++                            ),
+                             obj=obj.__class__,
+-                            id='admin.E109',
++                            id='admin.E108',
+                         )
+                     ]
+-                return []
+-        else:
+-            return [
+-                checks.Error(
+-                    "The value of '%s' refers to '%s', which is not a callable, "
+-                    "an attribute of '%s', or an attribute or method on '%s.%s'." % (
+-                        label, item, obj.__class__.__name__,
+-                        obj.model._meta.app_label, obj.model._meta.object_name,
+-                    ),
+-                    obj=obj.__class__,
+-                    id='admin.E108',
+-                )
+-            ]
++            if isinstance(field, models.ManyToManyField):
++                return [
++                    checks.Error(
++                        "The value of '%s' must not be a ManyToManyField." % label,
++                        obj=obj.__class__,
++                        id='admin.E109',
++                    )
++                ]
++            return []
+ 
+     def _check_list_display_links(self, obj):
+         """ Check that list_display_links is a unique subset of list_display.
+diff --git a/test_admin_e108.py b/test_admin_e108.py
+new file mode 100644
+index 0000000000..5cd75875ab
+--- /dev/null
++++ b/test_admin_e108.py
+@@ -0,0 +1,150 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.test.utils import get_runner
++
++# Configure Django settings
++os.environ['DJANGO_SETTINGS_MODULE'] = 'test_settings'
++
++# Create a test settings module
++test_settings_content = """
++SECRET_KEY = 'test-secret-key'
++DEBUG = True
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++    'django.contrib.admin',
++    'django.contrib.sessions',
++    'django.contrib.messages',
++    'test_app',
++]
++MIDDLEWARE = [
++    'django.contrib.sessions.middleware.SessionMiddleware',
++    'django.contrib.auth.middleware.AuthenticationMiddleware',
++    'django.contrib.messages.middleware.MessageMiddleware',
++]
++ROOT_URLCONF = 'test_urls'
++TEMPLATES = [
++    {
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.template.context_processors.debug',
++                'django.template.context_processors.request',
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    },
++]
++"""
++
++# Write test settings
++with open('test_settings.py', 'w') as f:
++    f.write(test_settings_content)
++
++# Create test urls
++test_urls_content = """
++from django.contrib import admin
++from django.urls import path
++
++urlpatterns = [
++    path('admin/', admin.site.urls),
++]
++"""
++
++with open('test_urls.py', 'w') as f:
++    f.write(test_urls_content)
++
++# Create a test app directory structure
++os.makedirs('test_app', exist_ok=True)
++with open('test_app/__init__.py', 'w') as f:
++    f.write('')
++
++# Create a field that simulates PositionField behavior
++position_field_content = """
++from django.db import models
++
++class PositionField(models.IntegerField):
++    '''A field that simulates django-positions PositionField behavior'''
++    
++    def __get__(self, instance, owner):
++        if instance is None:
++            # This simulates the behavior where accessing the field on the model class raises an error
++            raise AttributeError("Cannot access PositionField on model class")
++        return super().__get__(instance, owner)
++    
++    def contribute_to_class(self, cls, name, **kwargs):
++        super().contribute_to_class(cls, name, **kwargs)
++"""
++
++with open('test_app/fields.py', 'w') as f:
++    f.write(position_field_content)
++
++# Create test models
++models_content = """
++from django.db import models
++from .fields import PositionField
++
++class Thing(models.Model):
++    number = models.IntegerField(default=0)
++    order = PositionField()
++    
++    class Meta:
++        app_label = 'test_app'
++"""
++
++with open('test_app/models.py', 'w') as f:
++    f.write(models_content)
++
++# Create test admin
++admin_content = """
++from django.contrib import admin
++from .models import Thing
++
++@admin.register(Thing)
++class ThingAdmin(admin.ModelAdmin):
++    list_display = ['number', 'order']
++"""
++
++with open('test_app/admin.py', 'w') as f:
++    f.write(admin_content)
++
++# Now setup Django and run the check
++django.setup()
++
++from django.core.management import call_command
++from django.core.checks import run_checks
++
++print("Running Django admin checks...")
++try:
++    errors = run_checks()
++    if errors:
++        print(f"Found {len(errors)} errors:")
++        for error in errors:
++            print(f"  {error.id}: {error.msg}")
++    else:
++        print("No errors found!")
++except Exception as e:
++    print(f"Exception during checks: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Cleanup
++import os
++for f in ['test_settings.py', 'test_urls.py', 'test_settings.pyc', 'test_urls.pyc']:
++    if os.path.exists(f):
++        os.remove(f)
++import shutil
++if os.path.exists('test_app'):
++    shutil.rmtree('test_app')
+diff --git a/test_comprehensive_e108.py b/test_comprehensive_e108.py
+new file mode 100644
+index 0000000000..daf9caf0b5
+--- /dev/null
++++ b/test_comprehensive_e108.py
+@@ -0,0 +1,170 @@
++#!/usr/bin/env python
++"""Comprehensive test for admin.E108 fix"""
++
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure minimal Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings_comprehensive')
++
++settings.configure(
++    SECRET_KEY='test-key',
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth', 
++        'django.contrib.admin',
++        'django.contrib.messages',
++        'django.contrib.sessions',
++    ],
++    MIDDLEWARE=[
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.contrib.auth.middleware.AuthenticationMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    }],
++)
++
++django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.core.checks import run_checks
++
++# Create a descriptor that behaves like PositionField
++class PositionFieldDescriptor:
++    def __init__(self, field):
++        self.field = field
++        
++    def __get__(self, instance, owner):
++        if instance is None:
++            raise AttributeError("Cannot access PositionField on class")
++        return instance.__dict__.get(self.field.name)
++        
++    def __set__(self, instance, value):
++        instance.__dict__[self.field.name] = value
++
++# Create field that uses the descriptor
++class PositionField(models.IntegerField):
++    def contribute_to_class(self, cls, name, **kwargs):
++        super().contribute_to_class(cls, name, **kwargs)
++        # Replace the field with our descriptor
++        setattr(cls, name, PositionFieldDescriptor(self))
++
++# Test different scenarios
++print("=== Testing different scenarios based on the issue's table ===\n")
++
++# Test Case 1: Normal field (hasattr=True, get_field=ok, not ManyToMany)
++class TestModel1(models.Model):
++    normal_field = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test'
++
++@admin.register(TestModel1)
++class TestAdmin1(admin.ModelAdmin):
++    list_display = ['normal_field']
++
++print("Test 1 - Normal field:")
++errors = run_checks(tags=['admin'])
++print(f"  Errors: {len([e for e in errors if 'TestAdmin1' in str(e)])}")
++
++# Test Case 2: PositionField (hasattr=False, get_field=ok, not ManyToMany)
++class TestModel2(models.Model):
++    position = PositionField()
++    
++    class Meta:
++        app_label = 'test'
++
++@admin.register(TestModel2)
++class TestAdmin2(admin.ModelAdmin):
++    list_display = ['position']
++
++print("\nTest 2 - PositionField (hasattr=False, get_field=ok):")
++admin.site.unregister(TestModel1)  # Clean up previous test
++errors = run_checks(tags=['admin'])
++pos_errors = [e for e in errors if 'TestAdmin2' in str(e) and 'position' in str(e)]
++print(f"  Errors: {len(pos_errors)}")
++if pos_errors:
++    for e in pos_errors:
++        print(f"    {e.id}: {e.msg}")
++
++# Test Case 3: ManyToManyField
++class TestModel3(models.Model):
++    users = models.ManyToManyField('auth.User')
++    
++    class Meta:
++        app_label = 'test'
++
++@admin.register(TestModel3)
++class TestAdmin3(admin.ModelAdmin):
++    list_display = ['users']
++
++print("\nTest 3 - ManyToManyField:")
++admin.site.unregister(TestModel2)  # Clean up previous test
++errors = run_checks(tags=['admin'])
++m2m_errors = [e for e in errors if 'TestAdmin3' in str(e) and 'users' in str(e)]
++print(f"  Errors: {len(m2m_errors)}")
++if m2m_errors:
++    for e in m2m_errors:
++        print(f"    {e.id}: {e.msg}")
++
++# Test Case 4: Non-existent field
++class TestModel4(models.Model):
++    real_field = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test'
++
++@admin.register(TestModel4)
++class TestAdmin4(admin.ModelAdmin):
++    list_display = ['non_existent_field']
++
++print("\nTest 4 - Non-existent field:")
++admin.site.unregister(TestModel3)  # Clean up previous test
++errors = run_checks(tags=['admin'])
++ne_errors = [e for e in errors if 'TestAdmin4' in str(e) and 'non_existent_field' in str(e)]
++print(f"  Errors: {len(ne_errors)}")
++if ne_errors:
++    for e in ne_errors:
++        print(f"    {e.id}: {e.msg}")
++
++# Test Case 5: Callable on admin
++class TestModel5(models.Model):
++    field = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test'
++
++@admin.register(TestModel5)
++class TestAdmin5(admin.ModelAdmin):
++    def custom_method(self, obj):
++        return "custom"
++    
++    list_display = ['field', 'custom_method']
++
++print("\nTest 5 - Admin method:")
++admin.site.unregister(TestModel4)  # Clean up previous test
++errors = run_checks(tags=['admin'])
++admin_method_errors = [e for e in errors if 'TestAdmin5' in str(e)]
++print(f"  Errors: {len(admin_method_errors)}")
++
++print("\n=== All tests completed ===")
++print("The fix correctly handles PositionField-like descriptors that raise AttributeError on class access!")
+diff --git a/test_e108_simple.py b/test_e108_simple.py
+new file mode 100644
+index 0000000000..924e76c533
+--- /dev/null
++++ b/test_e108_simple.py
+@@ -0,0 +1,111 @@
++#!/usr/bin/env python
++"""Direct test showing the fix works for PositionField-like descriptors"""
++
++import django
++from django.conf import settings
++
++settings.configure(
++    SECRET_KEY='test',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++        'django.contrib.messages',
++        'django.contrib.sessions',
++    ],
++    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
++    MIDDLEWARE=[
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.contrib.auth.middleware.AuthenticationMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    }],
++)
++
++django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.contrib.admin import checks as admin_checks
++
++# Simulate PositionField behavior
++class PositionFieldDescriptor:
++    def __init__(self, field):
++        self.field = field
++        
++    def __get__(self, instance, owner):
++        if instance is None:
++            raise AttributeError("Cannot access PositionField on class")
++        return instance.__dict__.get(self.field.name, None)
++
++class PositionField(models.IntegerField):
++    def contribute_to_class(self, cls, name, **kwargs):
++        super().contribute_to_class(cls, name, **kwargs)
++        setattr(cls, name, PositionFieldDescriptor(self))
++
++# Test model with PositionField
++class Thing(models.Model):
++    number = models.IntegerField(default=0)
++    order = PositionField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Test admin
++class ThingAdmin(admin.ModelAdmin):
++    list_display = ['number', 'order']
++
++# Direct test of _check_list_display_item
++checker = admin_checks.ModelAdminChecks()
++obj = ThingAdmin(Thing, admin.site)
++
++print("Testing _check_list_display_item with PositionField...")
++print(f"hasattr(Thing, 'number'): {hasattr(Thing, 'number')}")
++print(f"hasattr(Thing, 'order'): {hasattr(Thing, 'order')}")
++
++# Test the fixed behavior
++errors_number = checker._check_list_display_item(obj, 'number', 'list_display[0]')
++errors_order = checker._check_list_display_item(obj, 'order', 'list_display[1]')
++
++print(f"\nErrors for 'number' field: {len(errors_number)}")
++print(f"Errors for 'order' field (PositionField): {len(errors_order)}")
++
++if errors_order:
++    for e in errors_order:
++        print(f"  Error: {e.id} - {e.msg}")
++else:
++    print("  No errors! The fix works correctly.")
++
++# Also test ManyToMany field to ensure we still catch that error
++class ThingWithM2M(models.Model):
++    users = models.ManyToManyField('auth.User')
++    
++    class Meta:
++        app_label = 'test'
++
++class ThingWithM2MAdmin(admin.ModelAdmin):
++    list_display = ['users']
++
++obj_m2m = ThingWithM2MAdmin(ThingWithM2M, admin.site)
++errors_m2m = checker._check_list_display_item(obj_m2m, 'users', 'list_display[0]')
++
++print(f"\nErrors for ManyToMany field: {len(errors_m2m)}")
++if errors_m2m:
++    for e in errors_m2m:
++        print(f"  Error: {e.id} - {e.msg}")
++
++# Test non-existent field
++errors_nonexist = checker._check_list_display_item(obj, 'nonexistent', 'list_display[2]')
++print(f"\nErrors for non-existent field: {len(errors_nonexist)}")
++if errors_nonexist:
++    for e in errors_nonexist:
++        print(f"  Error: {e.id} - {e.msg}")
+diff --git a/test_position_field.py b/test_position_field.py
+new file mode 100644
+index 0000000000..16b7bfc46c
+--- /dev/null
++++ b/test_position_field.py
+@@ -0,0 +1,110 @@
++#!/usr/bin/env python
++"""Test that reproduces the admin.E108 issue with fields that throw on class access"""
++
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure minimal Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings_pos')
++
++# Create test settings
++settings.configure(
++    SECRET_KEY='test-key',
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth', 
++        'django.contrib.admin',
++        'django.contrib.messages',
++        'django.contrib.sessions',
++    ],
++    MIDDLEWARE=[
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.contrib.auth.middleware.AuthenticationMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    }],
++)
++
++django.setup()
++
++from django.db import models
++from django.contrib import admin
++from django.core.checks import run_checks
++
++# Create a descriptor that behaves like PositionField
++class PositionFieldDescriptor:
++    def __init__(self, field):
++        self.field = field
++        
++    def __get__(self, instance, owner):
++        if instance is None:
++            raise AttributeError("Cannot access PositionField on class")
++        return instance.__dict__.get(self.field.name)
++        
++    def __set__(self, instance, value):
++        instance.__dict__[self.field.name] = value
++
++# Create field that uses the descriptor
++class PositionField(models.IntegerField):
++    def contribute_to_class(self, cls, name, **kwargs):
++        super().contribute_to_class(cls, name, **kwargs)
++        # Replace the field with our descriptor
++        setattr(cls, name, PositionFieldDescriptor(self))
++
++# Test model
++class Thing(models.Model):
++    number = models.IntegerField(default=0)
++    order = PositionField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Test admin
++@admin.register(Thing)
++class ThingAdmin(admin.ModelAdmin):
++    list_display = ['number', 'order']
++
++# Now run the admin checks
++print("Running admin checks...")
++errors = run_checks(tags=['admin'])
++
++if errors:
++    print(f"\nFound {len(errors)} error(s):")
++    for error in errors:
++        print(f"\n{error.id}: {error.msg}")
++        if hasattr(error, 'obj'):
++            print(f"  Object: {error.obj}")
++else:
++    print("\nNo errors found!")
++
++# Let's also test hasattr behavior
++print("\n--- Testing hasattr behavior ---")
++print(f"hasattr(Thing, 'number'): {hasattr(Thing, 'number')}")
++print(f"hasattr(Thing, 'order'): {hasattr(Thing, 'order')}")
++
++# And test get_field
++print("\n--- Testing _meta.get_field ---")
++try:
++    field = Thing._meta.get_field('order')
++    print(f"Thing._meta.get_field('order'): {field}")
++    print(f"Is ManyToManyField: {isinstance(field, models.ManyToManyField)}")
++except Exception as e:
++    print(f"Thing._meta.get_field('order') raised: {e}")

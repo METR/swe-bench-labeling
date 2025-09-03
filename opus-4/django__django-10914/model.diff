@@ -1,0 +1,278 @@
+diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py
+index acee9887d2..bdeec80610 100644
+--- a/django/conf/global_settings.py
++++ b/django/conf/global_settings.py
+@@ -304,7 +304,7 @@ FILE_UPLOAD_TEMP_DIR = None
+ 
+ # The numeric mode to set newly-uploaded files to. The value should be a mode
+ # you'd pass directly to os.chmod; see https://docs.python.org/library/os.html#files-and-directories.
+-FILE_UPLOAD_PERMISSIONS = None
++FILE_UPLOAD_PERMISSIONS = 0o644
+ 
+ # The numeric mode to assign to newly-created directories, when uploading files.
+ # The value should be a mode as you'd pass to os.chmod;
+diff --git a/run_test.py b/run_test.py
+new file mode 100644
+index 0000000000..fb57cfbbb8
+--- /dev/null
++++ b/run_test.py
+@@ -0,0 +1,32 @@
++import os
++import sys
++os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_settings'
++sys.path.insert(0, '/testbed')
++
++import django
++django.setup()
++
++from django.test import TestCase
++from tests.file_storage.tests import FileStoragePermissions
++
++# Run the specific test
++test = FileStoragePermissions()
++test.setUp()
++try:
++    test.test_file_upload_default_permissions()
++    print("TEST PASSED: test_file_upload_default_permissions")
++except Exception as e:
++    print(f"TEST FAILED: {e}")
++finally:
++    test.tearDown()
++
++# Also test with explicit permissions
++test2 = FileStoragePermissions()
++test2.setUp()
++try:
++    test2.test_file_upload_permissions()
++    print("TEST PASSED: test_file_upload_permissions")
++except Exception as e:
++    print(f"TEST FAILED: {e}")
++finally:
++    test2.tearDown()
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..d1d4d38afe
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,65 @@
++import os
++import tempfile
++from django.conf import settings
++settings.configure(SECRET_KEY='test')
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.uploadedfile import SimpleUploadedFile
++
++# Create a test storage
++storage = FileSystemStorage(location='/tmp/test_uploads2')
++os.makedirs('/tmp/test_uploads2', exist_ok=True)
++
++# Check the new default FILE_UPLOAD_PERMISSIONS setting
++print(f"Current FILE_UPLOAD_PERMISSIONS: {settings.FILE_UPLOAD_PERMISSIONS}")
++print(f"In octal: {oct(settings.FILE_UPLOAD_PERMISSIONS)}")
++
++# Test with small file
++small_content = b'Small file content'
++small_file = SimpleUploadedFile('small2.txt', small_content)
++small_path = storage.save('small2.txt', small_file)
++small_full_path = storage.path(small_path)
++small_perms = oct(os.stat(small_full_path).st_mode)[-3:]
++print(f"Small file permissions: {small_perms}")
++
++# Test with a file that has temporary_file_path (simulating large file)
++with tempfile.NamedTemporaryFile(delete=False, mode='wb') as tmp:
++    tmp.write(b'Large file content' * 1000)
++    tmp_path = tmp.name
++    
++# Check temp file permissions
++temp_perms = oct(os.stat(tmp_path).st_mode)[-3:]
++print(f"Temp file permissions: {temp_perms}")
++
++# Create a mock uploaded file with temporary_file_path
++class MockTemporaryFile:
++    def __init__(self, path):
++        self._path = path
++        
++    def temporary_file_path(self):
++        return self._path
++    
++    def chunks(self):
++        with open(self._path, 'rb') as f:
++            while True:
++                chunk = f.read(4096)
++                if not chunk:
++                    break
++                yield chunk
++
++mock_file = MockTemporaryFile(tmp_path)
++large_path = storage.save('large2.txt', mock_file)
++large_full_path = storage.path(large_path)
++large_perms = oct(os.stat(large_full_path).st_mode)[-3:]
++print(f"Large file permissions after move: {large_perms}")
++
++# Clean up
++try:
++    os.unlink(tmp_path)
++except:
++    pass
++os.unlink(small_full_path) 
++os.unlink(large_full_path)
++os.rmdir('/tmp/test_uploads2')
++
++print("\nBoth small and large files should now have 644 permissions!")
+diff --git a/test_permissions.py b/test_permissions.py
+new file mode 100644
+index 0000000000..d8bd4a3451
+--- /dev/null
++++ b/test_permissions.py
+@@ -0,0 +1,58 @@
++import os
++import tempfile
++from django.conf import settings
++settings.configure(SECRET_KEY='test')
++
++from django.core.files.storage import FileSystemStorage
++from django.core.files.uploadedfile import SimpleUploadedFile, TemporaryUploadedFile
++
++# Create a test storage
++storage = FileSystemStorage(location='/tmp/test_uploads')
++os.makedirs('/tmp/test_uploads', exist_ok=True)
++
++# First, let's check the current FILE_UPLOAD_PERMISSIONS setting
++print(f"Current FILE_UPLOAD_PERMISSIONS: {settings.FILE_UPLOAD_PERMISSIONS}")
++
++# Test with small file (will use MemoryUploadedFile)
++small_content = b'Small file content'
++small_file = SimpleUploadedFile('small.txt', small_content)
++small_path = storage.save('small.txt', small_file)
++small_full_path = storage.path(small_path)
++small_perms = oct(os.stat(small_full_path).st_mode)[-3:]
++print(f"Small file permissions: {small_perms}")
++
++# Test with a file that has temporary_file_path (simulating TemporaryUploadedFile)
++with tempfile.NamedTemporaryFile(delete=False, mode='wb') as tmp:
++    tmp.write(b'Large file content' * 1000)
++    tmp_path = tmp.name
++    
++# Check temp file permissions
++temp_perms = oct(os.stat(tmp_path).st_mode)[-3:]
++print(f"Temp file permissions: {temp_perms}")
++
++# Create a mock uploaded file with temporary_file_path
++class MockTemporaryFile:
++    def __init__(self, path):
++        self._path = path
++        
++    def temporary_file_path(self):
++        return self._path
++    
++    def chunks(self):
++        with open(self._path, 'rb') as f:
++            while True:
++                chunk = f.read(4096)
++                if not chunk:
++                    break
++                yield chunk
++
++mock_file = MockTemporaryFile(tmp_path)
++large_path = storage.save('large.txt', mock_file)
++large_full_path = storage.path(large_path)
++large_perms = oct(os.stat(large_full_path).st_mode)[-3:]
++print(f"Large file permissions after move: {large_perms}")
++
++# Clean up
++os.unlink(tmp_path)
++os.unlink(small_full_path) 
++os.unlink(large_full_path)
+diff --git a/test_temp_file_permissions.py b/test_temp_file_permissions.py
+new file mode 100644
+index 0000000000..f0c1b9bf29
+--- /dev/null
++++ b/test_temp_file_permissions.py
+@@ -0,0 +1,86 @@
++"""
++Test to verify that files uploaded via temporary files get correct permissions
++"""
++import os
++import tempfile
++import shutil
++from django.conf import settings
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++
++# Configure Django
++from django.conf import settings
++settings.configure(SECRET_KEY='test')
++
++# Create a storage instance
++storage_dir = tempfile.mkdtemp()
++storage = FileSystemStorage(location=storage_dir)
++
++# Create a mock temporary uploaded file
++class MockTempFile:
++    """Mock object that simulates TemporaryUploadedFile behavior"""
++    def __init__(self, content):
++        # Create a real temp file with restrictive permissions
++        self.temp_fd, self.temp_path = tempfile.mkstemp()
++        os.write(self.temp_fd, content)
++        os.close(self.temp_fd)
++        # Ensure temp file has restrictive permissions
++        os.chmod(self.temp_path, 0o600)
++        self.content = content
++        self.pos = 0
++        
++    def temporary_file_path(self):
++        return self.temp_path
++    
++    def read(self, size=-1):
++        if size == -1:
++            result = self.content[self.pos:]
++            self.pos = len(self.content)
++        else:
++            result = self.content[self.pos:self.pos + size]
++            self.pos += size
++        return result
++        
++    def chunks(self):
++        # This is needed for files without temporary_file_path
++        chunk_size = 64 * 1024
++        while True:
++            chunk = self.read(chunk_size)
++            if not chunk:
++                break
++            yield chunk
++            
++    def __del__(self):
++        if hasattr(self, 'temp_path') and os.path.exists(self.temp_path):
++            os.unlink(self.temp_path)
++
++# Test 1: Regular file (no temp file)
++print("Test 1: Regular file upload")
++regular_content = b"Regular file content"
++regular_file = ContentFile(regular_content)
++regular_path = storage.save("regular.txt", regular_file)
++regular_full_path = storage.path(regular_path)
++regular_perms = oct(os.stat(regular_full_path).st_mode)[-3:]
++print(f"Regular file permissions: {regular_perms}")
++
++# Test 2: File via temporary file path (simulating large upload)
++print("\nTest 2: Large file upload via temp file")
++temp_content = b"Large file content" * 1000
++mock_temp_file = MockTempFile(temp_content)
++temp_file_perms = oct(os.stat(mock_temp_file.temp_path).st_mode)[-3:]
++print(f"Temp file permissions before save: {temp_file_perms}")
++large_path = storage.save("large.txt", mock_temp_file)
++large_full_path = storage.path(large_path)
++large_perms = oct(os.stat(large_full_path).st_mode)[-3:]
++print(f"Large file permissions after save: {large_perms}")
++
++# Verify both have same permissions
++print(f"\nFILE_UPLOAD_PERMISSIONS setting: {oct(settings.FILE_UPLOAD_PERMISSIONS)}")
++print(f"Regular file: {regular_perms}, Large file: {large_perms}")
++if regular_perms == large_perms == '644':
++    print("SUCCESS: Both files have consistent 644 permissions!")
++else:
++    print("FAILED: Files have inconsistent permissions")
++
++# Cleanup
++shutil.rmtree(storage_dir)

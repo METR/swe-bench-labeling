@@ -1,0 +1,177 @@
+diff --git a/sympy/simplify/radsimp.py b/sympy/simplify/radsimp.py
+index 216ae26204..6474b2f5bf 100644
+--- a/sympy/simplify/radsimp.py
++++ b/sympy/simplify/radsimp.py
+@@ -1113,6 +1113,9 @@ def _split_gcd(*a):
+     >>> _split_gcd(55, 35, 22, 14, 77, 10)
+     (5, [55, 35, 10], [22, 14, 77])
+     """
++    if not a:
++        # Handle empty input case
++        return S.One, [], []
+     g = a[0]
+     b1 = [g]
+     b2 = []
+diff --git a/test_bug_issue.py b/test_bug_issue.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_bug_issue.py
+@@ -0,0 +1 @@
++
+diff --git a/test_direct.py b/test_direct.py
+new file mode 100644
+index 0000000000..95576e54e5
+--- /dev/null
++++ b/test_direct.py
+@@ -0,0 +1,22 @@
++from sympy import sqrt, I, S, Symbol
++from sympy.simplify.radsimp import split_surds, _split_gcd
++
++# Let's test _split_gcd with empty input
++print("Testing _split_gcd with empty input:")
++try:
++    result = _split_gcd()
++    print("Result:", result)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
++    
++# Let's also test split_surds with an expression that leads to empty surds
++from sympy.core import Add
++expr = Add(3, 3*I)  # This has no square roots
++print("\nTesting split_surds with expr that has no surds:", expr)
++try:
++    result = split_surds(expr)
++    print("Result:", result)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
++    import traceback
++    traceback.print_exc()
+diff --git a/test_existing.py b/test_existing.py
+new file mode 100644
+index 0000000000..423eea6827
+--- /dev/null
++++ b/test_existing.py
+@@ -0,0 +1,24 @@
++from sympy import sqrt
++from sympy.simplify.radsimp import _split_gcd, split_surds
++
++# Test the existing functionality of _split_gcd
++print("Testing _split_gcd with normal inputs:")
++result = _split_gcd(55, 35, 22, 14, 77, 10)
++print(f"_split_gcd(55, 35, 22, 14, 77, 10) = {result}")
++expected = (5, [55, 35, 10], [22, 14, 77])
++print(f"Expected: {expected}")
++print(f"Match: {result == expected}")
++
++# Test split_surds with normal input
++print("\nTesting split_surds with normal input:")
++expr = 3*sqrt(3) + sqrt(5)/7 + sqrt(6) + sqrt(10) + sqrt(15)
++result = split_surds(expr)
++print(f"split_surds({expr}) = {result}")
++
++# Test edge case - empty input
++print("\nTesting _split_gcd with empty input:")
++result = _split_gcd()
++print(f"_split_gcd() = {result}")
++expected = (1, [], [])
++print(f"Expected: {expected}")
++print(f"Match: {result == expected}")
+diff --git a/test_full.py b/test_full.py
+new file mode 100644
+index 0000000000..aa589aa931
+--- /dev/null
++++ b/test_full.py
+@@ -0,0 +1,39 @@
++from sympy import *
++from sympy.simplify.sqrtdenest import sqrtdenest
++
++# Test the original problematic expression from the issue
++# Let's create it in a way that prevents automatic simplification
++expr = S('(3 - sqrt(2)*sqrt(4 + 3*I) + 3*I)/2')
++print("Original expression (simplified by SymPy):", expr)
++
++# Let's create another expression that would trigger the issue
++expr2 = Add(3, 3*I)/2
++print("\nTest expression:", expr2)
++
++try:
++    result = sqrtdenest(expr2)
++    print("sqrtdenest result:", result)
++    print("Are they equal?", expr2 == result)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
++    import traceback
++    traceback.print_exc()
++
++# Test more cases
++print("\n--- Testing various cases ---")
++test_cases = [
++    sqrt(2),
++    sqrt(2) + sqrt(3),
++    3 + 3*I,
++    (3 + 3*I)/2,
++    sqrt(8),
++    1 + sqrt(2) + sqrt(3)
++]
++
++for expr in test_cases:
++    print(f"\nExpr: {expr}")
++    try:
++        result = sqrtdenest(expr)
++        print(f"Result: {result}")
++    except Exception as e:
++        print(f"Error: {type(e).__name__} - {str(e)}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..40bc813e80
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,23 @@
++from sympy import sqrt, I, S
++from sympy.simplify.sqrtdenest import sqrtdenest
++
++# Test case from the issue
++# Let's construct it step by step
++part1 = sqrt(4 + 3*I)
++print("part1:", part1)
++part2 = sqrt(2)*part1  
++print("part2:", part2)
++numerator = 3 - part2 + 3*I
++print("numerator:", numerator)
++expr = numerator / 2
++print("Testing expression:", expr)
++print("Expression type:", type(expr))
++print("Expression args:", expr.args if hasattr(expr, 'args') else 'No args')
++
++try:
++    result = sqrtdenest(expr)
++    print("Result:", result)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
++    import traceback
++    traceback.print_exc()
+diff --git a/test_scenario.py b/test_scenario.py
+new file mode 100644
+index 0000000000..1c4a0f2a28
+--- /dev/null
++++ b/test_scenario.py
+@@ -0,0 +1,18 @@
++from sympy import sqrt, I, S, Add
++from sympy.simplify.sqrtdenest import _sqrt_match
++
++# Create an Add expression where all terms squared are Rational
++# but none of the terms are actually surds (square roots)
++expr = Add(3, 3*I)
++print("Expression:", expr)
++print("Args:", expr.args)
++print("Are all args squared Rational?", all((x**2).is_Rational for x in expr.args))
++
++# This should trigger the issue
++try:
++    result = _sqrt_match(expr)
++    print("Result:", result)
++except Exception as e:
++    print("Error:", type(e).__name__, "-", str(e))
++    import traceback
++    traceback.print_exc()

@@ -1,0 +1,319 @@
+diff --git a/django/contrib/staticfiles/storage.py b/django/contrib/staticfiles/storage.py
+index f957a667b2..720767aa9e 100644
+--- a/django/contrib/staticfiles/storage.py
++++ b/django/contrib/staticfiles/storage.py
+@@ -261,6 +261,7 @@ class HashedFilesMixin:
+ 
+         paths = {path: paths[path] for path in adjustable_paths}
+ 
++        substitutions = False
+         for i in range(self.max_post_process_passes):
+             substitutions = False
+             for name, hashed_name, processed, subst in self._post_process(paths, adjustable_paths, hashed_files):
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e69a5c990f
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,101 @@
++"""
++Comprehensive test for ManifestStaticFilesStorage with various max_post_process_passes values
++"""
++
++import os
++import tempfile
++from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
++from django.core.files.base import ContentFile
++from django.test import override_settings
++from django.conf import settings
++
++# Configure Django settings if not already configured
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++        INSTALLED_APPS=['django.contrib.staticfiles'],
++    )
++
++def test_various_max_post_process_passes():
++    """Test ManifestStaticFilesStorage with different max_post_process_passes values"""
++    
++    test_cases = [0, 1, 2, 5, 10]  # Including 0 which was the problematic case
++    
++    for passes in test_cases:
++        print(f"\nTesting with max_post_process_passes = {passes}")
++        
++        class TestStorage(ManifestStaticFilesStorage):
++            max_post_process_passes = passes
++        
++        storage = TestStorage()
++        
++        # Create test files - one CSS with a reference to another file
++        css_content = """
++        body {
++            background: url("image.png");
++            color: red;
++        }
++        """
++        
++        img_content = b"fake image content"
++        
++        # Save the files
++        storage.save('test.css', ContentFile(css_content.encode()))
++        storage.save('image.png', ContentFile(img_content))
++        
++        # Create paths dict as expected by post_process
++        paths = {
++            'test.css': (storage, 'test.css'),
++            'image.png': (storage, 'image.png')
++        }
++        
++        try:
++            # This should not raise an UnboundLocalError
++            results = list(storage.post_process(paths))
++            print(f"Success! post_process completed without error.")
++            print(f"Number of results: {len(results)}")
++            for name, hashed_name, processed in results:
++                if not isinstance(processed, Exception):
++                    print(f"  - {name} -> {hashed_name}, processed: {processed}")
++                else:
++                    print(f"  - {name} -> ERROR: {processed}")
++        except UnboundLocalError as e:
++            print(f"UnboundLocalError occurred: {e}")
++            raise
++        except Exception as e:
++            print(f"Other error occurred: {e}")
++            raise
++        finally:
++            # Clean up
++            for filename in ['test.css', 'image.png']:
++                if storage.exists(filename):
++                    storage.delete(filename)
++            # Also clean up hashed versions
++            for name, hashed_name, _ in results:
++                if hashed_name and storage.exists(hashed_name):
++                    storage.delete(hashed_name)
++
++def test_empty_files():
++    """Test with no files to process"""
++    print("\nTesting with empty files (max_post_process_passes = 0)")
++    
++    class TestStorage(ManifestStaticFilesStorage):
++        max_post_process_passes = 0
++    
++    storage = TestStorage()
++    paths = {}
++    
++    try:
++        results = list(storage.post_process(paths))
++        print("Success! post_process completed without error with empty paths.")
++        print(f"Results: {results}")
++    except Exception as e:
++        print(f"Error occurred: {e}")
++        raise
++
++if __name__ == '__main__':
++    test_various_max_post_process_passes()
++    test_empty_files()
+diff --git a/test_edge_case.py b/test_edge_case.py
+new file mode 100644
+index 0000000000..a6e0ecef7c
+--- /dev/null
++++ b/test_edge_case.py
+@@ -0,0 +1,92 @@
++"""
++Test edge case: max_post_process_passes = 0 with CSS files that would normally need processing
++"""
++
++import os
++import tempfile
++from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
++from django.core.files.base import ContentFile
++from django.conf import settings
++
++# Configure Django settings if not already configured
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++        INSTALLED_APPS=['django.contrib.staticfiles'],
++    )
++
++class ZeroPassesStorage(ManifestStaticFilesStorage):
++    max_post_process_passes = 0
++
++def test_zero_passes_with_css_references():
++    """Test that with max_post_process_passes = 0, CSS files are still hashed but references are not updated"""
++    storage = ZeroPassesStorage()
++    
++    # Create CSS file with references
++    css_content = """
++    @import url("other.css");
++    body {
++        background: url("../images/bg.png");
++    }
++    """
++    
++    other_css_content = "body { color: red; }"
++    img_content = b"fake image content"
++    
++    # Save the files
++    storage.save('css/main.css', ContentFile(css_content.encode()))
++    storage.save('css/other.css', ContentFile(other_css_content.encode()))
++    storage.save('images/bg.png', ContentFile(img_content))
++    
++    # Create paths dict as expected by post_process
++    paths = {
++        'css/main.css': (storage, 'css/main.css'),
++        'css/other.css': (storage, 'css/other.css'),
++        'images/bg.png': (storage, 'images/bg.png')
++    }
++    
++    try:
++        # This should not raise an UnboundLocalError
++        results = list(storage.post_process(paths))
++        print("Success! post_process completed without error.")
++        print(f"Number of results: {len(results)}")
++        
++        # Check results
++        processed_files = {}
++        for name, hashed_name, processed in results:
++            if not isinstance(processed, Exception):
++                print(f"  - {name} -> {hashed_name}, processed: {processed}")
++                processed_files[name] = hashed_name
++            else:
++                print(f"  - {name} -> ERROR: {processed}")
++        
++        # With max_post_process_passes = 0, the CSS content should not be updated
++        # to include hashed references, but the files themselves should be hashed
++        if 'css/main.css' in processed_files:
++            hashed_main_css = processed_files['css/main.css']
++            with storage.open(hashed_main_css) as f:
++                content = f.read().decode('utf-8')
++                # Check what actually happened
++                print(f"\nCSS content after processing:")
++                print(content)
++                # With max_post_process_passes = 0, only the initial pass happens
++                # which does update references, but no additional passes for nested references
++                
++    except Exception as e:
++        print(f"Error occurred: {e}")
++        raise
++    finally:
++        # Clean up
++        for filename in ['css/main.css', 'css/other.css', 'images/bg.png']:
++            if storage.exists(filename):
++                storage.delete(filename)
++        # Also clean up hashed versions
++        for name, hashed_name, _ in results:
++            if hashed_name and storage.exists(hashed_name):
++                storage.delete(hashed_name)
++
++if __name__ == '__main__':
++    test_zero_passes_with_css_references()
+diff --git a/test_max_post_process_passes.py b/test_max_post_process_passes.py
+new file mode 100644
+index 0000000000..42924c45dd
+--- /dev/null
++++ b/test_max_post_process_passes.py
+@@ -0,0 +1,56 @@
++"""
++Test for ManifestStaticFilesStorage with max_post_process_passes = 0
++"""
++
++import os
++import tempfile
++from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
++from django.core.files.base import ContentFile
++from django.test import override_settings
++from django.conf import settings
++
++# Configure Django settings if not already configured
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='test-secret-key',
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++        INSTALLED_APPS=['django.contrib.staticfiles'],
++    )
++
++class MyManifestStaticFilesStorage(ManifestStaticFilesStorage):
++    max_post_process_passes = 0
++
++def test_max_post_process_passes_zero():
++    """Test that ManifestStaticFilesStorage works with max_post_process_passes = 0"""
++    storage = MyManifestStaticFilesStorage()
++    
++    # Create a simple test file
++    test_file_name = 'test.css'
++    test_content = 'body { color: red; }'
++    
++    # Save the file
++    storage.save(test_file_name, ContentFile(test_content.encode()))
++    
++    # Create paths dict as expected by post_process
++    paths = {test_file_name: (storage, test_file_name)}
++    
++    try:
++        # This should not raise an UnboundLocalError
++        results = list(storage.post_process(paths))
++        print("Success! post_process completed without error.")
++        print(f"Results: {results}")
++    except UnboundLocalError as e:
++        print(f"UnboundLocalError occurred: {e}")
++        raise
++    except Exception as e:
++        print(f"Other error occurred: {e}")
++        raise
++    finally:
++        # Clean up
++        if storage.exists(test_file_name):
++            storage.delete(test_file_name)
++
++if __name__ == '__main__':
++    test_max_post_process_passes_zero()
+diff --git a/tests/staticfiles_tests/test_storage.py b/tests/staticfiles_tests/test_storage.py
+index db655f2453..4bd25c0535 100644
+--- a/tests/staticfiles_tests/test_storage.py
++++ b/tests/staticfiles_tests/test_storage.py
+@@ -497,6 +497,13 @@ class CustomStaticFilesStorage(storage.StaticFilesStorage):
+         super().__init__(*args, **kwargs)
+ 
+ 
++class ZeroPassesStorage(storage.ManifestStaticFilesStorage):
++    """
++    Used to test max_post_process_passes = 0
++    """
++    max_post_process_passes = 0
++
++
+ @unittest.skipIf(sys.platform == 'win32', "Windows only partially supports chmod.")
+ class TestStaticFilePermissions(CollectionTestCase):
+ 
+@@ -581,6 +588,21 @@ class TestStaticFilePermissions(CollectionTestCase):
+                 self.assertEqual(dir_mode, 0o740)
+ 
+ 
++class TestMaxPostProcessPasses(CollectionTestCase):
++    """
++    Test for max_post_process_passes edge cases.
++    """
++    
++    def test_max_post_process_passes_zero(self):
++        """
++        ManifestStaticFilesStorage works with max_post_process_passes = 0.
++        """
++        # This should not raise an UnboundLocalError
++        err = StringIO()
++        with override_settings(STATICFILES_STORAGE='staticfiles_tests.test_storage.ZeroPassesStorage'):
++            call_command('collectstatic', interactive=False, verbosity=0, stderr=err)
++
++
+ @override_settings(
+     STATICFILES_STORAGE='django.contrib.staticfiles.storage.ManifestStaticFilesStorage',
+ )

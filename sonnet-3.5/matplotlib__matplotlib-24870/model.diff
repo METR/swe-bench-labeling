@@ -1,0 +1,36 @@
+diff --git a/lib/matplotlib/contour.py b/lib/matplotlib/contour.py
+index 144eadeae2..b2baf0473f 100644
+--- a/lib/matplotlib/contour.py
++++ b/lib/matplotlib/contour.py
+@@ -627,16 +627,21 @@ layers : array
+ 
+ @_docstring.dedent_interpd
+ class ContourSet(cm.ScalarMappable, ContourLabeler):
+-    """
+-    Store a set of contour lines or filled regions.
+-
+-    User-callable method: `~.Axes.clabel`
+-
+-    Parameters
+-    ----------
+-    ax : `~.axes.Axes`
+-
+-    levels : [level0, level1, ..., leveln]
++    def __init__(self, ax, *args,
++                 levels=None, filled=False, linewidths=None, linestyles=None,
++                 hatches=(None,), alpha=None, origin=None, extent=None,
++                 cmap=None, colors=None, norm=None, vmin=None, vmax=None,
++                 extend='neither', antialiased=None, nchunk=0, locator=None,
++                 transform=None, negative_linestyles=None,
++                 **kwargs):
++        # Auto-detect boolean arrays and set default level to [0.5]
++        if len(args) > 0 and isinstance(args[0], np.ndarray) and args[0].dtype == bool:
++            if levels is None:
++                levels = [0.5]
++            args = list(args)
++            args[0] = args[0].astype(float)
++            args = tuple(args)
++        """
+         A list of floating point numbers indicating the contour levels.
+ 
+     allsegs : [level0segs, level1segs, ...]

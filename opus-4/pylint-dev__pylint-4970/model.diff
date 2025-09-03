@@ -1,0 +1,182 @@
+diff --git a/.pylintrc b/.pylintrc
+new file mode 100644
+index 000000000..2b7dcccaf
+--- /dev/null
++++ b/.pylintrc
+@@ -0,0 +1,2 @@
++[SIMILARITIES]
++min-similarity-lines=0
+diff --git a/test_direct_similar.py b/test_direct_similar.py
+new file mode 100644
+index 000000000..809fff9c8
+--- /dev/null
++++ b/test_direct_similar.py
+@@ -0,0 +1,52 @@
++"""Test the Similar class directly"""
++import sys
++import os
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from pylint.checkers.similar import Similar
++from io import StringIO
++
++# Test code with duplicates
++code1 = '''def func1():
++    x = 1
++    y = 2
++    z = 3
++    return x + y + z
++'''
++
++code2 = '''def func2():
++    x = 1
++    y = 2
++    z = 3
++    return x + y + z
++'''
++
++# Test with min_lines=4
++print("Testing with min_lines=4:")
++sim = Similar(min_lines=4)
++sim.append_stream("code1.py", StringIO(code1))
++sim.append_stream("code2.py", StringIO(code2))
++sims = sim._compute_sims()
++print(f"Found {len(sims)} similarities")
++for num, couples in sims:
++    print(f"  {num} similar lines in {len(couples)} files")
++
++# Test with min_lines=0
++print("\nTesting with min_lines=0:")
++sim = Similar(min_lines=0)
++sim.append_stream("code1.py", StringIO(code1))
++sim.append_stream("code2.py", StringIO(code2))
++sims = sim._compute_sims()
++print(f"Found {len(sims)} similarities")
++for num, couples in sims:
++    print(f"  {num} similar lines in {len(couples)} files")
++
++# Test with min_lines=1
++print("\nTesting with min_lines=1:")
++sim = Similar(min_lines=1)
++sim.append_stream("code1.py", StringIO(code1))
++sim.append_stream("code2.py", StringIO(code2))
++sims = sim._compute_sims()
++print(f"Found {len(sims)} similarities")
++for num, couples in sims:
++    print(f"  {num} similar lines in {len(couples)} files")
+diff --git a/test_min_lines_zero.py b/test_min_lines_zero.py
+new file mode 100644
+index 000000000..2214d033d
+--- /dev/null
++++ b/test_min_lines_zero.py
+@@ -0,0 +1,70 @@
++"""Test that min-similarity-lines=0 works"""
++import subprocess
++import sys
++import tempfile
++import os
++
++# Create test files with duplicate code
++test_file1 = '''"""Test file 1"""
++def func1():
++    x = 1
++    y = 2
++    z = 3
++    return x + y + z
++
++def func2():
++    x = 1
++    y = 2
++    z = 3
++    return x + y + z
++'''
++
++test_file2 = '''"""Test file 2"""
++def func3():
++    x = 1
++    y = 2
++    z = 3
++    return x + y + z
++'''
++
++# Test with min-similarity-lines=4 (default)
++with tempfile.TemporaryDirectory() as tmpdir:
++    # Create test files
++    with open(os.path.join(tmpdir, 'test1.py'), 'w') as f:
++        f.write(test_file1)
++    with open(os.path.join(tmpdir, 'test2.py'), 'w') as f:
++        f.write(test_file2)
++    
++    # Create pylintrc with min-similarity-lines=4
++    with open(os.path.join(tmpdir, '.pylintrc'), 'w') as f:
++        f.write('[SIMILARITIES]\nmin-similarity-lines=4\n')
++    
++    # Run pylint
++    result = subprocess.run(
++        [sys.executable, '-m', 'pylint', 'test1.py', 'test2.py', '--disable=all', '--enable=duplicate-code'],
++        cwd=tmpdir,
++        capture_output=True,
++        text=True
++    )
++    
++    print("Test with min-similarity-lines=4:")
++    print("STDOUT:", result.stdout)
++    print("STDERR:", result.stderr)
++    print("Has R0801:", 'R0801' in result.stdout)
++    print()
++    
++    # Now test with min-similarity-lines=0
++    with open(os.path.join(tmpdir, '.pylintrc'), 'w') as f:
++        f.write('[SIMILARITIES]\nmin-similarity-lines=0\n')
++    
++    result = subprocess.run(
++        [sys.executable, '-m', 'pylint', 'test1.py', 'test2.py', '--disable=all', '--enable=duplicate-code'],
++        cwd=tmpdir,
++        capture_output=True,
++        text=True
++    )
++    
++    print("Test with min-similarity-lines=0:")
++    print("STDOUT:", result.stdout)
++    print("STDERR:", result.stderr)
++    print("Has R0801:", 'R0801' in result.stdout)
+diff --git a/test_similar.py b/test_similar.py
+new file mode 100644
+index 000000000..30dd10023
+--- /dev/null
++++ b/test_similar.py
+@@ -0,0 +1,9 @@
++"""Test script to verify min-similarity-lines behavior"""
++
++def hello():
++    print("Hello")
++    return 1
++
++def world():
++    print("World")
++    return 2
+diff --git a/test_similar2.py b/test_similar2.py
+new file mode 100644
+index 000000000..c5a2c7b8b
+--- /dev/null
++++ b/test_similar2.py
+@@ -0,0 +1,19 @@
++"""Test script to verify min-similarity-lines behavior"""
++
++def hello():
++    print("Hello")
++    print("Hello again")
++    print("And again")
++    print("Once more")
++    return 1
++
++def hello2():
++    print("Hello")
++    print("Hello again")
++    print("And again")
++    print("Once more")
++    return 1
++
++def world():
++    print("World")
++    return 2

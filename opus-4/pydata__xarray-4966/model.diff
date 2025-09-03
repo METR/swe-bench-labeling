@@ -1,0 +1,373 @@
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 00000000..abd75894
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,65 @@
++import numpy as np
++from xarray.coding.variables import UnsignedIntegerCoder
++from xarray.core.variable import Variable
++
++print("=" * 60)
++print("Testing UnsignedIntegerCoder with OPeNDAP hack support")
++print("=" * 60)
++
++coder = UnsignedIntegerCoder()
++
++# Test 1: Decode unsigned data marked as signed (OPeNDAP hack)
++print("\nTest 1: Decode unsigned data marked as signed (OPeNDAP hack)")
++data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++attrs = {"_Unsigned": "false"}
++var = Variable(dims=("x",), data=data, attrs=attrs)
++decoded = coder.decode(var, name="test1")
++print(f"  Input: {data} (dtype={data.dtype})")
++print(f"  Output: {decoded.data} (dtype={decoded.dtype})")
++print(f"  Expected: [-128, -1, 0, 1, 2, 127] (dtype=int8)")
++print(f"  Success: {np.array_equal(decoded.data, np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8))}")
++
++# Test 2: Encode signed data with _Unsigned=false (OPeNDAP hack)
++print("\nTest 2: Encode signed data with _Unsigned=false (OPeNDAP hack)")
++data = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++encoding = {"_Unsigned": "false"}
++var = Variable(dims=("x",), data=data, encoding=encoding)
++encoded = coder.encode(var, name="test2")
++print(f"  Input: {data} (dtype={data.dtype})")
++print(f"  Output: {encoded.data} (dtype={encoded.dtype})")
++print(f"  Expected: [128, 255, 0, 1, 2, 127] (dtype=uint8)")
++print(f"  Success: {np.array_equal(encoded.data, np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8))}")
++
++# Test 3: Decode signed data marked as unsigned (NetCDF3 convention)
++print("\nTest 3: Decode signed data marked as unsigned (NetCDF3 convention)")
++data = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++attrs = {"_Unsigned": "true"}
++var = Variable(dims=("x",), data=data, attrs=attrs)
++decoded = coder.decode(var, name="test3")
++print(f"  Input: {data} (dtype={data.dtype})")
++print(f"  Output: {decoded.data} (dtype={decoded.dtype})")
++print(f"  Expected: [128, 255, 0, 1, 2, 127] (dtype=uint8)")
++print(f"  Success: {np.array_equal(decoded.data, np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8))}")
++
++# Test 4: Encode unsigned data with _Unsigned=true (NetCDF3 convention)
++print("\nTest 4: Encode unsigned data with _Unsigned=true (NetCDF3 convention)")
++data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++encoding = {"_Unsigned": "true"}
++var = Variable(dims=("x",), data=data, encoding=encoding)
++encoded = coder.encode(var, name="test4")
++print(f"  Input: {data} (dtype={data.dtype})")
++print(f"  Output: {encoded.data} (dtype={encoded.dtype})")
++print(f"  Expected: [-128, -1, 0, 1, 2, 127] (dtype=int8)")
++print(f"  Success: {np.array_equal(encoded.data, np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8))}")
++
++# Test 5: No conversion when _Unsigned is not present
++print("\nTest 5: No conversion when _Unsigned is not present")
++data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++var = Variable(dims=("x",), data=data)
++decoded = coder.decode(var, name="test5")
++print(f"  Input: {data} (dtype={data.dtype})")
++print(f"  Output: {decoded.data} (dtype={decoded.dtype})")
++print(f"  Expected: same as input")
++print(f"  Success: {np.array_equal(decoded.data, data) and decoded.dtype == data.dtype}")
++
++print("\n" + "=" * 60)
+diff --git a/test_encode_signed.py b/test_encode_signed.py
+new file mode 100644
+index 00000000..37ef80d3
+--- /dev/null
++++ b/test_encode_signed.py
+@@ -0,0 +1,30 @@
++import numpy as np
++from xarray.coding.variables import UnsignedIntegerCoder
++from xarray.core.variable import Variable
++
++# Test encoding signed data to unsigned for OPeNDAP
++# We need to add support for encoding signed data with _Unsigned=false
++
++# Create signed data
++data = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++encoding = {"_Unsigned": "false"}
++var = Variable(dims=("x",), data=data, encoding=encoding)
++
++print("Original variable:")
++print(f"  dtype: {var.dtype}")
++print(f"  data: {var.data}")
++print(f"  encoding: {var.encoding}")
++
++# Test the encoder
++coder = UnsignedIntegerCoder()
++encoded = coder.encode(var, name="test")
++
++print("\nEncoded variable:")
++print(f"  dtype: {encoded.dtype}")
++print(f"  data: {encoded.data}")
++print(f"  attrs: {encoded.attrs}")
++print(f"  encoding: {encoded.encoding}")
++
++# What we expect: data should be converted to unsigned
++expected = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++print(f"\nExpected data: {expected}")
+diff --git a/test_issue_simulation.py b/test_issue_simulation.py
+new file mode 100644
+index 00000000..7c7f71cd
+--- /dev/null
++++ b/test_issue_simulation.py
+@@ -0,0 +1,68 @@
++"""Simulate the exact issue described"""
++import numpy as np
++import xarray as xr
++from xarray.coding.variables import UnsignedIntegerCoder
++from xarray.core.variable import Variable
++from xarray.conventions import decode_cf_variable
++
++# Simulate what pydap would return when accessing OPeNDAP data
++# The test data should be: -128.0, -1.0, 0.0, 1.0, 2.0, nan, 127.0
++# But pydap returns these as unsigned: 128, 255, 0, 1, 2, nan, 127
++
++# Create a test variable that simulates pydap output
++test_data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++test_var = Variable(
++    dims=("test",),
++    data=test_data,
++    attrs={"_Unsigned": "false"}
++)
++
++print("Before decode_cf_variable:")
++print(f"  data: {test_var.data}")
++print(f"  dtype: {test_var.dtype}")
++print(f"  attrs: {test_var.attrs}")
++
++# Decode using decode_cf_variable (which is what xarray uses internally)
++decoded_var = decode_cf_variable(
++    name="test",
++    var=test_var,
++    concat_characters=True,
++    mask_and_scale=True,
++    decode_times=True,
++    decode_endianness=True,
++    stack_char_dim=True,
++    use_cftime=None,
++    decode_timedelta=None
++)
++
++print("\nAfter decode_cf_variable:")
++print(f"  data: {decoded_var.data}")
++print(f"  dtype: {decoded_var.dtype}")
++print(f"  attrs: {decoded_var.attrs}")
++
++# Check that we get the expected signed values
++expected = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++print(f"\nExpected: {expected}")
++print(f"Success: {np.array_equal(decoded_var.data, expected)}")
++
++# Also check that the warning is gone
++import warnings
++warnings.simplefilter("error")  # Convert warnings to errors
++
++try:
++    # This should NOT raise a warning anymore
++    decoded_var = decode_cf_variable(
++        name="test",
++        var=test_var,
++        concat_characters=True,
++        mask_and_scale=True,
++        decode_times=True,
++        decode_endianness=True,
++        stack_char_dim=True,
++        use_cftime=None,
++        decode_timedelta=None
++    )
++    print("\nNo warning raised - Good!")
++except Warning as w:
++    print(f"\nWarning raised: {w}")
++    raise
+diff --git a/test_opendap_unsigned.py b/test_opendap_unsigned.py
+new file mode 100644
+index 00000000..b2b742f5
+--- /dev/null
++++ b/test_opendap_unsigned.py
+@@ -0,0 +1,98 @@
++"""Test for OPeNDAP unsigned/signed byte handling"""
++
++import numpy as np
++import pytest
++from xarray.coding.variables import UnsignedIntegerCoder
++from xarray.core.variable import Variable
++
++
++def test_unsigned_false_opendap_hack():
++    """Test decoding of unsigned data with _Unsigned=false (OPeNDAP hack)"""
++    # Simulate what pydap returns: unsigned bytes that should be interpreted as signed
++    coder = UnsignedIntegerCoder()
++    
++    # Create unsigned data that represents signed values
++    unsigned_data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++    expected_signed = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++    
++    # Test decode
++    var = Variable(dims=("x",), data=unsigned_data, attrs={"_Unsigned": "false"})
++    decoded = coder.decode(var, name="test")
++    
++    assert decoded.dtype == np.int8
++    np.testing.assert_array_equal(decoded.data, expected_signed)
++    assert "_Unsigned" not in decoded.attrs  # Attribute should be consumed
++
++
++def test_encode_signed_with_unsigned_false():
++    """Test encoding of signed data with _Unsigned=false"""
++    coder = UnsignedIntegerCoder()
++    
++    # Create signed data that should be encoded as unsigned for OPeNDAP
++    signed_data = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++    expected_unsigned = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++    
++    # Test encode
++    var = Variable(dims=("x",), data=signed_data, encoding={"_Unsigned": "false"})
++    encoded = coder.encode(var, name="test")
++    
++    assert encoded.dtype == np.uint8
++    np.testing.assert_array_equal(encoded.data, expected_unsigned)
++    assert encoded.attrs.get("_Unsigned") == "false"  # Attribute should be in attrs
++
++
++def test_no_change_when_unsigned_missing():
++    """Test that data is unchanged when _Unsigned attribute is missing"""
++    coder = UnsignedIntegerCoder()
++    
++    # Test unsigned data without _Unsigned attribute
++    unsigned_data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++    var = Variable(dims=("x",), data=unsigned_data)
++    decoded = coder.decode(var, name="test")
++    
++    assert decoded.dtype == np.uint8
++    np.testing.assert_array_equal(decoded.data, unsigned_data)
++    
++    # Test signed data without _Unsigned attribute
++    signed_data = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++    var = Variable(dims=("x",), data=signed_data)
++    decoded = coder.decode(var, name="test")
++    
++    assert decoded.dtype == np.int8
++    np.testing.assert_array_equal(decoded.data, signed_data)
++
++
++def test_fillvalue_conversion():
++    """Test that _FillValue is properly converted"""
++    coder = UnsignedIntegerCoder()
++    
++    # Test decode with _FillValue
++    unsigned_data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++    var = Variable(
++        dims=("x",), 
++        data=unsigned_data, 
++        attrs={"_Unsigned": "false", "_FillValue": np.uint8(255)}
++    )
++    decoded = coder.decode(var, name="test")
++    
++    assert decoded.attrs["_FillValue"] == np.int8(-1)
++    
++    # Test encode with _FillValue
++    signed_data = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++    var = Variable(
++        dims=("x",), 
++        data=signed_data, 
++        encoding={"_Unsigned": "false"},
++        attrs={"_FillValue": np.int8(-1)}
++    )
++    encoded = coder.encode(var, name="test")
++    
++    assert encoded.attrs["_FillValue"] == np.uint8(255)
++
++
++if __name__ == "__main__":
++    test_unsigned_false_opendap_hack()
++    test_encode_signed_with_unsigned_false()
++    test_no_change_when_unsigned_missing()
++    test_fillvalue_conversion()
++    print("All tests passed!")
+diff --git a/test_unsigned_issue.py b/test_unsigned_issue.py
+new file mode 100644
+index 00000000..e9f03498
+--- /dev/null
++++ b/test_unsigned_issue.py
+@@ -0,0 +1,31 @@
++import xarray as xr
++import numpy as np
++from xarray.coding.variables import UnsignedIntegerCoder
++from xarray.core.variable import Variable
++
++# Simulate what pydap returns: unsigned bytes with _Unsigned=False attribute
++# The values [128, 255, 0, 1, 2, np.nan, 127] should be interpreted as
++# [-128, -1, 0, 1, 2, np.nan, 127] when _Unsigned=False
++
++# Create a test variable like what pydap would return
++data = np.array([128, 255, 0, 1, 2, 127], dtype=np.uint8)
++attrs = {"_Unsigned": "false"}
++var = Variable(dims=("x",), data=data, attrs=attrs)
++
++print("Original variable:")
++print(f"  dtype: {var.dtype}")
++print(f"  data: {var.data}")
++print(f"  attrs: {var.attrs}")
++
++# Test the current decoder
++coder = UnsignedIntegerCoder()
++decoded = coder.decode(var, name="test")
++
++print("\nDecoded variable:")
++print(f"  dtype: {decoded.dtype}")
++print(f"  data: {decoded.data}")
++print(f"  attrs: {decoded.attrs}")
++
++# What we expect to see:
++expected = np.array([-128, -1, 0, 1, 2, 127], dtype=np.int8)
++print(f"\nExpected data: {expected}")
+diff --git a/xarray/coding/variables.py b/xarray/coding/variables.py
+index b035ff82..df026132 100644
+--- a/xarray/coding/variables.py
++++ b/xarray/coding/variables.py
+@@ -292,13 +292,21 @@ class UnsignedIntegerCoder(VariableCoder):
+         # https://www.unidata.ucar.edu/software/netcdf/docs/BestPractices.html
+         #     "_Unsigned = "true" to indicate that
+         #      integer data should be treated as unsigned"
+-        if encoding.get("_Unsigned", "false") == "true":
++        if encoding.get("_Unsigned") == "true":
+             pop_to(encoding, attrs, "_Unsigned")
+             signed_dtype = np.dtype("i%s" % data.dtype.itemsize)
+             if "_FillValue" in attrs:
+                 new_fill = signed_dtype.type(attrs["_FillValue"])
+                 attrs["_FillValue"] = new_fill
+             data = duck_array_ops.around(data).astype(signed_dtype)
++        elif encoding.get("_Unsigned") == "false" and data.dtype.kind == "i":
++            # OPeNDAP hack: encode signed data as unsigned
++            pop_to(encoding, attrs, "_Unsigned")
++            unsigned_dtype = np.dtype("u%s" % data.dtype.itemsize)
++            if "_FillValue" in attrs:
++                new_fill = unsigned_dtype.type(attrs["_FillValue"])
++                attrs["_FillValue"] = new_fill
++            data = duck_array_ops.around(data).astype(unsigned_dtype)
+ 
+         return Variable(dims, data, attrs, encoding)
+ 
+@@ -309,6 +317,7 @@ class UnsignedIntegerCoder(VariableCoder):
+             unsigned = pop_to(attrs, encoding, "_Unsigned")
+ 
+             if data.dtype.kind == "i":
++                # NetCDF3 convention: signed data marked as unsigned
+                 if unsigned == "true":
+                     unsigned_dtype = np.dtype("u%s" % data.dtype.itemsize)
+                     transform = partial(np.asarray, dtype=unsigned_dtype)
+@@ -316,6 +325,15 @@ class UnsignedIntegerCoder(VariableCoder):
+                     if "_FillValue" in attrs:
+                         new_fill = unsigned_dtype.type(attrs["_FillValue"])
+                         attrs["_FillValue"] = new_fill
++            elif data.dtype.kind == "u":
++                # OPeNDAP hack: unsigned data marked as signed
++                if unsigned == "false":
++                    signed_dtype = np.dtype("i%s" % data.dtype.itemsize)
++                    transform = partial(np.asarray, dtype=signed_dtype)
++                    data = lazy_elemwise_func(data, transform, signed_dtype)
++                    if "_FillValue" in attrs:
++                        new_fill = signed_dtype.type(attrs["_FillValue"])
++                        attrs["_FillValue"] = new_fill
+             else:
+                 warnings.warn(
+                     "variable %r has _Unsigned attribute but is not "

@@ -1,0 +1,461 @@
+diff --git a/check_m21.py b/check_m21.py
+new file mode 100644
+index 0000000000..13acd04fc0
+--- /dev/null
++++ b/check_m21.py
+@@ -0,0 +1,27 @@
++from sympy import *
++
++print("Standard quaternion rotation matrix formula:")
++print("For q = (w, x, y, z) = (a, b, c, d):")
++print()
++print("     | 1-2(y²+z²)   2(xy-wz)     2(xz+wy)  |")
++print("R =  | 2(xy+wz)     1-2(x²+z²)   2(yz-wx)  |")
++print("     | 2(xz-wy)     2(yz+wx)     1-2(x²+y²)|")
++print()
++print("In sympy notation:")
++print("     | 1-2(c²+d²)   2(bc-ad)     2(bd+ac)  |")
++print("R =  | 2(bc+ad)     1-2(b²+d²)   2(cd-ab)  |")
++print("     | 2(bd-ac)     2(cd+ab)     1-2(b²+c²)|")
++print()
++print("So:")
++print("m00 = 1-2(c²+d²)")
++print("m01 = 2(bc-ad)")
++print("m02 = 2(bd+ac)")
++print("m10 = 2(bc+ad)")
++print("m11 = 1-2(b²+d²)")
++print("m12 = 2(cd-ab)")  
++print("m20 = 2(bd-ac)")
++print("m21 = 2(cd+ab)")  
++print("m22 = 1-2(b²+c²)")
++print()
++print("The current implementation has m21 = 2*s*(q.c*q.d + q.b*q.a) which is correct!")
++print("Only m12 needed to be fixed.")
+diff --git a/compare_formulas.py b/compare_formulas.py
+new file mode 100644
+index 0000000000..fefbd1ac0f
+--- /dev/null
++++ b/compare_formulas.py
+@@ -0,0 +1,24 @@
++from sympy import S
++
++# For q1 = Quaternion(1, 2, 3, 4)
++a, b, c, d = 1, 2, 3, 4
++s = S(1)/30
++
++print("Old formula: m12 = 2*s*(c*d + b*a)")
++old_m12 = 2*s*(c*d + b*a)
++print(f"c*d + b*a = {c*d + b*a}")
++print(f"m12 = 2*{s}*{c*d + b*a} = {old_m12}")
++print(f"Simplified: {old_m12}")
++print()
++
++print("New formula: m12 = 2*s*(c*d - b*a)")
++new_m12 = 2*s*(c*d - b*a)
++print(f"c*d - b*a = {c*d - b*a}")
++print(f"m12 = 2*{s}*{c*d - b*a} = {new_m12}")
++print(f"Simplified: {new_m12}")
++print()
++
++print("Test expects m12 = 14/15")
++print(f"Old formula gives: {old_m12} = {float(old_m12)}")
++print(f"New formula gives: {new_m12} = {float(new_m12)}")
++print(f"14/15 = {S(14)/15} = {float(S(14)/15)}")
+diff --git a/sympy/algebras/quaternion.py b/sympy/algebras/quaternion.py
+index b84e7cb95a..7eae8d73d0 100644
+--- a/sympy/algebras/quaternion.py
++++ b/sympy/algebras/quaternion.py
+@@ -529,7 +529,7 @@ def to_rotation_matrix(self, v=None):
+ 
+         m10 = 2*s*(q.b*q.c + q.d*q.a)
+         m11 = 1 - 2*s*(q.b**2 + q.d**2)
+-        m12 = 2*s*(q.c*q.d + q.b*q.a)
++        m12 = 2*s*(q.c*q.d - q.b*q.a)
+ 
+         m20 = 2*s*(q.b*q.d - q.c*q.a)
+         m21 = 2*s*(q.c*q.d + q.b*q.a)
+diff --git a/sympy/algebras/tests/test_quaternion.py b/sympy/algebras/tests/test_quaternion.py
+index 420e9976d2..520f22db84 100644
+--- a/sympy/algebras/tests/test_quaternion.py
++++ b/sympy/algebras/tests/test_quaternion.py
+@@ -96,7 +96,7 @@ def test_quaternion_conversions():
+                                    2 * acos(sqrt(30)/30))
+ 
+     assert q1.to_rotation_matrix() == Matrix([[-S(2)/3, S(2)/15, S(11)/15],
+-                                     [S(2)/3, -S(1)/3, S(14)/15],
++                                     [S(2)/3, -S(1)/3, S(2)/3],
+                                      [S(1)/3, S(14)/15, S(2)/15]])
+ 
+     assert q1.to_rotation_matrix((1, 1, 1)) == Matrix([[-S(2)/3, S(2)/15, S(11)/15, S(4)/5],
+diff --git a/test_4x4_matrix.py b/test_4x4_matrix.py
+new file mode 100644
+index 0000000000..5a1060f021
+--- /dev/null
++++ b/test_4x4_matrix.py
+@@ -0,0 +1,25 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++# Test q1 = Quaternion(1, 2, 3, 4) with point (1, 1, 1)
++q1 = Quaternion(1, 2, 3, 4)
++result_4x4 = q1.to_rotation_matrix((1, 1, 1))
++
++print("4x4 matrix for q1 with point (1, 1, 1):")
++print(result_4x4)
++
++# Check the m12 element in the 4x4 matrix
++print(f"\nElement (1,2) [0-indexed] = {result_4x4[0, 2]}")
++print(f"Element (2,3) [0-indexed] = {result_4x4[1, 2]}")
++
++# Verify that the 3x3 part is the same as the rotation matrix
++R_3x3 = q1.to_rotation_matrix()
++print("\n3x3 rotation matrix:")
++print(R_3x3)
++
++print("\nComparing 3x3 parts - they should match:")
++for i in range(3):
++    for j in range(3):
++        print(f"4x4[{i},{j}] = {result_4x4[i,j]}, 3x3[{i},{j}] = {R_3x3[i,j]}")
++        
++# Expected from test: S(14)/15, but with our fix it should be S(2)/3
+diff --git a/test_all_axes.py b/test_all_axes.py
+new file mode 100644
+index 0000000000..aa6c772a61
+--- /dev/null
++++ b/test_all_axes.py
+@@ -0,0 +1,50 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++print("Testing rotation around all axes")
++print("================================")
++
++# X-axis rotation
++print("\n1. X-axis rotation:")
++x = symbols('x')
++q_x = Quaternion(cos(x/2), sin(x/2), 0, 0)
++result_x = trigsimp(q_x.to_rotation_matrix())
++expected_x = Matrix([[1, 0, 0], [0, cos(x), -sin(x)], [0, sin(x), cos(x)]])
++print("Current result:")
++print(result_x)
++print("Expected:")
++print(expected_x)
++print("Match:", result_x.equals(expected_x))
++
++# Y-axis rotation
++print("\n2. Y-axis rotation:")
++y = symbols('y')
++q_y = Quaternion(cos(y/2), 0, sin(y/2), 0)
++result_y = trigsimp(q_y.to_rotation_matrix())
++expected_y = Matrix([[cos(y), 0, sin(y)], [0, 1, 0], [-sin(y), 0, cos(y)]])
++print("Current result:")
++print(result_y)
++print("Expected:")
++print(expected_y)
++print("Match:", result_y.equals(expected_y))
++
++# Z-axis rotation
++print("\n3. Z-axis rotation:")
++z = symbols('z')
++q_z = Quaternion(cos(z/2), 0, 0, sin(z/2))
++result_z = trigsimp(q_z.to_rotation_matrix())
++expected_z = Matrix([[cos(z), -sin(z), 0], [sin(z), cos(z), 0], [0, 0, 1]])
++print("Current result:")
++print(result_z)
++print("Expected:")
++print(expected_z)
++print("Match:", result_z.equals(expected_z))
++
++# Let's check what m12 evaluates to for each case
++print("\n\nChecking m12 = 2*s*(c*d + b*a) for each case:")
++print("For X-axis: a=cos(x/2), b=sin(x/2), c=0, d=0")
++print("  m12 = 2*(0*0 + sin(x/2)*cos(x/2)) = sin(x)")
++print("For Y-axis: a=cos(y/2), b=0, c=sin(y/2), d=0")
++print("  m12 = 2*(sin(y/2)*0 + 0*cos(y/2)) = 0")
++print("For Z-axis: a=cos(z/2), b=0, c=0, d=sin(z/2)")
++print("  m12 = 2*(0*sin(z/2) + 0*cos(z/2)) = 0")
+diff --git a/test_doctest_example.py b/test_doctest_example.py
+new file mode 100644
+index 0000000000..d24f9763c8
+--- /dev/null
++++ b/test_doctest_example.py
+@@ -0,0 +1,13 @@
++from sympy.algebras.quaternion import Quaternion
++from sympy import symbols, trigsimp, cos, sin
++
++# Test the example from the doctest
++x = symbols('x')
++q = Quaternion(cos(x/2), 0, 0, sin(x/2))
++result = trigsimp(q.to_rotation_matrix())
++print("Doctest example result:")
++print(result)
++print("\nExpected from doctest:")
++print("Matrix([[cos(x), -sin(x), 0], [sin(x), cos(x), 0], [0, 0, 1]])")
++
++# This example should still work since it's a Z-axis rotation
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..c63a69feba
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,38 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++print("Testing the exact issue case:")
++print("=============================")
++
++# The exact case from the issue
++x = symbols('x')
++q = Quaternion(cos(x/2), sin(x/2), 0, 0)
++result = trigsimp(q.to_rotation_matrix())
++
++print("Result:")
++print(result)
++print()
++print("This should have one negative sin(x) in position (1,2)")
++print()
++
++# Check the matrix elements explicitly
++print("Matrix element (1,2) [0-indexed]:", result[0, 2])
++print("Matrix element (2,1) [0-indexed]:", result[1, 0])
++print("Matrix element (2,2) [0-indexed]:", result[1, 1])
++print("Matrix element (2,3) [0-indexed]:", result[1, 2])
++print("Matrix element (3,2) [0-indexed]:", result[2, 1])
++print()
++
++# Verify it's a proper rotation matrix (R * R^T = I)
++print("Verifying R * R^T = I:")
++product = simplify(result * result.T)
++print(product)
++print("Is identity?", product.equals(eye(3)))
++print()
++
++# Test 4x4 transformation matrix with a point
++print("Testing 4x4 transformation (rotation about a point):")
++q2 = Quaternion(cos(x/2), sin(x/2), 0, 0)
++result_4x4 = trigsimp(q2.to_rotation_matrix((1, 2, 3)))
++print("4x4 matrix:")
++print(result_4x4)
+diff --git a/test_q1_matrix.py b/test_q1_matrix.py
+new file mode 100644
+index 0000000000..0a95a7e605
+--- /dev/null
++++ b/test_q1_matrix.py
+@@ -0,0 +1,47 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++# Test q1 = Quaternion(1, 2, 3, 4)
++q1 = Quaternion(1, 2, 3, 4)
++result = q1.to_rotation_matrix()
++
++print("Result for q1 = Quaternion(1, 2, 3, 4):")
++print(result)
++print()
++
++# Calculate manually
++a, b, c, d = 1, 2, 3, 4
++norm_sq = a**2 + b**2 + c**2 + d**2  # = 1 + 4 + 9 + 16 = 30
++s = 1/norm_sq  # = 1/30
++
++m00 = 1 - 2*s*(c**2 + d**2)  # = 1 - 2/30*(9 + 16) = 1 - 50/30 = -20/30 = -2/3
++m01 = 2*s*(b*c - d*a)        # = 2/30*(6 - 4) = 4/30 = 2/15
++m02 = 2*s*(b*d + c*a)        # = 2/30*(8 + 3) = 22/30 = 11/15
++
++m10 = 2*s*(b*c + d*a)        # = 2/30*(6 + 4) = 20/30 = 2/3
++m11 = 1 - 2*s*(b**2 + d**2)  # = 1 - 2/30*(4 + 16) = 1 - 40/30 = -10/30 = -1/3
++m12 = 2*s*(c*d - b*a)        # = 2/30*(12 - 2) = 20/30 = 2/3 (but simplified to 14/15 in test)
++
++m20 = 2*s*(b*d - c*a)        # = 2/30*(8 - 3) = 10/30 = 1/3
++m21 = 2*s*(c*d + b*a)        # = 2/30*(12 + 2) = 28/30 = 14/15
++m22 = 1 - 2*s*(b**2 + c**2)  # = 1 - 2/30*(4 + 9) = 1 - 26/30 = 4/30 = 2/15
++
++print("Manual calculations:")
++print(f"m00 = {m00} = {S(m00)}")
++print(f"m01 = {m01} = {S(m01)}")
++print(f"m02 = {m02} = {S(m02)}")
++print(f"m10 = {m10} = {S(m10)}")
++print(f"m11 = {m11} = {S(m11)}")
++print(f"m12 = {m12} = {S(m12)} -> should be {S(14)/15}")
++print(f"m20 = {m20} = {S(m20)}")
++print(f"m21 = {m21} = {S(m21)}")
++print(f"m22 = {m22} = {S(m22)}")
++
++# The expected value in the test has m12 = 14/15
++# Let's check: 2/30*(12 - 2) = 20/30 = 2/3
++# But 2/3 = 10/15, not 14/15
++# Actually let me recalculate
++print("\nRechecking m12:")
++print(f"c*d - b*a = {c*d - b*a}")
++print(f"2*s*(c*d - b*a) = 2*{s}*{c*d - b*a} = {2*s*(c*d - b*a)}")
++print(f"Simplifying: {S(2*s*(c*d - b*a))}")
+diff --git a/test_quaternion_formulas.py b/test_quaternion_formulas.py
+new file mode 100644
+index 0000000000..b28aeb6862
+--- /dev/null
++++ b/test_quaternion_formulas.py
+@@ -0,0 +1,45 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++# Test case from issue: rotation around x-axis
++print("=== Test case from issue ===")
++x = symbols('x')
++q = Quaternion(cos(x/2), sin(x/2), 0, 0)  # rotation around x-axis
++print(f"Quaternion: q = ({cos(x/2)}, {sin(x/2)}, 0, 0)")
++print(f"This represents rotation around x-axis by angle x")
++
++# The quaternion representation is q = (w, x, y, z) = (a, b, c, d) in the code
++# For our test: a = cos(x/2), b = sin(x/2), c = 0, d = 0
++
++# Let's manually compute what the rotation matrix should be
++print("\nManually computing matrix elements:")
++a, b, c, d = cos(x/2), sin(x/2), 0, 0
++
++# Assuming q is normalized (which it is for our case since cos²(x/2) + sin²(x/2) = 1)
++s = 1  # since norm = 1 for normalized quaternion, s = 1/norm² = 1
++
++# From the code:
++m00 = 1 - 2*s*(c**2 + d**2)  # = 1 - 0 = 1
++m01 = 2*s*(b*c - d*a)        # = 0
++m02 = 2*s*(b*d + c*a)        # = 0
++
++m10 = 2*s*(b*c + d*a)        # = 0
++m11 = 1 - 2*s*(b**2 + d**2)  # = 1 - 2*sin²(x/2) = cos(x)
++m12 = 2*s*(c*d + b*a)        # = 2*sin(x/2)*cos(x/2) = sin(x)
++
++m20 = 2*s*(b*d - c*a)        # = 0
++m21 = 2*s*(c*d + b*a)        # = 2*sin(x/2)*cos(x/2) = sin(x)
++m22 = 1 - 2*s*(b**2 + c**2)  # = 1 - 2*sin²(x/2) = cos(x)
++
++print(f"m11 = 1 - 2*sin²(x/2) = {trigsimp(1 - 2*sin(x/2)**2)}")
++print(f"m12 = 2*sin(x/2)*cos(x/2) = {trigsimp(2*sin(x/2)*cos(x/2))}")
++print(f"m21 = 2*sin(x/2)*cos(x/2) = {trigsimp(2*sin(x/2)*cos(x/2))}")
++print(f"m22 = 1 - 2*sin²(x/2) = {trigsimp(1 - 2*sin(x/2)**2)}")
++
++print("\nActual result from to_rotation_matrix():")
++result = trigsimp(q.to_rotation_matrix())
++print(result)
++
++print("\nExpected result (standard rotation around x-axis):")
++expected = Matrix([[1, 0, 0], [0, cos(x), -sin(x)], [0, sin(x), cos(x)]])
++print(expected)
+diff --git a/test_quaternion_issue.py b/test_quaternion_issue.py
+new file mode 100644
+index 0000000000..dd34671ba6
+--- /dev/null
++++ b/test_quaternion_issue.py
+@@ -0,0 +1,33 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++# Test the issue case
++x = symbols('x')
++q = Quaternion(cos(x/2), sin(x/2), 0, 0)
++result = trigsimp(q.to_rotation_matrix())
++print("Result from issue:")
++print(result)
++print()
++
++# Expected rotation matrix for rotation around x-axis by angle x
++# The rotation matrix should be:
++# [1,      0,       0]
++# [0, cos(x), -sin(x)]  
++# [0, sin(x),  cos(x)]
++print("Expected rotation matrix:")
++print(Matrix([[1, 0, 0], [0, cos(x), -sin(x)], [0, sin(x), cos(x)]]))
++print()
++
++# Let's verify with a specific angle
++angle = pi/4
++q_numeric = Quaternion(cos(angle/2), sin(angle/2), 0, 0)
++result_numeric = q_numeric.to_rotation_matrix()
++print("Numeric result for x=pi/4:")
++print(result_numeric.evalf())
++print()
++
++# Expected for x=pi/4
++print("Expected numeric result for x=pi/4:")
++c = cos(pi/4)
++s = sin(pi/4)
++print(Matrix([[1, 0, 0], [0, c, -s], [0, s, c]]).evalf())
+diff --git a/verify_formula.py b/verify_formula.py
+new file mode 100644
+index 0000000000..231a0b5486
+--- /dev/null
++++ b/verify_formula.py
+@@ -0,0 +1,31 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++print("Standard quaternion to rotation matrix formula:")
++print("For quaternion q = (w, x, y, z) = (a, b, c, d) in sympy")
++print()
++print("R = | 1-2(y²+z²)   2(xy-wz)     2(xz+wy)  |")
++print("    | 2(xy+wz)     1-2(x²+z²)   2(yz-wx)  |") 
++print("    | 2(xz-wy)     2(yz+wx)     1-2(x²+y²)|")
++print()
++print("In sympy notation (a=w, b=x, c=y, d=z):")
++print("R = | 1-2(c²+d²)   2(bc-ad)     2(bd+ac)  |")
++print("    | 2(bc+ad)     1-2(b²+d²)   2(cd-ab)  |")  # This is the key line!
++print("    | 2(bd-ac)     2(cd+ab)     1-2(b²+c²)|")
++print()
++print("The current implementation has:")
++print("m12 = 2*s*(c*d + b*a)")
++print("But it should be:")
++print("m12 = 2*s*(c*d - b*a)")
++print()
++
++# Let's test with another case to be sure - rotation around y-axis
++print("=== Testing rotation around y-axis ===")
++y = symbols('y')
++q_y = Quaternion(cos(y/2), 0, sin(y/2), 0)  # rotation around y-axis
++result_y = trigsimp(q_y.to_rotation_matrix())
++print("Current result:")
++print(result_y)
++print("\nExpected:")
++expected_y = Matrix([[cos(y), 0, sin(y)], [0, 1, 0], [-sin(y), 0, cos(y)]])
++print(expected_y)
+diff --git a/verify_rotation_property.py b/verify_rotation_property.py
+new file mode 100644
+index 0000000000..8261c41998
+--- /dev/null
++++ b/verify_rotation_property.py
+@@ -0,0 +1,36 @@
++from sympy import *
++from sympy.algebras.quaternion import Quaternion
++
++# Test q1 = Quaternion(1, 2, 3, 4)
++q1 = Quaternion(1, 2, 3, 4)
++R = q1.to_rotation_matrix()
++
++print("Testing if R * R^T = I for q1 = Quaternion(1, 2, 3, 4)")
++print("\nR =")
++print(R)
++
++print("\nR * R^T =")
++product = simplify(R * R.T)
++print(product)
++
++print("\nIs R * R^T = I?", product.equals(eye(3)))
++
++# Also test determinant (should be 1 for rotation matrix)
++print("\ndet(R) =", R.det())
++
++# Test with the old value from the test
++print("\n" + "="*50)
++print("Testing the old expected matrix from the test:")
++old_matrix = Matrix([[-S(2)/3, S(2)/15, S(11)/15],
++                     [S(2)/3, -S(1)/3, S(14)/15],
++                     [S(1)/3, S(14)/15, S(2)/15]])
++
++print("\nOld matrix =")
++print(old_matrix)
++
++print("\nOld matrix * Old matrix^T =")
++old_product = simplify(old_matrix * old_matrix.T)
++print(old_product)
++
++print("\nIs old matrix * old matrix^T = I?", old_product.equals(eye(3)))
++print("\ndet(old_matrix) =", old_matrix.det())

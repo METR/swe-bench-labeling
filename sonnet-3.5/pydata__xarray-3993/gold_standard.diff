@@ -1,0 +1,324 @@
+From 504ef80ad6a0669062c298c0cad64063df5125f0 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Tue, 21 Apr 2020 21:27:04 +0100
+Subject: [PATCH 1/8] changed arg and docstrings
+
+---
+ xarray/core/dataarray.py | 24 +++++++++++++++++++-----
+ xarray/core/dataset.py   |  8 +++++---
+ 2 files changed, 24 insertions(+), 8 deletions(-)
+
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index ffa05ca64f0..c9e93dec26e 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -3188,17 +3188,20 @@ def differentiate(
+         return self._from_temp_dataset(ds)
+ 
+     def integrate(
+-        self, dim: Union[Hashable, Sequence[Hashable]], datetime_unit: str = None
++        self,
++        coord: Union[Hashable, Sequence[Hashable]],
++        dim: Union[Hashable, Sequence[Hashable]] = None,
++        datetime_unit: str = None,
+     ) -> "DataArray":
+-        """ integrate the array with the trapezoidal rule.
++        """ Integrate along the given coordinate using the trapezoidal rule.
+ 
+         .. note::
+-            This feature is limited to simple cartesian geometry, i.e. dim
++            This feature is limited to simple cartesian geometry, i.e. coord
+             must be one dimensional.
+ 
+         Parameters
+         ----------
+-        dim: hashable, or a sequence of hashable
++        coord: hashable, or a sequence of hashable
+             Coordinate(s) used for the integration.
+         datetime_unit: str, optional
+             Can be used to specify the unit if datetime coordinate is used.
+@@ -3211,6 +3214,7 @@ def integrate(
+ 
+         See also
+         --------
++        Dataset.integrate
+         numpy.trapz: corresponding numpy function
+ 
+         Examples
+@@ -3236,7 +3240,17 @@ def integrate(
+         array([5.4, 6.6, 7.8])
+         Dimensions without coordinates: y
+         """
+-        ds = self._to_temp_dataset().integrate(dim, datetime_unit)
++
++        if dim is not None:
++            coord = dim
++            msg = (
++                "The `dim` keyword argument to `DataArray.integrate` is "
++                "being replaced with `coord`, for consistency with "
++                "`Dataset.integrate`."
++            )
++            warnings.warn(msg, FutureWarning, stacklevel=2)
++
++        ds = self._to_temp_dataset().integrate(coord, datetime_unit)
+         return self._from_temp_dataset(ds)
+ 
+     def unify_chunks(self) -> "DataArray":
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index d811d54847f..c30cbaa6d63 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -5436,8 +5436,10 @@ def differentiate(self, coord, edge_order=1, datetime_unit=None):
+                 variables[k] = v
+         return self._replace(variables)
+ 
+-    def integrate(self, coord, datetime_unit=None):
+-        """ integrate the array with the trapezoidal rule.
++    def integrate(
++        self, coord: Union[Hashable, Sequence[Hashable]], datetime_unit: str = None
++    ) -> "Dataset":
++        """ Integrate along the given coordinate using the trapezoidal rule.
+ 
+         .. note::
+             This feature is limited to simple cartesian geometry, i.e. coord
+@@ -5445,7 +5447,7 @@ def integrate(self, coord, datetime_unit=None):
+ 
+         Parameters
+         ----------
+-        coord: str, or a sequence of str
++        coord: hashable, or a sequence of hashable
+             Coordinate(s) used for the integration.
+         datetime_unit
+             Can be specify the unit if datetime coordinate is used. One of
+
+From 0fcdfe6733800e60d48c40e4c6a5a8d5b6fe8409 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Tue, 21 Apr 2020 21:27:26 +0100
+Subject: [PATCH 2/8] test warning is raised
+
+---
+ xarray/tests/test_dataset.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
+index a1cb7361e77..cc78feb40db 100644
+--- a/xarray/tests/test_dataset.py
++++ b/xarray/tests/test_dataset.py
+@@ -6135,6 +6135,9 @@ def test_integrate(dask):
+     with pytest.raises(ValueError):
+         da.integrate("x2d")
+ 
++    with pytest.warns(FutureWarning):
++        da.integrate(dim="x")
++
+ 
+ @pytest.mark.parametrize("dask", [True, False])
+ @pytest.mark.parametrize("which_datetime", ["np", "cftime"])
+
+From f0074bfb6b9903eee8484cade834d7379cebad5d Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Tue, 21 Apr 2020 21:28:34 +0100
+Subject: [PATCH 3/8] updated kwarg in test
+
+---
+ xarray/tests/test_units.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/tests/test_units.py b/xarray/tests/test_units.py
+index 2826dc2479c..b2aa65c9a04 100644
+--- a/xarray/tests/test_units.py
++++ b/xarray/tests/test_units.py
+@@ -3473,7 +3473,7 @@ def test_stacking_reordering(self, func, dtype):
+         (
+             method("diff", dim="x"),
+             method("differentiate", coord="x"),
+-            method("integrate", dim="x"),
++            method("integrate", coord="x"),
+             pytest.param(
+                 method("quantile", q=[0.25, 0.75]),
+                 marks=pytest.mark.xfail(reason="nanquantile not implemented"),
+
+From ecb7cb1de73b43190fc844c7a31d780eedbe7f05 Mon Sep 17 00:00:00 2001
+From: Thomas Nicholas <tegn500@york.ac.uk>
+Date: Tue, 21 Apr 2020 21:28:46 +0100
+Subject: [PATCH 4/8] updated what's new
+
+---
+ doc/whats-new.rst | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 46319730d21..c9a2ca2e41c 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -27,6 +27,12 @@ Breaking changes
+   (:pull:`3274`)
+   By `Elliott Sales de Andrade <https://github.com/QuLogic>`_
+ 
++- New deprecations (behavior will be changed in xarray 0.17):
++  - ``dim`` argument to :py:meth:`DataArray.integrate` is being deprecated in
++    favour of a ``coord`` arg, for consistency with :py:meth:`Dataset.integrate`.
++    For now using ``dim`` issues a ``FutureWarning``.
++    By `Tom Nicholas <https://github.com/TomNicholas>`_.
++
+ New Features
+ ~~~~~~~~~~~~
+ - Added :py:meth:`DataArray.polyfit` and :py:func:`xarray.polyval` for fitting polynomials. (:issue:`3349`)
+
+From 75be02458c0a7af8338458f470e0070574c948bf Mon Sep 17 00:00:00 2001
+From: dcherian <deepak@cherian.net>
+Date: Mon, 18 Jan 2021 07:02:14 -0700
+Subject: [PATCH 5/8] Fix error checking
+
+---
+ xarray/core/dataarray.py | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index db01121b9da..1517e007a31 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -3452,9 +3452,10 @@ def differentiate(
+ 
+     def integrate(
+         self,
+-        coord: Union[Hashable, Sequence[Hashable]],
+-        dim: Union[Hashable, Sequence[Hashable]] = None,
++        coord: Union[Hashable, Sequence[Hashable]] = None,
+         datetime_unit: str = None,
++        *,
++        dim: Union[Hashable, Sequence[Hashable]] = None,
+     ) -> "DataArray":
+         """Integrate along the given coordinate using the trapezoidal rule.
+ 
+@@ -3505,13 +3506,18 @@ def integrate(
+         array([5.4, 6.6, 7.8])
+         Dimensions without coordinates: y
+         """
++        if dim is not None and coord is not None:
++            raise ValueError(
++                "Cannot pass both 'dim' and 'coord'. Please pass only 'coord' instead."
++            )
+ 
+-        if dim is not None:
++        if dim is not None and coord is None:
+             coord = dim
+             msg = (
+                 "The `dim` keyword argument to `DataArray.integrate` is "
+                 "being replaced with `coord`, for consistency with "
+-                "`Dataset.integrate`."
++                "`Dataset.integrate`. Please pass `coord` instead."
++                " `dim` will be removed in version 0.19.0."
+             )
+             warnings.warn(msg, FutureWarning, stacklevel=2)
+ 
+
+From 4614d76b4f64685433409ef3b8f81ef879315486 Mon Sep 17 00:00:00 2001
+From: dcherian <deepak@cherian.net>
+Date: Mon, 18 Jan 2021 07:04:23 -0700
+Subject: [PATCH 6/8] Fix whats-new
+
+---
+ doc/whats-new.rst | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 063e7cd9b64..6f47446a2eb 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -42,6 +42,13 @@ Breaking changes
+ - remove deprecated ``autoclose`` kwargs from :py:func:`open_dataset` (:pull: `4725`).
+   By `Aureliana Barghini <https://github.com/aurghs>`_
+ 
++Deprecations
++~~~~~~~~~~~~
++
++- ``dim`` argument to :py:meth:`DataArray.integrate` is being deprecated in
++  favour of a ``coord`` argument, for consistency with :py:meth:`Dataset.integrate`.
++  For now using ``dim`` issues a ``FutureWarning``. By `Tom Nicholas <https://github.com/TomNicholas>`_.
++
+ 
+ New Features
+ ~~~~~~~~~~~~
+@@ -435,12 +442,6 @@ Breaking changes
+   default (:issue:`4176`)
+   By `Stephan Hoyer <https://github.com/shoyer>`_.
+ 
+-- New deprecations (behavior will be changed in xarray 0.17):
+-  - ``dim`` argument to :py:meth:`DataArray.integrate` is being deprecated in
+-    favour of a ``coord`` arg, for consistency with :py:meth:`Dataset.integrate`.
+-    For now using ``dim`` issues a ``FutureWarning``.
+-    By `Tom Nicholas <https://github.com/TomNicholas>`_.
+-
+ New Features
+ ~~~~~~~~~~~~
+ - :py:meth:`DataArray.argmin` and :py:meth:`DataArray.argmax` now support
+
+From 5bbee25414283ec332388a5f1698950196cca51c Mon Sep 17 00:00:00 2001
+From: dcherian <deepak@cherian.net>
+Date: Fri, 29 Jan 2021 09:44:00 -0700
+Subject: [PATCH 7/8] fix docstring
+
+---
+ xarray/core/dataarray.py | 6 ++----
+ xarray/core/dataset.py   | 7 +++----
+ 2 files changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index a1eda81cf54..0dada4386b0 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -3492,10 +3492,8 @@ def integrate(
+             Coordinate(s) used for the integration.
+         dim : hashable, or sequence of hashable
+             Coordinate(s) used for the integration.
+-        datetime_unit: str, optional
+-            Can be specify the unit if datetime coordinate is used. One of
+-            {'Y', 'M', 'W', 'D', 'h', 'm', 's', 'ms', 'us', 'ns', 'ps', 'fs',
+-            'as'}
++        datetime_unit: {'Y', 'M', 'W', 'D', 'h', 'm', 's', 'ms', 'us', 'ns', \
++                        'ps', 'fs', 'as'}, optional
+ 
+         Returns
+         -------
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index 1f12b355357..821d5dc89f2 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -5891,10 +5891,9 @@ def integrate(
+         ----------
+         coord: hashable, or a sequence of hashable
+             Coordinate(s) used for the integration.
+-        datetime_unit: str, optional
+-            Can be specify the unit if datetime coordinate is used. One of
+-            {'Y', 'M', 'W', 'D', 'h', 'm', 's', 'ms', 'us', 'ns', 'ps', 'fs',
+-            'as'}
++        datetime_unit: {'Y', 'M', 'W', 'D', 'h', 'm', 's', 'ms', 'us', 'ns', \
++                        'ps', 'fs', 'as'}
++            Specify the unit if datetime coordinate is used.
+ 
+         Returns
+         -------
+
+From 92ac2dcefd647e2c5d1338495df287b11bd4f0ad Mon Sep 17 00:00:00 2001
+From: dcherian <deepak@cherian.net>
+Date: Fri, 29 Jan 2021 09:50:51 -0700
+Subject: [PATCH 8/8] small fix
+
+---
+ xarray/core/dataset.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index 706c9caec1d..8376b4875f9 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -5977,7 +5977,7 @@ def integrate(
+         coord: hashable, or a sequence of hashable
+             Coordinate(s) used for the integration.
+         datetime_unit: {'Y', 'M', 'W', 'D', 'h', 'm', 's', 'ms', 'us', 'ns', \
+-                        'ps', 'fs', 'as'}
++                        'ps', 'fs', 'as'}, optional
+             Specify the unit if datetime coordinate is used.
+ 
+         Returns

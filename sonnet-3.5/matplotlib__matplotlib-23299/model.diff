@@ -1,0 +1,31 @@
+diff --git a/lib/matplotlib/__init__.py b/lib/matplotlib/__init__.py
+index c268a56724..d2f12aafcc 100644
+--- a/lib/matplotlib/__init__.py
++++ b/lib/matplotlib/__init__.py
+@@ -630,11 +630,22 @@ class RcParams(MutableMapping, dict):
+             if key in _deprecated_map:
+                 version, alt_key, alt_val, inverse_alt = _deprecated_map[key]
+                 _api.warn_deprecated(
+-                    version, name=key, obj_type="rcparam", alternative=alt_key)
+-                key = alt_key
+-                val = alt_val(val)
+-            elif key in _deprecated_remain_as_none and val is not None:
++elif key == 'backend':
++                if val is rcsetup._auto_backend_sentinel:
++                    if 'backend' in self:
++                        return
++                # Store the current Gcf.figs state
++                from matplotlib import _pylab_helpers
++                current_figs = dict(_pylab_helpers.Gcf.figs)
+                 version, = _deprecated_remain_as_none[key]
++                try:
++                    cval = self.validate[key](val)
++                except ValueError as ve:
++                    raise ValueError(f"Key {key}: {ve}") from None
++                dict.__setitem__(self, key, cval)
++                # Restore the Gcf.figs state
++                _pylab_helpers.Gcf.figs.update(current_figs)
++                return
+                 _api.warn_deprecated(version, name=key, obj_type="rcparam")
+             elif key in _deprecated_ignore_map:
+                 version, alt_key = _deprecated_ignore_map[key]

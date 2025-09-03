@@ -1,0 +1,39 @@
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index 379be8f5..29e56b8d 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -1947,7 +1947,7 @@ class IndexVariable(Variable):
+                 # point, which doesn't have a copy method, so make a deep copy
+                 # of the underlying `pandas.MultiIndex` and create a new
+                 # `PandasIndexAdapter` instance with it.
+-                data = PandasIndexAdapter(self._data.array.copy(deep=True))
++                data = PandasIndexAdapter(self._data.array.copy(deep=True), dtype=self._data.dtype)
+             else:
+                 data = self._data
+         else:
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index 73d2a40b..389b151a 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -1863,6 +1863,21 @@ class TestIndexVariable(VariableSubclassobjects):
+         with raises_regex(ValueError, 'has no MultiIndex'):
+             IndexVariable('y', [10.0]).get_level_variable('level')
+ 
++    def test_copy_preserves_unicode_dtype(self):
++        """Test that copy(deep=True) preserves unicode dtype."""
++        # Test with unicode data
++        data = np.array(['foo', 'bar'], dtype='<U3')
++        v = IndexVariable('x', data)
++        assert v.dtype == np.dtype('<U3')
++        
++        # Test shallow copy
++        v_shallow = v.copy(deep=False)
++        assert v_shallow.dtype == np.dtype('<U3')
++        
++        # Test deep copy - this was the regression
++        v_deep = v.copy(deep=True)
++        assert v_deep.dtype == np.dtype('<U3'), f"Expected dtype '<U3', got {v_deep.dtype}"
++
+     def test_concat_periods(self):
+         periods = pd.period_range('2000-01-01', periods=10)
+         coords = [IndexVariable('t', periods[:5]),

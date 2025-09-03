@@ -1,0 +1,66 @@
+diff --git a/src/_pytest/pathlib.py b/src/_pytest/pathlib.py
+index 0403b6947..5d1f0168a 100644
+--- a/src/_pytest/pathlib.py
++++ b/src/_pytest/pathlib.py
+@@ -24,6 +24,12 @@ else:
+ 
+ __all__ = ["Path", "PurePath"]
+ 
++def normalize_case_for_windows(path):
++    """Normalize the case of the path on Windows."""
++    if sys.platform.startswith('win'):
++        return str(Path(path).resolve())
++    return path
++
+ 
+ LOCK_TIMEOUT = 60 * 60 * 3
+ 
+@@ -291,10 +297,13 @@ def resolve_from_str(input, root):
+     root = Path(root)
+     input = expanduser(input)
+     input = expandvars(input)
++    logging.debug(f"Resolving path: input={input}, root={root}")
+     if isabs(input):
+-        return Path(input)
++        result = Path(normalize_case_for_windows(input))
+     else:
+-        return root.joinpath(input)
++        result = Path(normalize_case_for_windows(str(root.joinpath(input))))
++    logging.debug(f"Resolved path: {result}")
++    return result
+ 
+ 
+ def fnmatch_ex(pattern, path):
+@@ -337,6 +346,17 @@ def parts(s):
+     return {sep.join(parts[: i + 1]) or sep for i in range(len(parts))}
+ 
+ 
++import logging
++
++def normalize_case_for_windows(path):
++    """Normalize the case of the path on Windows."""
++    if sys.platform.startswith('win'):
++        normalized_path = str(Path(path).resolve())
++        logging.debug(f"Normalizing path: {path} -> {normalized_path}")
++        return normalized_path
++    return path
++
++
+ def unique_path(path):
+     """Returns a unique path in case-insensitive (but case-preserving) file
+     systems such as Windows.
+diff --git a/src/pytest.py b/src/pytest.py
+index b934e65cb..8bb897232 100644
+--- a/src/pytest.py
++++ b/src/pytest.py
+@@ -45,6 +45,10 @@ from _pytest.warning_types import PytestUnhandledCoroutineWarning
+ from _pytest.warning_types import PytestUnknownMarkWarning
+ from _pytest.warning_types import PytestWarning
+ 
++import logging
++import sys
++
++logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+ 
+ set_trace = __pytestPDB.set_trace
+ 

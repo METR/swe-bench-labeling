@@ -1,0 +1,30 @@
+diff --git a/pylint/checkers/variables.py b/pylint/checkers/variables.py
+index 3ddafd599..ec8c6365a 100644
+--- a/pylint/checkers/variables.py
++++ b/pylint/checkers/variables.py
+@@ -2080,7 +2080,9 @@ class VariablesChecker(BaseChecker):
+                             fields = (imported_name, stmt.modname, as_name)
+                             msg = "%s imported from %s as %s" % fields
+                         if not _is_type_checking_import(stmt):
+-                            self.add_message("unused-import", args=msg, node=stmt)
++                            # Check if the import is used in a type comment
++                            if not self._is_import_used_in_type_comment(stmt, imported_name):
++                                self.add_message("unused-import", args=msg, node=stmt)
+         del self._to_consume
+ 
+     def _check_metaclasses(self, node):
+@@ -2146,6 +2148,14 @@ class VariablesChecker(BaseChecker):
+ 
+         return consumed
+ 
++    def _is_import_used_in_type_comment(self, import_node, imported_name):
++        """Check if the imported name is used in a type comment."""
++        module = import_node.root()
++        for node in module.body:
++            if hasattr(node, 'type_comment'):
++                if imported_name in node.type_comment:
++                    return True
++        return False
+ 
+ def register(linter):
+     """required method to auto register this checker"""

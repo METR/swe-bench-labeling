@@ -1,0 +1,216 @@
+diff --git a/test_factor_debug.py b/test_factor_debug.py
+new file mode 100644
+index 0000000000..83a8903e9d
+--- /dev/null
++++ b/test_factor_debug.py
+@@ -0,0 +1,32 @@
++from sympy import *
++from sympy.polys.polytools import Poly
++
++# Test the issue
++x, y = symbols('x y')
++z = expand((x-1)*(y-1))
++print("Original expression:", z)
++
++# Create poly without extension
++p1 = Poly(z, x, y)
++print("\nPoly without extension:")
++print("  Poly:", p1)
++print("  Domain:", p1.domain)
++print("  Rep:", p1.rep)
++print("  factor_list():", p1.factor_list())
++
++# Create poly with extension
++p2 = Poly(z, x, y, extension=[I])
++print("\nPoly with extension=[I]:")
++print("  Poly:", p2)
++print("  Domain:", p2.domain)
++print("  Rep:", p2.rep)
++print("  factor_list():", p2.factor_list())
++
++# Let's check what rep.factor_list() returns
++print("\nDirect rep.factor_list():")
++try:
++    coeff, factors = p2.rep.factor_list()
++    print("  Coeff:", coeff)
++    print("  Factors:", factors)
++except Exception as e:
++    print("  Error:", e)
+diff --git a/test_factor_issue.py b/test_factor_issue.py
+new file mode 100644
+index 0000000000..ab6036259f
+--- /dev/null
++++ b/test_factor_issue.py
+@@ -0,0 +1,27 @@
++from sympy import *
++from sympy.polys.polytools import _symbolic_factor_list, _poly_from_expr
++from sympy.polys.polyoptions import build_options
++
++# Test the issue
++x, y = symbols('x y')
++z = expand((x-1)*(y-1))
++print("Original expression:", z)
++print("Standard factor:", factor(z))
++print("Factor with extension=[I]:", factor(z, extension=[I]))
++
++# Let's trace through what happens
++opt = build_options([], {'extension': [I]})
++print("\nOptions built:", opt)
++
++# Check what _poly_from_expr does with our expression
++try:
++    poly, new_opt = _poly_from_expr(z, opt)
++    print("\nPoly from expr:", poly)
++    print("Poly gens:", poly.gens)
++    print("Poly domain:", poly.domain)
++except Exception as e:
++    print("\nError in _poly_from_expr:", e)
++
++# Let's also check factor_list
++print("\nfactor_list(z):", factor_list(z))
++print("factor_list(z, extension=[I]):", factor_list(z, extension=[I]))
+diff --git a/test_trace_factor.py b/test_trace_factor.py
+new file mode 100644
+index 0000000000..8572f1f79f
+--- /dev/null
++++ b/test_trace_factor.py
+@@ -0,0 +1,58 @@
++from sympy import *
++from sympy.polys.polytools import Poly
++from sympy.polys.sqfreetools import dmp_sqf_norm
++from sympy.polys.factortools import dmp_ext_factor, dmp_factor_list_include
++from sympy.polys.polyclasses import DMP
++
++# Test the issue
++x, y = symbols('x y')
++z = expand((x-1)*(y-1))
++print("Original expression:", z)
++
++# Create poly with extension
++p = Poly(z, x, y, extension=[I])
++print("\nPoly with extension=[I]:")
++print("  Poly:", p)
++print("  Domain:", p.domain)
++
++# Extract the underlying representation
++f = p.rep.rep  # Get the raw dense representation
++u = p.rep.lev
++K = p.domain
++
++print("\nDMP info:")
++print("  f =", f)
++print("  u =", u)
++print("  K =", K)
++
++# Call dmp_ext_factor directly
++print("\nCalling dmp_ext_factor directly...")
++try:
++    lc, factors = dmp_ext_factor(f, u, K)
++    print("  lc =", lc)
++    print("  factors =", factors)
++except Exception as e:
++    print("  Error:", e)
++    import traceback
++    traceback.print_exc()
++
++# Let's also trace dmp_sqf_norm
++print("\nCalling dmp_sqf_norm...")
++try:
++    s, g, r = dmp_sqf_norm(f, u, K)
++    print("  s =", s)
++    print("  g =", g) 
++    print("  r =", r)
++    
++    # Now factor r over K.dom
++    print("\n  Factoring r over K.dom...")
++    factors_r = dmp_factor_list_include(r, u, K.dom)
++    print("  factors_r =", factors_r)
++except Exception as e:
++    print("  Error:", e)
++    import traceback
++    traceback.print_exc()
++    
++# Now let's manually examine what happens after sqf_norm
++print("\nAnalyzing the factorization process...")
++# The problem might be in how factors are converted back
+diff --git a/test_trace_factor2.py b/test_trace_factor2.py
+new file mode 100644
+index 0000000000..ea903af547
+--- /dev/null
++++ b/test_trace_factor2.py
+@@ -0,0 +1,68 @@
++from sympy import *
++from sympy.polys.polytools import Poly
++from sympy.polys.sqfreetools import dmp_sqf_norm, dmp_sqf_part
++from sympy.polys.factortools import dmp_ext_factor, dmp_factor_list_include, dmp_trial_division
++from sympy.polys.euclidtools import dmp_inner_gcd
++from sympy.polys.densetools import dmp_compose, dmp_convert, dmp_ground_monic
++from sympy.polys.densebasic import dmp_ground_LC, dmp_degree_list, dmp_raise
++
++# Test the issue
++x, y = symbols('x y')
++z = expand((x-1)*(y-1))
++print("Original expression:", z)
++
++# Create poly with extension
++p = Poly(z, x, y, extension=[I])
++f = p.rep.rep
++u = p.rep.lev
++K = p.domain
++
++print("\nStarting dmp_ext_factor analysis...")
++lc = dmp_ground_LC(f, u, K)
++f_monic = dmp_ground_monic(f, u, K)
++print("lc =", lc)
++print("f_monic =", f_monic)
++
++# Check if all degrees are <= 0
++degrees = dmp_degree_list(f_monic, u)
++print("degrees =", degrees)
++
++# Get square-free part
++f_sqf, F = dmp_sqf_part(f_monic, u, K), f_monic
++print("\nf_sqf =", f_sqf)
++print("F =", F)
++
++# Get square-free norm
++s, g, r = dmp_sqf_norm(f_sqf, u, K)
++print("\ns =", s)
++print("g =", g)
++print("r =", r)
++
++# Factor r over K.dom
++factors_r = dmp_factor_list_include(r, u, K.dom)
++print("\nfactors_r =", factors_r)
++print("Number of factors:", len(factors_r))
++
++# Now let's trace what happens in the conversion back
++if len(factors_r) != 1:
++    H = dmp_raise([K.one, s*K.unit], u, 0, K)
++    print("\nH =", H)
++    
++    factors = []
++    for i, (factor, _) in enumerate(factors_r):
++        print(f"\nProcessing factor {i}: {factor}")
++        h = dmp_convert(factor, u, K.dom, K)
++        print(f"  After convert: {h}")
++        h, _, g = dmp_inner_gcd(h, g, u, K)
++        print(f"  After gcd: {h}")
++        h = dmp_compose(h, H, u, K)
++        print(f"  After compose: {h}")
++        factors.append(h)
++    
++    print("\nAll factors before trial division:", factors)
++    
++    # Trial division
++    result = dmp_trial_division(F, factors, u, K)
++    print("\nFinal result:", result)
++else:
++    print("\nOnly one factor found, returning f_sqf")
+diff --git a/test_trace_factor3.py b/test_trace_factor3.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_trace_factor3.py
+@@ -0,0 +1 @@
++

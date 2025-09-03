@@ -1,0 +1,316 @@
+diff --git a/django/views/generic/base.py b/django/views/generic/base.py
+index db1842e3e5..9e0362f166 100644
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -148,7 +148,15 @@ class View:
+             request.path,
+             extra={"status_code": 405, "request": request},
+         )
+-        return HttpResponseNotAllowed(self._allowed_methods())
++        response = HttpResponseNotAllowed(self._allowed_methods())
++        
++        if self.view_is_async:
++            async def func():
++                return response
++            
++            return func()
++        else:
++            return response
+ 
+     def options(self, request, *args, **kwargs):
+         """Handle responding to requests for the OPTIONS HTTP verb."""
+diff --git a/test_async_view.py b/test_async_view.py
+new file mode 100644
+index 0000000000..eb2a626224
+--- /dev/null
++++ b/test_async_view.py
+@@ -0,0 +1,55 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    DEFAULT_CHARSET='utf-8',
++    ALLOWED_HOSTS=['*'],
++    MIDDLEWARE=[],
++    ROOT_URLCONF=[],
++)
++django.setup()
++
++from django.views import View
++from django.http import HttpResponse
++
++class Demo(View):
++    """This basic view supports only POST requests"""
++    async def post(self, request):
++        return HttpResponse("ok")
++
++# Test the issue
++from django.test import RequestFactory
++
++# Create a request factory
++rf = RequestFactory()
++
++# Create a GET request to the view
++request = rf.get('/demo')
++
++# Get the view callable
++view = Demo.as_view()
++
++# Call the view - this should work now
++try:
++    import asyncio
++    response = asyncio.run(view(request))
++    print(f"Response status code: {response.status_code}")
++    print(f"Response type: {type(response)}")
++    print(f"Allowed methods: {response['Allow']}")
++    print("Success! The async view correctly returned a 405 response for GET request")
++except Exception as e:
++    print(f"Error: {e}")
++    print(f"Error type: {type(e)}")
++
++# Test POST request (should work)
++print("\nTesting POST request...")
++post_request = rf.post('/demo')
++try:
++    response = asyncio.run(view(post_request))
++    print(f"POST Response status code: {response.status_code}")
++    print(f"POST Response content: {response.content.decode()}")
++except Exception as e:
++    print(f"POST Error: {e}")
+diff --git a/test_mixed_view.py b/test_mixed_view.py
+new file mode 100644
+index 0000000000..4b3f51c4d7
+--- /dev/null
++++ b/test_mixed_view.py
+@@ -0,0 +1,39 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    DEFAULT_CHARSET='utf-8',
++    ALLOWED_HOSTS=['*'],
++    MIDDLEWARE=[],
++    ROOT_URLCONF=[],
++)
++django.setup()
++
++from django.views import View
++from django.http import HttpResponse
++
++class MixedDemo(View):
++    """This view has mixed sync/async handlers - should raise error"""
++    async def post(self, request):
++        return HttpResponse("ok from async")
++    
++    def get(self, request):
++        return HttpResponse("ok from sync")
++
++# Test the issue
++from django.test import RequestFactory
++
++# Create a request factory
++rf = RequestFactory()
++
++# Get the view callable - this should raise an error
++try:
++    view = MixedDemo.as_view()
++    print("ERROR: Mixed view should have raised ImproperlyConfigured!")
++except Exception as e:
++    print(f"Expected error: {e}")
++    print(f"Error type: {type(e)}")
++    print("Success! Mixed sync/async handlers are properly detected")
+diff --git a/test_original_issue.py b/test_original_issue.py
+new file mode 100644
+index 0000000000..411725704a
+--- /dev/null
++++ b/test_original_issue.py
+@@ -0,0 +1,74 @@
++"""
++Test to reproduce the exact issue described in the bug report.
++"""
++
++import django
++from django.conf import settings
++from django.urls import path
++
++# Configure Django settings as in the report
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    DEFAULT_CHARSET='utf-8',
++    ALLOWED_HOSTS=['*'],
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.sessions',
++    ],
++    MIDDLEWARE=[
++        'django.middleware.security.SecurityMiddleware',
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.middleware.common.CommonMiddleware',
++        'django.middleware.csrf.CsrfViewMiddleware',
++        'django.contrib.auth.middleware.AuthenticationMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    ROOT_URLCONF=__name__,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++)
++
++django.setup()
++
++from django.views import View
++from django.http import HttpResponse
++from django.test import Client
++
++class Demo(View):
++    """This basic view supports only POST requests"""
++    async def post(self, request):
++        return HttpResponse("ok")
++
++# URL patterns
++urlpatterns = [
++    path("demo", Demo.as_view()),
++]
++
++# Test with Django test client
++client = Client()
++
++# This should cause the issue before our fix
++print("Testing GET request to async view with only POST handler...")
++try:
++    response = client.get('/demo')
++    print(f"Response status: {response.status_code}")
++    print(f"Response Allow header: {response.get('Allow')}")
++    print("SUCCESS: The issue is fixed!")
++except Exception as e:
++    print(f"ERROR: {e}")
++    print(f"Error type: {type(e)}")
++
++# Test POST request (should work)
++print("\nTesting POST request...")
++try:
++    response = client.post('/demo')
++    print(f"Response status: {response.status_code}")
++    print(f"Response content: {response.content.decode()}")
++except Exception as e:
++    print(f"POST Error: {e}")
+diff --git a/test_sync_view.py b/test_sync_view.py
+new file mode 100644
+index 0000000000..61f3190716
+--- /dev/null
++++ b/test_sync_view.py
+@@ -0,0 +1,54 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    DEFAULT_CHARSET='utf-8',
++    ALLOWED_HOSTS=['*'],
++    MIDDLEWARE=[],
++    ROOT_URLCONF=[],
++)
++django.setup()
++
++from django.views import View
++from django.http import HttpResponse
++
++class SyncDemo(View):
++    """This basic view supports only POST requests"""
++    def post(self, request):
++        return HttpResponse("ok from sync")
++
++# Test the issue
++from django.test import RequestFactory
++
++# Create a request factory
++rf = RequestFactory()
++
++# Create a GET request to the view
++request = rf.get('/demo')
++
++# Get the view callable
++view = SyncDemo.as_view()
++
++# Call the view - this should work for sync views
++try:
++    response = view(request)
++    print(f"Response status code: {response.status_code}")
++    print(f"Response type: {type(response)}")
++    print(f"Allowed methods: {response['Allow']}")
++    print("Success! The sync view correctly returned a 405 response for GET request")
++except Exception as e:
++    print(f"Error: {e}")
++    print(f"Error type: {type(e)}")
++
++# Test POST request (should work)
++print("\nTesting POST request...")
++post_request = rf.post('/demo')
++try:
++    response = view(post_request)
++    print(f"POST Response status code: {response.status_code}")
++    print(f"POST Response content: {response.content.decode()}")
++except Exception as e:
++    print(f"POST Error: {e}")
+diff --git a/tests/async/tests.py b/tests/async/tests.py
+index 66eece4b97..98d181503c 100644
+--- a/tests/async/tests.py
++++ b/tests/async/tests.py
+@@ -125,3 +125,44 @@ class ViewTests(SimpleTestCase):
+         sync.
+         """
+         self.assertIs(View.view_is_async, False)
++
++    def test_http_method_not_allowed_responds_correctly(self):
++        """
++        Test that http_method_not_allowed returns a coroutine for async views
++        and a regular response for sync views.
++        """
++        from django.test import RequestFactory
++        
++        rf = RequestFactory()
++        
++        # Test async view with method not allowed
++        class AsyncOnlyPostView(View):
++            async def post(self, request, *args, **kwargs):
++                return HttpResponse("POST response")
++        
++        # Test sync view with method not allowed  
++        class SyncOnlyPostView(View):
++            def post(self, request, *args, **kwargs):
++                return HttpResponse("POST response")
++        
++        tests = [
++            (AsyncOnlyPostView, True),
++            (SyncOnlyPostView, False),
++        ]
++        
++        for view_cls, is_async in tests:
++            with self.subTest(view_cls=view_cls, is_async=is_async):
++                view = view_cls.as_view()
++                # GET request to a view that only implements POST
++                request = rf.get('/')
++                
++                if is_async:
++                    # For async views, the view should return a coroutine
++                    response = asyncio.run(view(request))
++                else:
++                    # For sync views, it should return directly
++                    response = view(request)
++                    
++                self.assertEqual(response.status_code, 405)
++                self.assertEqual(response['Allow'], 'POST, OPTIONS')
++        self.assertIs(View.view_is_async, False)

@@ -1,0 +1,77 @@
+diff --git a/src/_pytest/config/__init__.py b/src/_pytest/config/__init__.py
+index 3a0eca546..afb918ef9 100644
+--- a/src/_pytest/config/__init__.py
++++ b/src/_pytest/config/__init__.py
+@@ -435,9 +435,9 @@ class PytestPluginManager(PluginManager):
+         # Use realpath to avoid loading the same conftest twice
+         # with build systems that create build directories containing
+         # symlinks to actual files.
+-        conftestpath = unique_path(conftestpath)
++        unique_conftestpath = unique_path(conftestpath)
+         try:
+-            return self._conftestpath2mod[conftestpath]
++            return self._conftestpath2mod[unique_conftestpath]
+         except KeyError:
+             pkgpath = conftestpath.pypkgpath()
+             if pkgpath is None:
+@@ -454,7 +454,7 @@ class PytestPluginManager(PluginManager):
+                 raise ConftestImportFailure(conftestpath, sys.exc_info())
+ 
+             self._conftest_plugins.add(mod)
+-            self._conftestpath2mod[conftestpath] = mod
++            self._conftestpath2mod[unique_conftestpath] = mod
+             dirpath = conftestpath.dirpath()
+             if dirpath in self._dirpath2confmods:
+                 for path, mods in self._dirpath2confmods.items():
+diff --git a/testing/test_conftest.py b/testing/test_conftest.py
+index 9888f5457..98ec9ece9 100644
+--- a/testing/test_conftest.py
++++ b/testing/test_conftest.py
+@@ -1,4 +1,5 @@
+ import os.path
++import sys
+ import textwrap
+ 
+ import py
+@@ -638,4 +639,41 @@ def test_required_option_help(testdir):
+     )
+     result = testdir.runpytest("-h", x)
+     assert "argument --xyz is required" not in result.stdout.str()
++
++@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows only issue") 
++def test_conftest_import_with_mixed_case_path_on_windows(testdir):
++    """Regression test for issue where pytest would convert paths to lowercase
++    on Windows, breaking imports from directories with uppercase letters (#5792).
++    """
++    # Create a directory structure with mixed case similar to the reported issue
++    testdir.tmpdir.ensure("Azure/KMS/ComponentTest/Python/PIsys", dir=True)
++    testdir.tmpdir.join("Azure/KMS/ComponentTest/Python/PIsys/conftest.py").write(
++        textwrap.dedent(
++            """\
++            import pytest
++            
++            @pytest.fixture
++            def my_fixture():
++                return "test_value"
++            """
++        )
++    )
++    testdir.tmpdir.join("Azure/KMS/ComponentTest/Python/PIsys/test_sample.py").write(
++        textwrap.dedent(
++            """\
++            def test_with_fixture(my_fixture):
++                assert my_fixture == "test_value"
++            """
++        )
++    )
++    
++    # Change to the Python directory as in the issue report
++    with testdir.tmpdir.join("Azure/KMS/ComponentTest/Python").as_cwd():
++        result = testdir.runpytest("--collect-only", "./PIsys")
++    
++    # Should not have import errors
++    result.stdout.no_fnmatch_line("*ModuleNotFoundError*")
++    result.stdout.no_fnmatch_line("*ImportError*")
++    # Should find the test
++    result.stdout.fnmatch_lines(["*test_sample.py*", "*test_with_fixture*"])
+     assert "general:" in result.stdout.str()

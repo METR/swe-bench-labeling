@@ -1,0 +1,25 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index 0c3a981290..2962043b42 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -293,7 +293,10 @@ class BaseCommand:
+         """
+         Entry point for subclassed commands to add custom arguments.
+         """
+-        pass
++        parser.add_argument(
++            '--skip-checks', action='store_true',
++            help='Skip system checks.',
++        )
+ 
+     def print_help(self, prog_name, subcommand):
+         """
+@@ -359,7 +362,7 @@ class BaseCommand:
+ 
+         if self.requires_system_checks and not options.get('skip_checks'):
+             self.check()
+-        if self.requires_migrations_checks:
++        if self.requires_migrations_checks and not options.get('skip_checks'):
+             self.check_migrations()
+         output = self.handle(*args, **options)
+         if output:

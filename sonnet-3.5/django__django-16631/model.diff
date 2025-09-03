@@ -1,0 +1,46 @@
+diff --git a/django/contrib/auth/base_user.py b/django/contrib/auth/base_user.py
+index 5ee30bf59c..494aefe3f3 100644
+--- a/django/contrib/auth/base_user.py
++++ b/django/contrib/auth/base_user.py
+@@ -140,6 +140,7 @@ class AbstractBaseUser(models.Model):
+             key_salt,
+             self.password,
+             algorithm="sha256",
++            secret=None,  # This will use settings.SECRET_KEY and SECRET_KEY_FALLBACKS
+         ).hexdigest()
+ 
+     @classmethod
+diff --git a/django/utils/crypto.py b/django/utils/crypto.py
+index 1c0e7001c6..79bab9aef8 100644
+--- a/django/utils/crypto.py
++++ b/django/utils/crypto.py
+@@ -34,14 +34,21 @@ def salted_hmac(key_salt, value, secret=None, *, algorithm="sha1"):
+         raise InvalidAlgorithm(
+             "%r is not an algorithm accepted by the hashlib module." % algorithm
+         ) from e
+-    # We need to generate a derived key from our base key.  We can do this by
+-    # passing the key_salt and our base key through a pseudo-random function.
+-    key = hasher(key_salt + secret).digest()
+-    # If len(key_salt + secret) > block size of the hash algorithm, the above
+-    # line is redundant and could be replaced by key = key_salt + secret, since
+-    # the hmac module does the same thing for keys longer than the block size.
+-    # However, we need to ensure that we *always* do this.
+-    return hmac.new(key, msg=force_bytes(value), digestmod=hasher)
++
++    # Use SECRET_KEY_FALLBACKS if available
++    if hasattr(settings, 'SECRET_KEY_FALLBACKS'):
++        secrets = [settings.SECRET_KEY] + list(settings.SECRET_KEY_FALLBACKS)
++    else:
++        secrets = [secret]
++
++    # Generate HMACs for all secrets
++    hmacs = []
++    for s in secrets:
++        key = hasher(key_salt + force_bytes(s)).digest()
++        hmacs.append(hmac.new(key, msg=force_bytes(value), digestmod=hasher))
++
++    # Return the first HMAC (corresponding to the current SECRET_KEY)
++    return hmacs[0]
+ 
+ 
+ RANDOM_STRING_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"

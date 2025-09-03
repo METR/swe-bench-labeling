@@ -1,0 +1,299 @@
+diff --git a/debug_timedelta.py b/debug_timedelta.py
+new file mode 100644
+index 0000000000..34b91f8288
+--- /dev/null
++++ b/debug_timedelta.py
+@@ -0,0 +1,23 @@
++import datetime
++
++# Let's see how timedelta behaves with these values
++print("Testing timedelta construction:")
++
++# Case 1: 5 days, -2:30:00
++td1 = datetime.timedelta(days=5, hours=-2, minutes=-30)
++print(f"timedelta(days=5, hours=-2, minutes=-30) = {td1}")
++
++# What parse_duration actually does for "5 days, -2:30:00"
++# It parses: days=5, hours=-2, minutes=30 (positive), seconds=00
++td2 = datetime.timedelta(days=5, hours=-2, minutes=30)
++print(f"timedelta(days=5, hours=-2, minutes=30) = {td2}")
++
++# Case 2: -1:30:45.123456  
++# What I expected
++td3 = datetime.timedelta(hours=-1, minutes=-30, seconds=-45, microseconds=-123456)
++print(f"timedelta(hours=-1, minutes=-30, seconds=-45, microseconds=-123456) = {td3}")
++
++# What parse_duration actually does
++# It parses: hours=-1, minutes=30 (positive), seconds=45 (positive), microseconds=123456
++td4 = datetime.timedelta(hours=-1, minutes=30, seconds=45, microseconds=123456)
++print(f"timedelta(hours=-1, minutes=30, seconds=45, microseconds=123456) = {td4}")
+diff --git a/django/utils/dateparse.py b/django/utils/dateparse.py
+index 8d08b7d1d3..a037758784 100644
+--- a/django/utils/dateparse.py
++++ b/django/utils/dateparse.py
+@@ -29,7 +29,7 @@ datetime_re = re.compile(
+ standard_duration_re = re.compile(
+     r'^'
+     r'(?:(?P<days>-?\d+) (days?, )?)?'
+-    r'((?:(?P<hours>-?\d+):)(?=\d+:\d+))?'
++    r'((?:(?P<hours>-?\d+):)(?=-?\d+:-?\d+))?'
+     r'(?:(?P<minutes>-?\d+):)?'
+     r'(?P<seconds>-?\d+)'
+     r'(?:\.(?P<microseconds>\d{1,6})\d{0,6})?'
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_comprehensive2.py b/test_comprehensive2.py
+new file mode 100644
+index 0000000000..dd74e4deb4
+--- /dev/null
++++ b/test_comprehensive2.py
+@@ -0,0 +1,79 @@
++#!/usr/bin/env python
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.utils.dateparse import parse_duration
++import datetime
++
++# Test comprehensive cases
++test_cases = [
++    # (input_string, expected_timedelta)
++    # Basic negative hours
++    ("-1:00:00", datetime.timedelta(hours=-1)),
++    ("-10:00:00", datetime.timedelta(hours=-10)),
++    
++    # Negative minutes with positive hours
++    ("1:-30:00", datetime.timedelta(hours=1, minutes=-30)),
++    ("2:-45:00", datetime.timedelta(hours=2, minutes=-45)),
++    
++    # Negative seconds
++    ("1:30:-45", datetime.timedelta(hours=1, minutes=30, seconds=-45)),
++    ("0:0:-30", datetime.timedelta(seconds=-30)),
++    
++    # All negative
++    ("-1:-30:-45", datetime.timedelta(hours=-1, minutes=-30, seconds=-45)),
++    
++    # With days
++    ("-1 days, 2:30:00", datetime.timedelta(days=-1, hours=2, minutes=30)),
++    ("5 days, -2:30:00", datetime.timedelta(days=5, hours=-2, minutes=-30)),
++    
++    # Edge cases with zeros
++    ("0:-30:00", datetime.timedelta(minutes=-30)),
++    ("-0:30:00", datetime.timedelta(minutes=30)),  # -0 is treated as 0
++    ("0:0:-15", datetime.timedelta(seconds=-15)),
++    
++    # With microseconds
++    ("0:0:-1.500000", datetime.timedelta(seconds=-1, microseconds=-500000)),
++    ("-1:30:45.123456", datetime.timedelta(hours=-1, minutes=-30, seconds=-45, microseconds=-123456)),
++    
++    # Regular positive cases (regression test)
++    ("1:30:00", datetime.timedelta(hours=1, minutes=30)),
++    ("2 days, 3:45:30", datetime.timedelta(days=2, hours=3, minutes=45, seconds=30)),
++    ("0:0:0.123456", datetime.timedelta(microseconds=123456)),
++]
++
++print("Running comprehensive tests...")
++print("=" * 80)
++
++all_passed = True
++for input_str, expected in test_cases:
++    result = parse_duration(input_str)
++    passed = result == expected
++    all_passed &= passed
++    
++    status = "PASS" if passed else "FAIL"
++    print(f"{status} | Input: {input_str:25} | Result: {result}")
++    
++    if not passed and result is not None:
++        print(f"       Expected: {expected}")
++        print(f"       Difference: {result - expected}")
++
++print("=" * 80)
++print(f"Overall: {'All tests passed!' if all_passed else 'Some tests failed!'}")
++
++# Test that invalid formats still return None
++print("\nTesting invalid formats (should return None):")
++invalid_cases = [
++    "invalid",
++    "1:2:3:4",
++    ":::",
++    "-:30:00",
++    "1:-:00",
++    "abc:def:ghi",
++]
++
++for invalid in invalid_cases:
++    result = parse_duration(invalid)
++    status = "OK" if result is None else "UNEXPECTED"
++    print(f"Input: {invalid:15} | Result: {result} | {status}")
+diff --git a/test_duration_parse.py b/test_duration_parse.py
+new file mode 100644
+index 0000000000..fc35dee149
+--- /dev/null
++++ b/test_duration_parse.py
+@@ -0,0 +1,41 @@
++#!/usr/bin/env python
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.utils.dateparse import parse_duration
++
++# Test cases for negative durations
++test_cases = [
++    # Format: (input_string, expected_result_description)
++    ("-1:30:00", "negative 1 hour 30 minutes"),
++    ("-01:30:00", "negative 1 hour 30 minutes"),
++    ("-10:30:00", "negative 10 hours 30 minutes"),
++    ("-1:-30:-45", "negative 1 hour, negative 30 minutes, negative 45 seconds"),
++    ("1:-30:00", "1 hour, negative 30 minutes"),
++    ("1:30:-45", "1 hour 30 minutes, negative 45 seconds"),
++    ("-1 days, 2:30:00", "negative 1 day, 2 hours 30 minutes"),
++    ("5 days, -2:30:00", "5 days, negative 2 hours 30 minutes"),
++]
++
++print("Testing parse_duration with negative values...")
++print("=" * 60)
++
++for test_input, description in test_cases:
++    result = parse_duration(test_input)
++    print(f"Input: {test_input:20} | Result: {result} | Description: {description}")
++
++print("\n" + "=" * 60)
++print("Testing that the fix doesn't break positive durations...")
++
++positive_cases = [
++    "1:30:00",
++    "01:30:00", 
++    "10:30:45",
++    "1 days, 2:30:00",
++    "5 days, 12:30:45.123456",
++]
++
++for test_input in positive_cases:
++    result = parse_duration(test_input)
++    print(f"Input: {test_input:25} | Result: {result}")
+diff --git a/test_lookahead_fix.py b/test_lookahead_fix.py
+new file mode 100644
+index 0000000000..20d3fc7bae
+--- /dev/null
++++ b/test_lookahead_fix.py
+@@ -0,0 +1,34 @@
++#!/usr/bin/env python
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.utils.dateparse import parse_duration
++
++# Test cases that specifically test the lookahead fix
++print("Testing cases that require the lookahead fix...")
++print("=" * 70)
++
++test_cases = [
++    "1:-30:00",
++    "2:-45:30", 
++    "1:30:-45",
++    "0:45:-30",
++    "-1:-30:-45",
++    "0:-15:00",
++]
++
++for test_input in test_cases:
++    result = parse_duration(test_input)
++    status = "PASS" if result is not None else "FAIL"
++    print(f"{status} | Input: {test_input:15} | Result: {result}")
++
++print("\nPositive cases (regression test):")
++print("=" * 70)
++
++positive_cases = ["1:30:00", "10:45:30", "0:30:45"]
++
++for test_input in positive_cases:
++    result = parse_duration(test_input)
++    status = "PASS" if result is not None else "FAIL"
++    print(f"{status} | Input: {test_input:15} | Result: {result}")
+diff --git a/test_negative_lookahead.py b/test_negative_lookahead.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_regex.py b/test_regex.py
+new file mode 100644
+index 0000000000..f293c8718c
+--- /dev/null
++++ b/test_regex.py
+@@ -0,0 +1,47 @@
++#!/usr/bin/env python
++import re
++
++# Current regex
++current_regex = re.compile(
++    r'^'
++    r'(?:(?P<days>-?\d+) (days?, )?)?'
++    r'((?:(?P<hours>-?\d+):)(?=\d+:\d+))?'
++    r'(?:(?P<minutes>-?\d+):)?'
++    r'(?P<seconds>-?\d+)'
++    r'(?:\.(?P<microseconds>\d{1,6})\d{0,6})?'
++    r'$'
++)
++
++# Fixed regex  
++fixed_regex = re.compile(
++    r'^'
++    r'(?:(?P<days>-?\d+) (days?, )?)?'
++    r'((?:(?P<hours>-?\d+):)(?=-?\d+:-?\d+))?'
++    r'(?:(?P<minutes>-?\d+):)?'
++    r'(?P<seconds>-?\d+)'
++    r'(?:\.(?P<microseconds>\d{1,6})\d{0,6})?'
++    r'$'
++)
++
++test_strings = [
++    "-1:30:00",
++    "-1:-30:-45",
++    "1:-30:00",
++    "1:30:-45",
++    "1:30:00",  # positive case
++]
++
++print("Testing current regex vs fixed regex:")
++print("=" * 60)
++
++for test in test_strings:
++    current_match = current_regex.match(test)
++    fixed_match = fixed_regex.match(test)
++    
++    print(f"\nInput: {test}")
++    print(f"Current regex match: {current_match}")
++    if current_match:
++        print(f"  Groups: {current_match.groupdict()}")
++    print(f"Fixed regex match: {fixed_match}")
++    if fixed_match:
++        print(f"  Groups: {fixed_match.groupdict()}")
+diff --git a/test_regex_comparison.py b/test_regex_comparison.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 0000000000..8c14d7a55b
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,17 @@
++import re
++
++# The key change in the regex
++old_lookahead = "(?=\d+:\d+)"
++new_lookahead = "(?=-?\d+:-?\d+)"
++
++print("The fix changes the lookahead pattern:")
++print(f"Old: {old_lookahead} - only matches positive digits")
++print(f"New: {new_lookahead} - matches optional negative signs")
++print()
++
++# Example that shows the difference
++test = "1:-30:00"
++print(f"Testing string: '{test}'")
++print(f"  After '1:' we have '-30:00'")
++print(f"  Old lookahead (?=\d+:\d+) expects digits, but sees '-30:00' - NO MATCH")
++print(f"  New lookahead (?=-?\d+:-?\d+) allows optional '-', sees '-30:00' - MATCH!")

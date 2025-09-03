@@ -1,0 +1,135 @@
+diff --git a/run_test.py b/run_test.py
+new file mode 100644
+index 0000000000..634a7dc7b2
+--- /dev/null
++++ b/run_test.py
+@@ -0,0 +1,9 @@
++from sympy.solvers.tests.test_diophantine import test_diophantine_permute_sign
++
++try:
++    test_diophantine_permute_sign()
++    print("Test passed!")
++except Exception as e:
++    print(f"Test failed: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index 6092e35dab..38aec271a4 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -182,13 +182,13 @@ def diophantine(eq, param=symbols("t", integer=True), syms=None,
+             if syms != var:
+                 dict_sym_index = dict(zip(syms, range(len(syms))))
+                 return {tuple([t[dict_sym_index[i]] for i in var])
+-                            for t in diophantine(eq, param)}
++                            for t in diophantine(eq, param, permute=permute)}
+         n, d = eq.as_numer_denom()
+         if n.is_number:
+             return set()
+         if not d.is_number:
+-            dsol = diophantine(d)
+-            good = diophantine(n) - dsol
++            dsol = diophantine(d, param, syms, permute)
++            good = diophantine(n, param, syms, permute) - dsol
+             return {s for s in good if _mexpand(d.subs(zip(var, s)))}
+         else:
+             eq = n
+diff --git a/sympy/solvers/tests/test_diophantine.py b/sympy/solvers/tests/test_diophantine.py
+index e4e8972ae0..330e8d5795 100644
+--- a/sympy/solvers/tests/test_diophantine.py
++++ b/sympy/solvers/tests/test_diophantine.py
+@@ -908,6 +908,14 @@ def test_diophantine_permute_sign():
+     assert len(diophantine(eq, permute=True)) == 62000
+     soln = set([(-1, -1), (-1, 2), (1, -2), (1, 1)])
+     assert diophantine(10*x**2 + 12*x*y + 12*y**2 - 34, permute=True) == soln
++    
++    # Test that permute works correctly with different symbol orders
++    # This was issue: diophantine returns incomplete results depending on syms order
++    from sympy.abc import m, n
++    eq = n**4 + m**4 - 2**4 - 3**4
++    expected = set([(-3, -2), (-3, 2), (-2, -3), (-2, 3), (2, -3), (2, 3), (3, -2), (3, 2)])
++    assert diophantine(eq, syms=(m,n), permute=True) == expected
++    assert diophantine(eq, syms=(n,m), permute=True) == expected
+ 
+ 
+ @XFAIL
+diff --git a/test_diophantine_fix.py b/test_diophantine_fix.py
+new file mode 100644
+index 0000000000..6afc81125c
+--- /dev/null
++++ b/test_diophantine_fix.py
+@@ -0,0 +1,16 @@
++from sympy import symbols
++from sympy.solvers.diophantine import diophantine
++
++# Test the issue
++m, n = symbols('m n')
++eq = n**4 + m**4 - 2**4 - 3**4
++
++# Should give the same results regardless of symbol order when permute=True
++result1 = diophantine(eq, syms=(m,n), permute=True)
++result2 = diophantine(eq, syms=(n,m), permute=True)
++
++print("Result with syms=(m,n):", sorted(result1))
++print("Result with syms=(n,m):", sorted(result2))
++print("\nResults equal?", result1 == result2)
++print("Length of result1:", len(result1))
++print("Length of result2:", len(result2))
+diff --git a/test_fix_comprehensive.py b/test_fix_comprehensive.py
+new file mode 100644
+index 0000000000..101133db79
+--- /dev/null
++++ b/test_fix_comprehensive.py
+@@ -0,0 +1,52 @@
++from sympy import symbols
++from sympy.solvers.diophantine import diophantine
++
++# Test 1: The original issue - n**4 + m**4 - 2**4 - 3**4
++print("Test 1: Original issue")
++m, n = symbols('m n')
++eq = n**4 + m**4 - 2**4 - 3**4
++
++result1 = diophantine(eq, syms=(m,n), permute=True)
++result2 = diophantine(eq, syms=(n,m), permute=True)
++
++print(f"  syms=(m,n): {sorted(result1)}")
++print(f"  syms=(n,m): {sorted(result2)}")
++print(f"  Results equal? {result1 == result2}")
++print(f"  Both have 8 solutions? {len(result1) == 8 and len(result2) == 8}")
++
++# Test 2: Another permutation test with a different equation
++print("\nTest 2: x**2 + y**2 - 13")
++x, y = symbols('x y')
++eq2 = x**2 + y**2 - 13
++
++result3 = diophantine(eq2, syms=(x,y), permute=True)
++result4 = diophantine(eq2, syms=(y,x), permute=True) 
++
++print(f"  syms=(x,y): {sorted(result3)}")
++print(f"  syms=(y,x): {sorted(result4)}")
++print(f"  Results equal? {result3 == result4}")
++
++# Test 3: Test with 3 variables
++print("\nTest 3: a**2 + b**2 + c**2 - 14")
++a, b, c = symbols('a b c')
++eq3 = a**2 + b**2 + c**2 - 14
++
++result5 = diophantine(eq3, syms=(a,b,c), permute=True)
++result6 = diophantine(eq3, syms=(c,b,a), permute=True)
++
++print(f"  syms=(a,b,c) length: {len(result5)}")
++print(f"  syms=(c,b,a) length: {len(result6)}")
++print(f"  Results equal? {result5 == result6}")
++
++# Test 4: Test without permute flag (should still work correctly with syms)
++print("\nTest 4: Without permute flag")
++eq4 = m**4 + n**4 - 2**4 - 3**4
++
++result7 = diophantine(eq4, syms=(m,n), permute=False)
++result8 = diophantine(eq4, syms=(n,m), permute=False)
++
++print(f"  syms=(m,n): {sorted(result7)}")
++print(f"  syms=(n,m): {sorted(result8)}")
++print(f"  Both have base solution only? {len(result7) == 1 and len(result8) == 1}")
++
++print("\nAll tests completed!")

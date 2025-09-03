@@ -1,0 +1,54 @@
+diff --git a/src/_pytest/reports.py b/src/_pytest/reports.py
+index 4682d5b6e..58d57644f 100644
+--- a/src/_pytest/reports.py
++++ b/src/_pytest/reports.py
+@@ -47,10 +47,36 @@ class BaseReport:
+             longrepr.toterminal(out)
+         else:
+             try:
+-                out.line(longrepr)
++                if isinstance(longrepr, ExceptionInfo):
++                    out.line(self._format_exception_chain(longrepr))
++                elif isinstance(longrepr, tuple) and len(longrepr) == 3:
++                    exc_info = ExceptionInfo(longrepr)
++                    out.line(self._format_exception_chain(exc_info))
++                elif isinstance(longrepr, ReprExceptionInfo):
++                    out.line(self._format_exception_chain(longrepr.reprtraceback.excinfo))
++                else:
++                    out.line(longrepr)
+             except UnicodeEncodeError:
+                 out.line("<unprintable longrepr>")
+ 
++    def _format_exception_chain(self, excinfo):
++        """Format the full exception chain."""
++        lines = []
++        current_excinfo = excinfo
++        while current_excinfo is not None:
++            lines.extend(str(current_excinfo).splitlines())
++            cause = current_excinfo.value.__cause__
++            context = current_excinfo.value.__context__
++            if cause is not None:
++                lines.append("\nThe above exception was the direct cause of the following exception:\n")
++                current_excinfo = ExceptionInfo.from_exc_info((type(cause), cause, cause.__traceback__))
++            elif context is not None and not current_excinfo.value.__suppress_context__:
++                lines.append("\nDuring handling of the above exception, another exception occurred:\n")
++                current_excinfo = ExceptionInfo.from_exc_info((type(context), context, context.__traceback__))
++            else:
++                current_excinfo = None
++        return "\n".join(lines)
++
+     def get_sections(self, prefix):
+         for name, content in self.sections:
+             if name.startswith(prefix):
+@@ -310,7 +336,10 @@ class TestReport(BaseReport):
+         self.outcome = outcome
+ 
+         #: None or a failure representation.
+-        self.longrepr = longrepr
++        if isinstance(longrepr, tuple) and len(longrepr) == 3:
++            self.longrepr = ExceptionInfo(longrepr)._getreprcrash()
++        else:
++            self.longrepr = longrepr
+ 
+         #: one of 'setup', 'call', 'teardown' to indicate runtest phase.
+         self.when = when

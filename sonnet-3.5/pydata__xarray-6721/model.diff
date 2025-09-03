@@ -1,0 +1,28 @@
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index 71646f50..bdc21f81 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -2135,7 +2135,13 @@ class Dataset(
+         Dataset.chunksizes
+         xarray.unify_chunks
+         """
+-        return get_chunksizes(self.variables.values())
++        chunks = {}
++        for name, var in self.variables.items():
++            if 'chunks' in var.encoding:
++                chunks[name] = var.encoding['chunks']
++            elif hasattr(var.data, 'chunks'):
++                chunks[name] = var.data.chunks
++        return chunks
+ 
+     @property
+     def chunksizes(self) -> Mapping[Hashable, tuple[int, ...]]:
+@@ -2152,7 +2158,7 @@ class Dataset(
+         Dataset.chunks
+         xarray.unify_chunks
+         """
+-        return get_chunksizes(self.variables.values())
++        return self.chunks
+ 
+     def chunk(
+         self: T_Dataset,

@@ -1,0 +1,257 @@
+diff --git a/astropy/coordinates/sky_coordinate.py b/astropy/coordinates/sky_coordinate.py
+index ab475f7d0d..d439028d27 100644
+--- a/astropy/coordinates/sky_coordinate.py
++++ b/astropy/coordinates/sky_coordinate.py
+@@ -894,7 +894,21 @@ class SkyCoord(ShapedLikeNDArray):
+             if frame_cls is not None and self.frame.is_transformable_to(frame_cls):
+                 return self.transform_to(attr)
+ 
+-        # Fail
++        # Check if the attribute exists as a descriptor (e.g., property) on the class.
++        # If it does, then __getattr__ is being called because the descriptor raised
++        # an AttributeError. We should provide a more informative error message.
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__:
++                descriptor = cls.__dict__[attr]
++                if hasattr(descriptor, '__get__'):
++                    # This is a descriptor. Since __getattr__ was called, it means
++                    # the descriptor raised an AttributeError. Don't say the descriptor
++                    # doesn't exist.
++                    raise AttributeError(
++                        f"'{self.__class__.__name__}' property '{attr}' raised an AttributeError"
++                    )
++        
++        # Fail - the attribute truly doesn't exist
+         raise AttributeError(
+             f"'{self.__class__.__name__}' object has no attribute '{attr}'"
+         )
+diff --git a/pyproject.toml b/pyproject.toml
+index 486d6b9b3b..1c5f74f3a1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/test_context.py b/test_context.py
+new file mode 100644
+index 0000000000..dadae6c554
+--- /dev/null
++++ b/test_context.py
+@@ -0,0 +1,65 @@
++import threading
++
++# Thread-local storage to track attribute access context
++_attr_context = threading.local()
++
++class Base:
++    def __getattr__(self, attr):
++        # Check if we're in a nested attribute access
++        context = getattr(_attr_context, 'stack', None)
++        if context is None:
++            _attr_context.stack = []
++            context = _attr_context.stack
++            
++        # If this attribute exists as a descriptor, we're being called
++        # because the descriptor raised AttributeError
++        for cls in type(self).__mro__:
++            if attr in cls.__dict__ and hasattr(cls.__dict__[attr], '__get__'):
++                # Don't add to context, let the original error through
++                if context:
++                    # We're in a nested access, raise about the nested attribute
++                    nested_attr = context[-1]
++                    raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{nested_attr}'")
++                else:
++                    # First level access of a property that failed
++                    raise AttributeError(f"'{self.__class__.__name__}' object property '{attr}' raised AttributeError")
++        
++        # Regular attribute access failure
++        context.append(attr)
++        try:
++            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{attr}'")
++        finally:
++            context.pop()
++            if not context:
++                delattr(_attr_context, 'stack')
++
++
++class Test(Base):
++    @property
++    def prop(self):
++        return self.nested_attr
++        
++    @property
++    def working_prop(self):
++        return "works"
++
++
++t = Test()
++
++print("Test 1: Working property")
++try:
++    print(t.working_prop)
++except AttributeError as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: Property that accesses non-existent attribute")  
++try:
++    print(t.prop)
++except AttributeError as e:
++    print(f"Error: {e}")
++    
++print("\nTest 3: Direct non-existent attribute")
++try:
++    print(t.direct_missing)
++except AttributeError as e:
++    print(f"Error: {e}")
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..1aaea499d1
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,44 @@
++import astropy.coordinates as coord
++import sys
++
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        print("Inside prop getter")
++        return self.random_attr
++    
++    @property  
++    def existing_prop(self):
++        print("Inside existing_prop getter")
++        return "test"
++        
++    def __getattr__(self, attr):
++        print(f"__getattr__ called with attr={attr}")
++        print(f"sys.exc_info(): {sys.exc_info()}")
++        return super().__getattr__(attr)
++
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++
++# Test 1: accessing an existing property that works
++print("Test 1: accessing existing property")
++try:
++    result = c.existing_prop
++    print(f"Result: {result}")
++except AttributeError as e:
++    print(f"Error: {e}")
++
++# Test 2: accessing a property that tries to access a non-existent attribute
++print("\nTest 2: accessing property that accesses non-existent attribute")
++try:
++    result = c.prop
++except AttributeError as e:
++    print(f"Error: {e}")
++
++# Test 3: accessing a non-existent attribute directly  
++print("\nTest 3: accessing non-existent attribute directly")
++try:
++    result = c.nonexistent_attr
++except AttributeError as e:
++    print(f"Error: {e}")
+diff --git a/test_error_msg.py b/test_error_msg.py
+new file mode 100644
+index 0000000000..360d14fd6f
+--- /dev/null
++++ b/test_error_msg.py
+@@ -0,0 +1,23 @@
++import astropy.coordinates as coord
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        return self.random_attr
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++
++# Just catch the error message
++try:
++    c.prop
++except AttributeError as e:
++    print(f"Error message only: '{e}'")
++    print(f"Expected: 'custom_coord' object has no attribute 'random_attr'")
++    
++# Now let's see the full traceback
++print("\nFull traceback:")
++try:
++    c.prop
++except AttributeError:
++    import traceback
++    traceback.print_exc()
+diff --git a/test_full_traceback.py b/test_full_traceback.py
+new file mode 100644
+index 0000000000..c1613a3b24
+--- /dev/null
++++ b/test_full_traceback.py
+@@ -0,0 +1,13 @@
++import astropy.coordinates as coord
++import traceback
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        return self.random_attr
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c.prop
++except AttributeError:
++    traceback.print_exc()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..9b0535e654
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,16 @@
++import astropy.coordinates as coord
++
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        return self.random_attr
++
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c.prop
++except AttributeError as e:
++    print(f"Error message: {e}")
++    print(f"Expected: 'custom_coord' object has no attribute 'random_attr'")
++    print(f"Actual: {e}")
+diff --git a/test_traceback.py b/test_traceback.py
+new file mode 100644
+index 0000000000..f1e83aa2a5
+--- /dev/null
++++ b/test_traceback.py
+@@ -0,0 +1,22 @@
++import astropy.coordinates as coord
++import traceback
++import sys
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        print("Inside prop getter")
++        try:
++            return self.random_attr
++        except AttributeError:
++            print("AttributeError caught in prop getter")
++            traceback.print_exc()
++            raise
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c.prop
++except AttributeError as e:
++    print(f"\nFinal error message: {e}")
++    print("\nFull traceback:")
++    traceback.print_exc()

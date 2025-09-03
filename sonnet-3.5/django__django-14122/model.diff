@@ -1,0 +1,37 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index 850734709d..ae68796e57 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -135,6 +135,11 @@ class SQLCompiler:
+             expressions.append(expr)
+         result = []
+         seen = set()
++        
++        # Exclude Meta.ordering fields from GROUP BY
++        meta_ordering = getattr(self, '_group_by_ordering', [])
++        expressions = [expr for expr in expressions if expr not in meta_ordering]
++        
+         expressions = self.collapse_group_by(expressions, having_group_by)
+ 
+         for expr in expressions:
+@@ -288,6 +293,20 @@ class SQLCompiler:
+             self._meta_ordering = ordering
+         else:
+             ordering = []
++        
++        # If there's a GROUP BY clause, exclude Meta.ordering fields from GROUP BY
++        # but keep them for ORDER BY
++        if self.query.group_by:
++            self._group_by_ordering = []
++            ordering = [
++                field for field in ordering
++                if not isinstance(field, str) or field not in self.query.get_meta().ordering
++            ]
++            self._group_by_ordering = [
++                field for field in self.query.get_meta().ordering
++                if field in ordering
++            ]
++        
+         if self.query.standard_ordering:
+             asc, desc = ORDER_DIR['ASC']
+         else:

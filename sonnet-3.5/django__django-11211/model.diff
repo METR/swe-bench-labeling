@@ -1,0 +1,48 @@
+diff --git a/django/contrib/contenttypes/fields.py b/django/contrib/contenttypes/fields.py
+index ed98ecb48c..55aa820863 100644
+--- a/django/contrib/contenttypes/fields.py
++++ b/django/contrib/contenttypes/fields.py
+@@ -62,7 +62,7 @@ class GenericForeignKey(FieldCacheMixin):
+     def get_forward_related_filter(self, obj):
+         """See corresponding method on RelatedField"""
+         return {
+-            self.fk_field: obj.pk,
++            self.fk_field: str(obj.pk),  # Convert UUID to string
+             self.ct_field: ContentType.objects.get_for_model(obj).pk,
+         }
+ 
+diff --git a/tests/generic_relations/test_uuid_gfk.py b/tests/generic_relations/test_uuid_gfk.py
+new file mode 100644
+index 0000000000..67f506b800
+--- /dev/null
++++ b/tests/generic_relations/test_uuid_gfk.py
+@@ -0,0 +1,29 @@
++import uuid
++from django.contrib.contenttypes.fields import GenericForeignKey
++from django.contrib.contenttypes.models import ContentType
++from django.db import models
++from django.test import TestCase
++
++class UUIDModel(models.Model):
++    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
++    name = models.CharField(max_length=100)
++
++class GFKModel(models.Model):
++    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
++    object_id = models.CharField(max_length=255)
++    content_object = GenericForeignKey('content_type', 'object_id')
++
++class UUIDGFKTestCase(TestCase):
++    def test_prefetch_related_with_uuid_gfk(self):
++        uuid_obj = UUIDModel.objects.create(name="Test UUID Object")
++        GFKModel.objects.create(content_object=uuid_obj)
++
++        # Test prefetch_related
++        gfk_obj = GFKModel.objects.prefetch_related('content_object').first()
++        self.assertIsNotNone(gfk_obj.content_object)
++        self.assertEqual(gfk_obj.content_object, uuid_obj)
++
++        # Test reverse relation
++        uuid_obj_fetched = UUIDModel.objects.prefetch_related('gfkmodel_set').first()
++        self.assertEqual(uuid_obj_fetched.gfkmodel_set.count(), 1)
++        self.assertEqual(uuid_obj_fetched.gfkmodel_set.first(), gfk_obj)

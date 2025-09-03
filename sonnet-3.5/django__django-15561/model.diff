@@ -1,0 +1,23 @@
+diff --git a/django/db/backends/sqlite3/schema.py b/django/db/backends/sqlite3/schema.py
+index b3a2f4282b..7ce4b02828 100644
+--- a/django/db/backends/sqlite3/schema.py
++++ b/django/db/backends/sqlite3/schema.py
+@@ -123,6 +123,18 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+     def alter_field(self, model, old_field, new_field, strict=False):
+         if not self._field_should_be_altered(old_field, new_field):
+             return
++        # Check if the only change is to the 'choices' attribute
++        if (old_field.name == new_field.name and
++            old_field.db_parameters(connection=self.connection) == new_field.db_parameters(connection=self.connection) and
++            old_field.get_internal_type() == new_field.get_internal_type() and
++            old_field.primary_key == new_field.primary_key and
++            old_field.unique == new_field.unique and
++            old_field.column == new_field.column and
++            old_field.remote_field == new_field.remote_field and
++            old_field.db_index == new_field.db_index and
++            old_field.choices != new_field.choices):
++            # Only the 'choices' attribute has changed, so we can return early
++            return
+         old_field_name = old_field.name
+         table_name = model._meta.db_table
+         _, old_column_name = old_field.get_attname_column()

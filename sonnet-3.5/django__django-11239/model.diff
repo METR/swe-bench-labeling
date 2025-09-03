@@ -1,0 +1,48 @@
+diff --git a/django/db/backends/postgresql/base.py b/django/db/backends/postgresql/base.py
+index 250691aeda..c179ffcf5a 100644
+--- a/django/db/backends/postgresql/base.py
++++ b/django/db/backends/postgresql/base.py
+@@ -172,6 +172,13 @@ class DatabaseWrapper(BaseDatabaseWrapper):
+             conn_params['host'] = settings_dict['HOST']
+         if settings_dict['PORT']:
+             conn_params['port'] = settings_dict['PORT']
++        
++        # Add SSL options
++        ssl_options = ['sslmode', 'sslrootcert', 'sslcert', 'sslkey']
++        for option in ssl_options:
++            if option in settings_dict['OPTIONS']:
++                conn_params[option] = settings_dict['OPTIONS'][option]
++        
+         return conn_params
+ 
+     def get_new_connection(self, conn_params):
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+index cf4df76882..6564c4be47 100644
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -17,6 +17,10 @@ class DatabaseClient(BaseDatabaseClient):
+         dbname = conn_params.get('database', '')
+         user = conn_params.get('user', '')
+         passwd = conn_params.get('password', '')
++        sslmode = conn_params.get('sslmode', '')
++        sslrootcert = conn_params.get('sslrootcert', '')
++        sslcert = conn_params.get('sslcert', '')
++        sslkey = conn_params.get('sslkey', '')
+ 
+         if user:
+             args += ['-U', user]
+@@ -24,6 +28,14 @@ class DatabaseClient(BaseDatabaseClient):
+             args += ['-h', host]
+         if port:
+             args += ['-p', str(port)]
++        if sslmode:
++            args += [f'--set=sslmode={sslmode}']
++        if sslrootcert:
++            args += [f'--set=sslrootcert={sslrootcert}']
++        if sslcert:
++            args += [f'--set=sslcert={sslcert}']
++        if sslkey:
++            args += [f'--set=sslkey={sslkey}']
+         args += [dbname]
+ 
+         sigint_handler = signal.getsignal(signal.SIGINT)

@@ -1,0 +1,218 @@
+diff --git a/sympy/combinatorics/perm_groups.py b/sympy/combinatorics/perm_groups.py
+index de94ddabb4..58de77b62d 100644
+--- a/sympy/combinatorics/perm_groups.py
++++ b/sympy/combinatorics/perm_groups.py
+@@ -2194,18 +2194,21 @@ def _number_blocks(blocks):
+                 # check if the system is minimal with
+                 # respect to the already discovere ones
+                 minimal = True
+-                to_remove = []
++                to_remove_indices = []
+                 for i, r in enumerate(rep_blocks):
+                     if len(r) > len(rep) and rep.issubset(r):
+                         # i-th block system is not minimal
+-                        del num_blocks[i], blocks[i]
+-                        to_remove.append(rep_blocks[i])
++                        to_remove_indices.append(i)
+                     elif len(r) < len(rep) and r.issubset(rep):
+                         # the system being checked is not minimal
+                         minimal = False
+                         break
+-                # remove non-minimal representative blocks
+-                rep_blocks = [r for r in rep_blocks if r not in to_remove]
++                # remove non-minimal blocks, num_blocks, and representative blocks
++                # by creating new lists without the items at to_remove_indices
++                if to_remove_indices:
++                    blocks = [blocks[i] for i in range(len(blocks)) if i not in to_remove_indices]
++                    num_blocks = [num_blocks[i] for i in range(len(num_blocks)) if i not in to_remove_indices]
++                    rep_blocks = [rep_blocks[i] for i in range(len(rep_blocks)) if i not in to_remove_indices]
+ 
+                 if minimal and num_block not in num_blocks:
+                     blocks.append(block)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..aeab9c4876
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,56 @@
++from sympy.combinatorics import DihedralGroup, SymmetricGroup, AlternatingGroup
++
++print("Testing various groups for sylow_subgroup functionality...")
++
++# Test cases from the issue
++print("\n1. Testing DihedralGroup(18) - from issue")
++G = DihedralGroup(18)
++S2 = G.sylow_subgroup(p=2)
++print(f"   Sylow 2-subgroup has order {S2.order()}")
++assert S2.order() == 4  # 2^2
++
++print("\n2. Testing DihedralGroup(50) - from issue")
++G = DihedralGroup(50)
++S2 = G.sylow_subgroup(p=2)
++print(f"   Sylow 2-subgroup has order {S2.order()}")
++assert S2.order() == 4  # 2^2
++
++# Test cases from the docstring examples
++print("\n3. Testing DihedralGroup(6) - from docstring")
++D = DihedralGroup(6)
++S = D.sylow_subgroup(2)
++print(f"   Sylow 2-subgroup has order {S.order()}")
++assert S.order() == 4
++
++print("\n4. Testing SymmetricGroup(6) - from docstring")
++G = SymmetricGroup(6)
++S = G.sylow_subgroup(5)
++print(f"   Sylow 5-subgroup has order {S.order()}")
++assert S.order() == 5
++
++print("\n5. Testing AlternatingGroup(3) - from docstring")
++G1 = AlternatingGroup(3)
++S1 = G1.sylow_subgroup(3)
++print(f"   Sylow 3-subgroup has order {S1.order()}")
++assert S1.order() == 3
++
++print("\n6. Testing AlternatingGroup(5) - from docstring")
++G2 = AlternatingGroup(5)
++S2 = G2.sylow_subgroup(3)
++print(f"   Sylow 3-subgroup has order {S2.order()}")
++assert S2.order() == 3
++
++print("\n7. Testing AlternatingGroup(9)")
++G3 = AlternatingGroup(9)
++S3 = G3.sylow_subgroup(3)
++print(f"   Sylow 3-subgroup has order {S3.order()}")
++
++# Additional test cases to verify the fix doesn't break anything
++print("\n8. Testing small DihedralGroup cases")
++for n in [4, 6, 8, 10, 12]:
++    G = DihedralGroup(n)
++    S2 = G.sylow_subgroup(2)
++    print(f"   DihedralGroup({n}): Sylow 2-subgroup has order {S2.order()}")
++    # Dihedral group of order 2n has a Sylow 2-subgroup of order 2^k where 2^k || 2n
++    
++print("\nAll tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..00a790f146
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,17 @@
++from sympy.combinatorics import DihedralGroup
++
++print("Testing DihedralGroup(18)...")
++G = DihedralGroup(18)
++try:
++    S2 = G.sylow_subgroup(p=2)
++    print(f"Success! Sylow 2-subgroup has order {S2.order()}")
++except IndexError as e:
++    print(f"IndexError: {e}")
++
++print("\nTesting DihedralGroup(50)...")
++G = DihedralGroup(50)
++try:
++    S2 = G.sylow_subgroup(p=2)
++    print(f"Success! Sylow 2-subgroup has order {S2.order()}")
++except IndexError as e:
++    print(f"IndexError: {e}")
+diff --git a/test_minimal_blocks.py b/test_minimal_blocks.py
+new file mode 100644
+index 0000000000..2ed933ce5e
+--- /dev/null
++++ b/test_minimal_blocks.py
+@@ -0,0 +1,25 @@
++from sympy.combinatorics import Permutation, PermutationGroup, SymmetricGroup
++
++print("Testing minimal_blocks function...")
++
++# Test 1
++P = PermutationGroup(Permutation(1, 5)(2, 4), Permutation(0, 1, 2, 3, 4, 5))
++result = P.minimal_blocks()
++expected = [[0, 1, 0, 1, 0, 1], [0, 1, 2, 0, 1, 2]]
++assert result == expected
++print("Test 1 passed")
++
++# Test 2
++P = SymmetricGroup(5)
++result = P.minimal_blocks()
++expected = [[0]*5]
++assert result == expected
++print("Test 2 passed")
++
++# Test 3 - non-transitive group
++P = PermutationGroup(Permutation(0, 3))
++result = P.minimal_blocks()
++assert result == False
++print("Test 3 passed")
++
++print("\nAll minimal_blocks tests passed!")
+diff --git a/test_sylow_specific.py b/test_sylow_specific.py
+new file mode 100644
+index 0000000000..e246d026cc
+--- /dev/null
++++ b/test_sylow_specific.py
+@@ -0,0 +1,65 @@
++from sympy.combinatorics import Permutation, PermutationGroup, DihedralGroup, SymmetricGroup, AlternatingGroup
++
++print("Running sylow_subgroup tests from test_perm_groups.py...")
++
++# Test 1
++P = PermutationGroup(Permutation(1, 5)(2, 4), Permutation(0, 1, 2, 3, 4, 5))
++S = P.sylow_subgroup(2)
++assert S.order() == 4
++print("Test 1 passed")
++
++# Test 2
++P = DihedralGroup(12)
++S = P.sylow_subgroup(3)
++assert S.order() == 3
++print("Test 2 passed")
++
++# Test 3
++P = PermutationGroup(Permutation(1, 5)(2, 4), Permutation(0, 1, 2, 3, 4, 5), Permutation(0, 2))
++S = P.sylow_subgroup(3)
++assert S.order() == 9
++S = P.sylow_subgroup(2)
++assert S.order() == 8
++print("Test 3 passed")
++
++# Test 4
++P = SymmetricGroup(10)
++S = P.sylow_subgroup(2)
++assert S.order() == 256
++S = P.sylow_subgroup(3)
++assert S.order() == 81
++S = P.sylow_subgroup(5)
++assert S.order() == 25
++print("Test 4 passed")
++
++# Test 5 - lower central series test
++exp = 1
++length = 0
++for i in range(2, 9):
++    P = SymmetricGroup(i)
++    S = P.sylow_subgroup(2)
++    ls = S.lower_central_series()
++    if i // 2**exp > 0:
++        # length increases with exponent
++        assert len(ls) > length
++        length = len(ls)
++        exp += 1
++    else:
++        assert len(ls) == length
++print("Test 5 passed")
++
++# Test 6
++G = SymmetricGroup(100)
++S = G.sylow_subgroup(3)
++assert G.order() % S.order() == 0
++assert G.order()/S.order() % 3 > 0
++print("Test 6 passed")
++
++# Test 7
++G = AlternatingGroup(100)
++S = G.sylow_subgroup(2)
++assert G.order() % S.order() == 0
++assert G.order()/S.order() % 2 > 0
++print("Test 7 passed")
++
++print("\nAll sylow_subgroup tests passed!")

@@ -1,0 +1,50 @@
+diff --git a/astropy/units/decorators.py b/astropy/units/decorators.py
+index 8bece5a850..50c37207af 100644
+--- a/astropy/units/decorators.py
++++ b/astropy/units/decorators.py
+@@ -221,6 +221,10 @@ class QuantityInput:
+             with add_enabled_equivalencies(self.equivalencies):
+                 return_ = wrapped_function(*func_args, **func_kwargs)
+             if wrapped_signature.return_annotation is not inspect.Signature.empty:
++                # If the return annotation is None or the return value is None,
++                # just return it without unit conversion
++                if wrapped_signature.return_annotation is None or return_ is None:
++                    return return_
+                 return return_.to(wrapped_signature.return_annotation)
+             else:
+                 return return_
+diff --git a/astropy/units/tests/py3_test_quantity_annotations.py b/astropy/units/tests/py3_test_quantity_annotations.py
+index 4956b0ec19..349ce11694 100644
+--- a/astropy/units/tests/py3_test_quantity_annotations.py
++++ b/astropy/units/tests/py3_test_quantity_annotations.py
+@@ -285,3 +285,30 @@ def test_return_annotation():
+     assert solarx.unit is u.deg
+     """
+     return src
++
++
++@py3only
++def test_return_annotation_none():
++    src = """
++    # Test constructor with -> None annotation
++    class MyClass:
++        @u.quantity_input
++        def __init__(self, voltage: u.V) -> None:
++            self.voltage = voltage
++    
++    # Test regular method with -> None annotation
++    @u.quantity_input
++    def process_data(voltage: u.V) -> None:
++        # Process the voltage
++        pass
++    
++    # Test that constructor works without error
++    obj = MyClass(5.0 * u.V)
++    assert obj.voltage == 5.0 * u.V
++    
++    # Test that function with None return works
++    result = process_data(10.0 * u.V)
++    assert result is None
++    """
++    return src
++    return src

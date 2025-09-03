@@ -1,0 +1,118 @@
+diff --git a/django/contrib/auth/checks.py b/django/contrib/auth/checks.py
+index 65fc266f7e..c153dbf9ad 100644
+--- a/django/contrib/auth/checks.py
++++ b/django/contrib/auth/checks.py
+@@ -52,7 +52,25 @@ def check_user_model(app_configs=None, **kwargs):
+         )
+ 
+     # Check that the username field is unique
+-    if not cls._meta.get_field(cls.USERNAME_FIELD).unique:
++    username_field = cls._meta.get_field(cls.USERNAME_FIELD)
++    
++    # Check if field has unique=True
++    is_unique = username_field.unique
++    
++    # Check if field is part of a UniqueConstraint
++    if not is_unique:
++        from django.db.models import UniqueConstraint
++        for constraint in cls._meta.constraints:
++            if isinstance(constraint, UniqueConstraint) and constraint.condition is None:
++                # Check if USERNAME_FIELD is in the constraint fields
++                if cls.USERNAME_FIELD in constraint.fields:
++                    # Check if it's a single field constraint (equivalent to unique=True)
++                    # or part of a composite unique constraint
++                    if len(constraint.fields) == 1:
++                        is_unique = True
++                        break
++    
++    if not is_unique:
+         if (settings.AUTHENTICATION_BACKENDS ==
+                 ['django.contrib.auth.backends.ModelBackend']):
+             errors.append(
+diff --git a/tests/auth_tests/test_checks.py b/tests/auth_tests/test_checks.py
+index cfaa4063f8..edbb2e2412 100644
+--- a/tests/auth_tests/test_checks.py
++++ b/tests/auth_tests/test_checks.py
+@@ -85,6 +85,82 @@ class UserModelChecksTests(SimpleTestCase):
+                 ),
+             ])
+ 
++    @override_settings(AUTH_USER_MODEL='auth_tests.CustomUserWithUniqueConstraint')
++    def test_username_unique_with_constraint(self):
++        """
++        USERNAME_FIELD defined with UniqueConstraint should not raise auth.E003.
++        """
++        from django.db.models import UniqueConstraint
++        
++        class CustomUserWithUniqueConstraint(AbstractBaseUser):
++            username = models.CharField(max_length=30)
++            USERNAME_FIELD = 'username'
++            
++            class Meta:
++                constraints = [
++                    UniqueConstraint(fields=['username'], name='username_unique')
++                ]
++        
++        # After our fix, UniqueConstraint should be recognized and no errors should be raised
++        errors = checks.run_checks(app_configs=self.apps.get_app_configs())
++        self.assertEqual(errors, [])
++
++    @override_settings(AUTH_USER_MODEL='auth_tests.CustomUserWithCompositeUniqueConstraint')
++    def test_username_with_composite_unique_constraint(self):
++        """
++        USERNAME_FIELD in a composite UniqueConstraint should still raise auth.E003.
++        """
++        from django.db.models import UniqueConstraint
++        
++        class CustomUserWithCompositeUniqueConstraint(AbstractBaseUser):
++            username = models.CharField(max_length=30)
++            domain = models.CharField(max_length=30)
++            USERNAME_FIELD = 'username'
++            
++            class Meta:
++                constraints = [
++                    UniqueConstraint(fields=['username', 'domain'], name='username_domain_unique')
++                ]
++        
++        # Composite constraints should still trigger the error since username alone is not unique
++        errors = checks.run_checks(app_configs=self.apps.get_app_configs())
++        self.assertEqual(errors, [
++            checks.Error(
++                "'CustomUserWithCompositeUniqueConstraint.username' must be "
++                "unique because it is named as the 'USERNAME_FIELD'.",
++                obj=CustomUserWithCompositeUniqueConstraint,
++                id='auth.E003',
++            ),
++        ])
++
++    @override_settings(AUTH_USER_MODEL='auth_tests.CustomUserWithConditionalUniqueConstraint')
++    def test_username_with_conditional_unique_constraint(self):
++        """
++        USERNAME_FIELD in a conditional UniqueConstraint should still raise auth.E003.
++        """
++        from django.db.models import UniqueConstraint, Q
++        
++        class CustomUserWithConditionalUniqueConstraint(AbstractBaseUser):
++            username = models.CharField(max_length=30)
++            is_active = models.BooleanField(default=True)
++            USERNAME_FIELD = 'username'
++            
++            class Meta:
++                constraints = [
++                    UniqueConstraint(fields=['username'], condition=Q(is_active=True), name='username_unique_active')
++                ]
++        
++        # Conditional constraints should still trigger the error since it's not unconditionally unique
++        errors = checks.run_checks(app_configs=self.apps.get_app_configs())
++        self.assertEqual(errors, [
++            checks.Error(
++                "'CustomUserWithConditionalUniqueConstraint.username' must be "
++                "unique because it is named as the 'USERNAME_FIELD'.",
++                obj=CustomUserWithConditionalUniqueConstraint,
++                id='auth.E003',
++            ),
++        ])
++
+     @override_settings(AUTH_USER_MODEL='auth_tests.BadUser')
+     def test_is_anonymous_authenticated_methods(self):
+         """

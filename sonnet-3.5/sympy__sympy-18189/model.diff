@@ -1,0 +1,24 @@
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index 6092e35dab..0489b16e9f 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -181,8 +181,17 @@ def diophantine(eq, param=symbols("t", integer=True), syms=None,
+             syms = [i for i in syms if i in var]
+             if syms != var:
+                 dict_sym_index = dict(zip(syms, range(len(syms))))
+-                return {tuple([t[dict_sym_index[i]] for i in var])
+-                            for t in diophantine(eq, param)}
++                base_solutions = {tuple([t[dict_sym_index[i]] for i in var])
++                                  for t in diophantine(eq, param)}
++                if permute:
++                    from sympy.utilities.iterables import permute_signs, signed_permutations
++                    permuted_solutions = set()
++                    for sol in base_solutions:
++                        permuted_solutions.update(permute_signs(sol))
++                        permuted_solutions.update(signed_permutations(sol))
++                    return permuted_solutions
++                else:
++                    return base_solutions
+         n, d = eq.as_numer_denom()
+         if n.is_number:
+             return set()

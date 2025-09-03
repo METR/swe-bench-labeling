@@ -1,0 +1,53 @@
+diff --git a/sklearn/pipeline.py b/sklearn/pipeline.py
+index 7eaf9a46f..3a11a8268 100644
+--- a/sklearn/pipeline.py
++++ b/sklearn/pipeline.py
+@@ -219,6 +219,10 @@ class Pipeline(_BaseComposition):
+             return self.named_steps[ind]
+         return est
+ 
++    def __len__(self):
++        """Returns the length of the Pipeline"""
++        return len(self.steps)
++
+     @property
+     def _estimator_type(self):
+         return self.steps[-1][1]._estimator_type
+diff --git a/sklearn/tests/test_pipeline.py b/sklearn/tests/test_pipeline.py
+index 8d6fe8f70..7d2bccc15 100644
+--- a/sklearn/tests/test_pipeline.py
++++ b/sklearn/tests/test_pipeline.py
+@@ -540,6 +540,33 @@ def test_pipeline_slice():
+     assert_raises(ValueError, lambda: pipe[::-1])
+ 
+ 
++def test_pipeline_len():
++    # Test that len() works on Pipeline
++    pipe1 = Pipeline([('transf', Transf())])
++    assert len(pipe1) == 1
++    
++    pipe2 = Pipeline([('transf1', Transf()),
++                      ('transf2', Transf()),
++                      ('clf', FitParamT())])
++    assert len(pipe2) == 3
++    
++    # Test with None/passthrough steps
++    pipe3 = Pipeline([('transf1', Transf()),
++                      ('transf2', None),
++                      ('clf', FitParamT())])
++    assert len(pipe3) == 3
++    
++    pipe4 = Pipeline([('transf1', Transf()),
++                      ('transf2', 'passthrough'),
++                      ('clf', FitParamT())])
++    assert len(pipe4) == 3
++    
++    # Test that slicing with len works
++    pipe_slice = pipe2[:len(pipe2)]
++    assert len(pipe_slice) == len(pipe2)
++    assert pipe_slice.steps == pipe2.steps
++
++
+ def test_pipeline_index():
+     transf = Transf()
+     clf = FitParamT()

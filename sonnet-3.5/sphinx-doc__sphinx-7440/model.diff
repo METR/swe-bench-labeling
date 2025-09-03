@@ -1,0 +1,100 @@
+diff --git a/setup.py b/setup.py
+index a427d5493..978e3d8e0 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/std.py b/sphinx/domains/std.py
+index d820cfe5c..97c5557a9 100644
+--- a/sphinx/domains/std.py
++++ b/sphinx/domains/std.py
+@@ -565,7 +565,7 @@ class StandardDomain(Domain):
+         # links to tokens in grammar productions
+         'token':   TokenXRefRole(),
+         # links to terms in glossary
+-        'term':    XRefRole(lowercase=True, innernodeclass=nodes.inline,
++        'term':    XRefRole(innernodeclass=nodes.inline,
+                             warn_dangling=True),
+         # links to headings or arbitrary labels
+         'ref':     XRefRole(lowercase=True, innernodeclass=nodes.inline,
+@@ -652,11 +652,16 @@ class StandardDomain(Domain):
+ 
+         .. versionadded:: 3.0
+         """
+-        if (objtype, name) in self.objects:
+-            docname = self.objects[objtype, name][0]
+-            logger.warning(__('duplicate %s description of %s, other instance in %s'),
+-                           objtype, name, docname, location=location)
+-        self.objects[objtype, name] = (self.env.docname, labelid)
++        key = (objtype, name) if objtype != 'term' else (objtype, name.lower())
++        if key in self.objects:
++            docname = self.objects[key][0]
++            if objtype == 'term' and name != key[1]:  # Case mismatch for terms
++                logger.warning(__('term %s already defined (with different case)'),
++                               name, location=location)
++            else:
++                logger.warning(__('duplicate %s description of %s, other instance in %s'),
++                               objtype, name, docname, location=location)
++        self.objects[key] = (self.env.docname, labelid)
+ 
+     def add_object(self, objtype: str, name: str, docname: str, labelid: str) -> None:
+         warnings.warn('StandardDomain.add_object() is deprecated.',
+@@ -928,7 +933,15 @@ class StandardDomain(Domain):
+                           node: pending_xref, contnode: Element) -> Element:
+         objtypes = self.objtypes_for_role(typ) or []
+         for objtype in objtypes:
+-            if (objtype, target) in self.objects:
++            if objtype == 'term':
++                # For terms, try case-sensitive lookup first, then fallback to case-insensitive
++                if (objtype, target) in self.objects:
++                    docname, labelid = self.objects[objtype, target]
++                    break
++                elif (objtype, target.lower()) in self.objects:
++                    docname, labelid = self.objects[objtype, target.lower()]
++                    break
++            elif (objtype, target) in self.objects:
+                 docname, labelid = self.objects[objtype, target]
+                 break
+         else:
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

@@ -1,0 +1,210 @@
+diff --git a/test_union_debug.py b/test_union_debug.py
+new file mode 100644
+index 0000000000..4a854487b7
+--- /dev/null
++++ b/test_union_debug.py
+@@ -0,0 +1,113 @@
++"""
++Debug test for the union ordering issue
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import QuerySet
++
++# Create a test model
++class Dimension(models.Model):
++    name = models.CharField(max_length=100)
++    order = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Dimension)
++
++# Insert test data
++Dimension.objects.create(id=10, name="test10", order=1)
++Dimension.objects.create(id=11, name="test11", order=2)
++Dimension.objects.create(id=16, name="test16", order=3)
++Dimension.objects.create(id=17, name="test17", order=4)
++
++print("Test data created:")
++print(list(Dimension.objects.values_list('id', flat=True)))
++
++# Reproduce the issue
++print("\nCreating union queryset with ordering...")
++qs = (
++    Dimension.objects.filter(pk__in=[10, 11])
++    .union(Dimension.objects.filter(pk__in=[16, 17]))
++    .order_by('order')
++)
++
++print("Initial qs query.order_by:", qs.query.order_by)
++
++# Get compiler and check order_by
++compiler = qs.query.get_compiler(using=qs.db)
++print("\nChecking compiler.get_order_by() before evaluation:")
++order_by = compiler.get_order_by()
++print("Order by expressions:")
++for expr, (sql, params, is_ref) in order_by:
++    print(f"  Expression: {expr}, SQL: {sql}, is_ref: {is_ref}")
++    if hasattr(expr, 'expression') and hasattr(expr.expression, 'sql'):
++        print(f"    Inner expression SQL: {expr.expression.sql}")
++
++print("\nEvaluating qs...")
++list(qs)
++
++# Check again after evaluation
++print("\nChecking order_by after initial evaluation:")
++order_by = compiler.get_order_by()
++for expr, (sql, params, is_ref) in order_by:
++    print(f"  Expression: {expr}, SQL: {sql}, is_ref: {is_ref}")
++    if hasattr(expr, 'expression') and hasattr(expr.expression, 'sql'):
++        print(f"    Inner expression SQL: {expr.expression.sql}")
++
++# This causes re-evaluation of the original qs to break
++print("\nCreating derived queryset...")
++derived_qs = qs.order_by().values_list('pk', flat=True)
++
++print("\nEvaluating derived qs...")
++list(derived_qs)
++
++print("\nChecking original qs compiler order_by after derived qs evaluation:")
++order_by = compiler.get_order_by()
++for expr, (sql, params, is_ref) in order_by:
++    print(f"  Expression: {expr}, SQL: {sql}, is_ref: {is_ref}")
++    if hasattr(expr, 'expression') and hasattr(expr.expression, 'sql'):
++        print(f"    Inner expression SQL: {expr.expression.sql}")
++
++print("\nTrying to re-evaluate original qs:")
++try:
++    list(qs)
++    print("Success!")
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++    
++    # Check if the order_by has positional reference
++    print("\nDebugging the error...")
++    for expr, (sql, params, is_ref) in order_by:
++        print(f"  Expression type: {type(expr)}")
++        print(f"  Expression: {expr}")
++        if hasattr(expr, 'get_source_expressions'):
++            sources = expr.get_source_expressions()
++            print(f"  Source expressions: {sources}")
++            for s in sources:
++                print(f"    Source type: {type(s)}")
++                if hasattr(s, 'sql'):
++                    print(f"    Source SQL: {s.sql}")
+diff --git a/test_union_ordering.py b/test_union_ordering.py
+new file mode 100644
+index 0000000000..bd1185b81f
+--- /dev/null
++++ b/test_union_ordering.py
+@@ -0,0 +1,85 @@
++"""
++Test for the union ordering issue
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.postgresql',
++            'NAME': 'test_db',
++            'USER': 'postgres',
++            'PASSWORD': 'postgres',
++            'HOST': 'localhost',
++            'PORT': '5432',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import QuerySet
++
++# Create a test model
++class Dimension(models.Model):
++    name = models.CharField(max_length=100)
++    order = models.IntegerField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Dimension)
++
++# Insert test data
++Dimension.objects.create(id=10, name="test10", order=1)
++Dimension.objects.create(id=11, name="test11", order=2)
++Dimension.objects.create(id=16, name="test16", order=3)
++Dimension.objects.create(id=17, name="test17", order=4)
++
++print("Test data created:")
++print(list(Dimension.objects.values_list('id', flat=True)))
++
++# Reproduce the issue
++print("\nCreating union queryset with ordering...")
++qs = (
++    Dimension.objects.filter(pk__in=[10, 11])
++    .union(Dimension.objects.filter(pk__in=[16, 17]))
++    .order_by('order')
++)
++
++print("Initial qs evaluation:")
++print(list(qs))
++
++# Print the SQL to debug
++print("\nSQL for original qs:")
++print(qs.query)
++
++# This causes re-evaluation of the original qs to break
++print("\nCreating derived queryset...")
++derived_qs = qs.order_by().values_list('pk', flat=True)
++print("Derived qs:", list(derived_qs))
++
++print("\nSQL for derived qs:")
++print(derived_qs.query)
++
++print("\nTrying to re-evaluate original qs (this should fail):")
++try:
++    print(list(qs))
++    print("SQL after re-evaluation:")
++    print(qs.query)
++except Exception as e:
++    print(f"ERROR: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()

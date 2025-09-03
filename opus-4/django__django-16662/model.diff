@@ -1,0 +1,80 @@
+diff --git a/django/db/migrations/writer.py b/django/db/migrations/writer.py
+index a59f0c8dcb..09be9d49a9 100644
+--- a/django/db/migrations/writer.py
++++ b/django/db/migrations/writer.py
+@@ -173,9 +173,18 @@ class MigrationWriter:
+         else:
+             imports.add("from django.db import migrations")
+ 
+-        # Sort imports by the package / module to be imported (the part after
+-        # "from" in "from ... import ..." or after "import" in "import ...").
+-        sorted_imports = sorted(imports, key=lambda i: i.split()[1])
++        # Sort imports by type (import vs from) and module name.
++        # This follows PEP 8 and isort defaults.
++        def import_sort_key(import_line):
++            parts = import_line.split()
++            if parts[0] == "import":
++                # Regular imports come first
++                return (0, parts[1])
++            else:  # "from" imports
++                # From imports come second
++                return (1, parts[1])
++        
++        sorted_imports = sorted(imports, key=import_sort_key)
+         items["imports"] = "\n".join(sorted_imports) + "\n" if imports else ""
+         if migration_imports:
+             items["imports"] += (
+diff --git a/tests/migrations/test_writer.py b/tests/migrations/test_writer.py
+index 1c11c68e97..81c6fe3a8e 100644
+--- a/tests/migrations/test_writer.py
++++ b/tests/migrations/test_writer.py
+@@ -922,6 +922,49 @@ class WriterTests(SimpleTestCase):
+             output,
+         )
+ 
++    def test_sorted_imports_multiple_types(self):
++        """
++        Test that imports follow Django coding style and isort defaults:
++        regular imports before from imports.
++        """
++        import time
++        migration = type(
++            "Migration",
++            (migrations.Migration,),
++            {
++                "operations": [
++                    migrations.AddField(
++                        "mymodel",
++                        "datetime_field",
++                        models.DateTimeField(
++                            default=datetime.datetime(
++                                2012, 1, 1, 1, 1, tzinfo=datetime.timezone.utc
++                            ),
++                        ),
++                    ),
++                    migrations.AddField(
++                        "mymodel",
++                        "time_field",
++                        models.TimeField(
++                            default=time.time,
++                        ),
++                    ),
++                ]
++            },
++        )
++        writer = MigrationWriter(migration)
++        output = writer.as_string()
++        # Check that regular imports come before from imports
++        self.assertIn(
++            "import datetime\nimport time\nfrom django.db import migrations, models\n",
++            output,
++        )
++        # Make sure the wrong order doesn't appear
++        self.assertNotIn(
++            "import datetime\nfrom django.db import migrations, models\nimport time",
++            output,
++        )
++
+     def test_migration_file_header_comments(self):
+         """
+         Test comments at top of file.

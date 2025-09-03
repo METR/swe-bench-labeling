@@ -1,0 +1,61 @@
+From dbd486aca29dc15e14306d34e2ce30c9bd7a79fe Mon Sep 17 00:00:00 2001
+From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
+Date: Mon, 3 Jan 2022 20:55:55 +0100
+Subject: [PATCH] Fixed #33408 -- Fixed adding primary keys/unique fields on
+ SQLite.
+
+Regression in 2f73e5406d54cb8945e187eff302a3a3373350be.
+
+Thanks Alan Crosswell for the report.
+---
+ django/db/backends/sqlite3/schema.py | 13 +++++++++----
+ tests/schema/tests.py                | 12 ++++++++++++
+ 2 files changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/django/db/backends/sqlite3/schema.py b/django/db/backends/sqlite3/schema.py
+index 6752a8e3c0b5..3ff0a3f7dbc1 100644
+--- a/django/db/backends/sqlite3/schema.py
++++ b/django/db/backends/sqlite3/schema.py
+@@ -324,10 +324,15 @@ def delete_model(self, model, handle_autom2m=True):
+ 
+     def add_field(self, model, field):
+         """Create a field on a model."""
+-        # Fields with default values cannot by handled by ALTER TABLE ADD
+-        # COLUMN statement because DROP DEFAULT is not supported in
+-        # ALTER TABLE.
+-        if not field.null or self.effective_default(field) is not None:
++        if (
++            # Primary keys and unique fields are not supported in ALTER TABLE
++            # ADD COLUMN.
++            field.primary_key or field.unique or
++            # Fields with default values cannot by handled by ALTER TABLE ADD
++            # COLUMN statement because DROP DEFAULT is not supported in
++            # ALTER TABLE.
++            not field.null or self.effective_default(field) is not None
++        ):
+             self._remake_table(model, create_field=field)
+         else:
+             super().add_field(model, field)
+diff --git a/tests/schema/tests.py b/tests/schema/tests.py
+index cd6a52f6af9e..60e69503cc6e 100644
+--- a/tests/schema/tests.py
++++ b/tests/schema/tests.py
+@@ -624,6 +624,18 @@ def get_prep_value(self, value):
+         # Make sure the values were transformed correctly
+         self.assertEqual(Author.objects.extra(where=["thing = 1"]).count(), 2)
+ 
++    def test_add_field_o2o_nullable(self):
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++            editor.create_model(Note)
++        new_field = OneToOneField(Note, CASCADE, null=True)
++        new_field.set_attributes_from_name('note')
++        with connection.schema_editor() as editor:
++            editor.add_field(Author, new_field)
++        columns = self.column_classes(Author)
++        self.assertIn('note_id', columns)
++        self.assertTrue(columns['note_id'][1][6])
++
+     def test_add_field_binary(self):
+         """
+         Tests binary fields get a sane default (#22851)

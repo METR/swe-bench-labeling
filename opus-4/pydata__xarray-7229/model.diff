@@ -1,0 +1,151 @@
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 00000000..c5d6827c
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,52 @@
++import xarray as xr
++import numpy as np
++import pandas as pd
++
++# Create a synthetic dataset similar to air_temperature
++time = pd.date_range("2013-01-01", periods=10, freq="4h")
++lat = np.linspace(-90, 90, 25)
++lon = np.linspace(-180, 180, 53)
++
++# Create the air temperature variable
++air = xr.DataArray(
++    np.random.rand(10, 25, 53) * 40 + 270,  # Random temperatures between 270-310K
++    coords={"time": time, "lat": lat, "lon": lon},
++    dims=["time", "lat", "lon"],
++    name="air",
++    attrs={
++        'long_name': '4xDaily Air temperature at sigma level 995',
++        'units': 'degK',
++        'precision': 2,
++        'GRIB_id': 11,
++        'GRIB_name': 'TMP',
++        'var_desc': 'Air temperature',
++        'dataset': 'NMC Reanalysis',
++        'level_desc': 'Surface',
++        'statistic': 'Individual Obs',
++        'parent_stat': 'Other',
++        'actual_range': np.array([185.16, 322.1], dtype=np.float32)
++    }
++)
++
++# Set coordinate attributes
++air.time.attrs = {'standard_name': 'time', 'long_name': 'Time'}
++air.lat.attrs = {'standard_name': 'latitude', 'long_name': 'Latitude'}
++air.lon.attrs = {'standard_name': 'longitude', 'long_name': 'Longitude'}
++
++# Create dataset
++ds = xr.Dataset({"air": air})
++
++# Check the original time attributes
++print("Original time attributes:")
++print(ds.time.attrs)
++
++# Apply where with keep_attrs=True
++result = xr.where(True, ds.air, ds.air, keep_attrs=True)
++
++# Check the time attributes after where
++print("\nTime attributes after where with keep_attrs=True:")
++print(result.time.attrs)
++
++# Also check the air variable attributes
++print("\nAir variable attributes:")
++print(ds.air.attrs)
+diff --git a/test_where_attrs_fix.py b/test_where_attrs_fix.py
+new file mode 100644
+index 00000000..08d685f2
+--- /dev/null
++++ b/test_where_attrs_fix.py
+@@ -0,0 +1,55 @@
++import xarray as xr
++import numpy as np
++import pandas as pd
++
++def test_where_keep_attrs_preserves_coord_attrs():
++    """Test that xr.where with keep_attrs=True preserves coordinate attributes."""
++    # Create a synthetic dataset similar to air_temperature
++    time = pd.date_range("2013-01-01", periods=10, freq="4h")
++    lat = np.linspace(-90, 90, 25)
++    lon = np.linspace(-180, 180, 53)
++    
++    # Create the air temperature variable
++    air = xr.DataArray(
++        np.random.rand(10, 25, 53) * 40 + 270,  # Random temperatures between 270-310K
++        coords={"time": time, "lat": lat, "lon": lon},
++        dims=["time", "lat", "lon"],
++        name="air",
++        attrs={
++            'long_name': '4xDaily Air temperature at sigma level 995',
++            'units': 'degK',
++            'precision': 2,
++            'GRIB_id': 11,
++            'GRIB_name': 'TMP',
++            'var_desc': 'Air temperature',
++            'dataset': 'NMC Reanalysis',
++            'level_desc': 'Surface',
++            'statistic': 'Individual Obs',
++            'parent_stat': 'Other',
++            'actual_range': np.array([185.16, 322.1], dtype=np.float32)
++        }
++    )
++    
++    # Set coordinate attributes
++    air.time.attrs = {'standard_name': 'time', 'long_name': 'Time'}
++    air.lat.attrs = {'standard_name': 'latitude', 'long_name': 'Latitude'}
++    air.lon.attrs = {'standard_name': 'longitude', 'long_name': 'Longitude'}
++    
++    # Create dataset
++    ds = xr.Dataset({"air": air})
++    
++    # Apply where with keep_attrs=True
++    result = xr.where(True, ds.air, ds.air, keep_attrs=True)
++    
++    # Test that data variable attributes are preserved
++    assert result.attrs == air.attrs
++    
++    # Test that coordinate attributes are preserved (this is the bug)
++    assert result.time.attrs == {'standard_name': 'time', 'long_name': 'Time'}
++    assert result.lat.attrs == {'standard_name': 'latitude', 'long_name': 'Latitude'}
++    assert result.lon.attrs == {'standard_name': 'longitude', 'long_name': 'Longitude'}
++    
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_where_keep_attrs_preserves_coord_attrs()
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 3f7e8f74..fd9d00b9 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1860,7 +1860,26 @@ def where(cond, x, y, keep_attrs=None):
+     if keep_attrs is True:
+         # keep the attributes of x, the second parameter, by default to
+         # be consistent with the `where` method of `DataArray` and `Dataset`
+-        keep_attrs = lambda attrs, context: getattr(x, "attrs", {})
++        # However, we need to preserve coordinate attributes from the original coordinates
++        
++        # Check if x has attributes (i.e., it's a DataArray or Dataset)
++        x_attrs = getattr(x, "attrs", {})
++        
++        def keep_attrs_func(attrs, context):
++            # If we don't have any x attributes (x is scalar), return empty dict
++            if not x_attrs:
++                return {}
++                
++            # If we have multiple attribute dictionaries, check if they all match
++            # This indicates we're dealing with a coordinate that appears in multiple inputs
++            if len(attrs) > 1 and all(a == attrs[0] for a in attrs[1:]):
++                # All attrs are the same, so this is likely a coordinate
++                # Return the original coordinate attrs
++                return attrs[0]
++            else:
++                # This is likely the data variable, return x's attrs
++                return x_attrs
++        keep_attrs = keep_attrs_func
+ 
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(

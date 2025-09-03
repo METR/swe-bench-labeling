@@ -1,0 +1,213 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 0000000000..c706579d81
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,33 @@
++from sympy import *
++from sympy.physics.quantum import TensorProduct as tp
++from sympy.physics.quantum import tensor_product_simp as tps
++from sympy.physics.paulialgebra import Pauli
++
++# Debug case 1
++t1 = tp(1,1)*tp(1,1)
++print("t1 =", t1)
++print("type(t1) =", type(t1))
++print("t1.args =", t1.args)
++print()
++
++# Let's check what tp(1,1) looks like
++single_tp = tp(1,1)
++print("tp(1,1) =", single_tp)
++print("type(tp(1,1)) =", type(single_tp))
++print()
++
++# Debug Pauli case
++print("Pauli(3)**2 =", Pauli(3)**2)
++print("simplify(Pauli(3)**2) =", simplify(Pauli(3)**2))
++print()
++
++# Check what tensor_product_simp_Mul does
++from sympy.physics.quantum.tensorproduct import tensor_product_simp_Mul
++mul_expr = tp(1,1)*tp(1,1)
++print("Original mul expr:", mul_expr)
++print("After tensor_product_simp_Mul:", tensor_product_simp_Mul(mul_expr))
++print()
++
++# Check structure
++print("Is mul_expr a Mul?", isinstance(mul_expr, Mul))
++print("Is mul_expr a Pow?", isinstance(mul_expr, Pow))
+diff --git a/sympy/core/power.py b/sympy/core/power.py
+index 02ec6480cb..5676545599 100644
+--- a/sympy/core/power.py
++++ b/sympy/core/power.py
+@@ -1062,6 +1062,28 @@ def _eval_expand_multinomial(self, **hints):
+         else:
+             return result
+ 
++    def _eval_expand_tensorproduct(self, **hints):
++        """Expand powers of TensorProducts."""
++        from sympy.physics.quantum.tensorproduct import TensorProduct
++        
++        base = self.base
++        exp = self.exp
++        
++        # Only expand for positive integer powers of TensorProducts
++        if isinstance(base, TensorProduct) and exp.is_Integer and exp > 0:
++            # Expand (TP)**n to TP*TP*...*TP (n times)
++            from sympy import Mul
++            # Import tensor_product_simp_Mul to handle the multiplication
++            from sympy.physics.quantum.tensorproduct import tensor_product_simp_Mul
++            expanded = Mul(*[base for _ in range(int(exp))])
++            return tensor_product_simp_Mul(expanded)
++        else:
++            # For other cases, just expand the base
++            expanded_base = base._eval_expand_tensorproduct(**hints) if hasattr(base, '_eval_expand_tensorproduct') else base
++            if expanded_base != base:
++                return self.func(expanded_base, exp)
++            return self
++
+     def as_real_imag(self, deep=True, **hints):
+         from sympy import atan2, cos, im, re, sin
+         from sympy.polys.polytools import poly
+diff --git a/sympy/physics/quantum/tensorproduct.py b/sympy/physics/quantum/tensorproduct.py
+index 9dd10d219e..18598c1b95 100644
+--- a/sympy/physics/quantum/tensorproduct.py
++++ b/sympy/physics/quantum/tensorproduct.py
+@@ -382,7 +382,17 @@ def tensor_product_simp(e, **hints):
+     if isinstance(e, Add):
+         return Add(*[tensor_product_simp(arg) for arg in e.args])
+     elif isinstance(e, Pow):
+-        return tensor_product_simp(e.base) ** e.exp
++        # If the base is a TensorProduct and the exponent is a positive integer,
++        # expand it to a Mul and then simplify
++        if isinstance(e.base, TensorProduct) and e.exp.is_Integer and e.exp > 0:
++            # Expand (TP)**n to TP*TP*...*TP (n times)
++            # Use evaluate=False to prevent automatic simplification back to power
++            expanded = Mul(*[e.base for _ in range(int(e.exp))], evaluate=False)
++            return tensor_product_simp_Mul(expanded)
++        else:
++            # For non-integer or negative powers, or non-TensorProduct bases,
++            # just simplify the base
++            return tensor_product_simp(e.base) ** e.exp
+     elif isinstance(e, Mul):
+         return tensor_product_simp_Mul(e)
+     elif isinstance(e, Commutator):
+diff --git a/test_debug2.py b/test_debug2.py
+new file mode 100644
+index 0000000000..8cfbe013bf
+--- /dev/null
++++ b/test_debug2.py
+@@ -0,0 +1,11 @@
++from sympy import *
++from sympy.physics.quantum import TensorProduct as tp
++
++# Test if tp(1,1)**2 is recognized as TensorProduct power
++expr = tp(1,1)**2
++print("expr =", expr)
++print("expr.base =", expr.base)
++print("expr.exp =", expr.exp)
++print("isinstance(expr.base, tp):", isinstance(expr.base, tp))
++print("expr.exp.is_Integer:", expr.exp.is_Integer)
++print("expr.exp > 0:", expr.exp > 0)
+diff --git a/test_debug3.py b/test_debug3.py
+new file mode 100644
+index 0000000000..db44c35a9b
+--- /dev/null
++++ b/test_debug3.py
+@@ -0,0 +1,24 @@
++from sympy import *
++from sympy.physics.quantum import TensorProduct as tp
++from sympy.physics.quantum.tensorproduct import tensor_product_simp
++
++# Debug tensor_product_simp
++expr = tp(1,1)**2
++print("expr =", expr)
++print("type(expr) =", type(expr))
++print("isinstance(expr, Pow) =", isinstance(expr, Pow))
++print("expr.base =", expr.base)
++print("isinstance(expr.base, tp) =", isinstance(expr.base, tp))
++print("expr.exp =", expr.exp)
++print("expr.exp.is_Integer =", expr.exp.is_Integer)
++print("expr.exp > 0 =", expr.exp > 0)
++
++# Test expanding manually
++print("\nManual expansion:")
++expanded = Mul(*[expr.base for _ in range(int(expr.exp))])
++print("expanded =", expanded)
++
++# Test tensor_product_simp_Mul
++from sympy.physics.quantum.tensorproduct import tensor_product_simp_Mul
++result = tensor_product_simp_Mul(expanded)
++print("tensor_product_simp_Mul(expanded) =", result)
+diff --git a/test_debug4.py b/test_debug4.py
+new file mode 100644
+index 0000000000..32166f8b90
+--- /dev/null
++++ b/test_debug4.py
+@@ -0,0 +1,9 @@
++from sympy import *
++from sympy.physics.quantum import TensorProduct as tp
++
++# Check automatic simplification
++base = tp(1,1)
++print("base =", base)
++print("base * base =", base * base)
++print("Mul(base, base) =", Mul(base, base))
++print("Mul(base, base, evaluate=False) =", Mul(base, base, evaluate=False))
+diff --git a/test_expand.py b/test_expand.py
+new file mode 100644
+index 0000000000..2632370515
+--- /dev/null
++++ b/test_expand.py
+@@ -0,0 +1,17 @@
++from sympy import *
++from sympy.physics.quantum import TensorProduct as tp
++
++# Test expand behavior
++expr = tp(1,1)**2
++print("expr =", expr)
++print("expr.expand() =", expr.expand())
++print("expr.expand(tensorproduct=True) =", expr.expand(tensorproduct=True))
++
++# Check if Pow has _eval_expand_tensorproduct
++print("\nDoes Pow have _eval_expand_tensorproduct?", hasattr(expr, '_eval_expand_tensorproduct'))
++
++# Try manual expansion
++print("\nManual expansion:")
++base = tp(1,1)
++expanded = base * base
++print("tp(1,1) * tp(1,1) =", expanded)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..6ea4c26886
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,27 @@
++from sympy import *
++from sympy.physics.quantum import TensorProduct as tp
++from sympy.physics.quantum import tensor_product_simp as tps
++from sympy.physics.paulialgebra import Pauli
++
++# Test case 1: tp(1,1)*tp(1,1)
++t1 = tp(1,1)*tp(1,1)
++print("t1 =", t1)
++print("tps(t1) =", tps(t1))
++print("t1.expand(tensorproduct=True) =", t1.expand(tensorproduct=True))
++
++# Expected result for t1
++a = Symbol('a', commutative=False)
++expected_t1 = tps(tp(1,1)*tp(1,a)).subs(a, 1)
++print("Expected for t1:", expected_t1)
++
++print("\n" + "="*50 + "\n")
++
++# Test case 2: tp(1,Pauli(3))*tp(1,Pauli(3))
++t2 = tp(1,Pauli(3))*tp(1,Pauli(3))
++print("t2 =", t2)
++print("tps(t2) =", tps(t2))
++print("t2.expand(tensorproduct=True) =", t2.expand(tensorproduct=True))
++
++# Expected result for t2
++expected_t2 = tps(tp(1,Pauli(3))*tp(1,a)).subs(a, Pauli(3))
++print("Expected for t2:", expected_t2)

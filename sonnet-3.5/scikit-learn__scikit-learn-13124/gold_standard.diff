@@ -1,0 +1,297 @@
+From 743e73f7268f99a54f32fcef1d8b83ebaf324ef8 Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Sat, 9 Feb 2019 10:11:48 +0800
+Subject: [PATCH 1/9] Enable StratifiedKFold to produce different splits
+
+---
+ sklearn/model_selection/_split.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index 21ffbc49a2004..37f3005e647ba 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -620,7 +620,10 @@ def __init__(self, n_splits='warn', shuffle=False, random_state=None):
+         super().__init__(n_splits, shuffle, random_state)
+ 
+     def _make_test_folds(self, X, y=None):
+-        rng = self.random_state
++        if self.shuffle:
++            rng = check_random_state(self.random_state)
++        else:
++            rng = self.random_state
+         y = np.asarray(y)
+         type_of_target_y = type_of_target(y)
+         allowed_target_types = ('binary', 'multiclass')
+
+From a2921c60c4078a7ad72ee503073f1998d3d1daed Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Sat, 9 Feb 2019 15:24:36 +0800
+Subject: [PATCH 2/9] what's new
+
+---
+ doc/whats_new/v0.20.rst | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
+index 3483b173dcb16..bcc8008a0c235 100644
+--- a/doc/whats_new/v0.20.rst
++++ b/doc/whats_new/v0.20.rst
+@@ -52,6 +52,13 @@ Changelog
+   :class:`linear_model.MultiTaskLasso` which were breaking when
+   ``warm_start = True``. :issue:`12360` by :user:`Aakanksha Joshi <joaak>`.
+ 
++:mod:`sklearn.model_selection`
++..............................
++
++- |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold` always
++  produce the same splits with different ``random_state``.
++  :issue:`13124` by :user:`Hanmin Qin <qinhanmin2014>`.
++
+ :mod:`sklearn.preprocessing`
+ ............................
+ 
+
+From 6d3601268bbcee4251e2de81ee06ac9b9c25fdca Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Mon, 11 Feb 2019 09:40:58 +0800
+Subject: [PATCH 3/9] redundant statement
+
+---
+ sklearn/model_selection/_split.py | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index 37f3005e647ba..5a07c3a61e3ae 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -620,10 +620,9 @@ def __init__(self, n_splits='warn', shuffle=False, random_state=None):
+         super().__init__(n_splits, shuffle, random_state)
+ 
+     def _make_test_folds(self, X, y=None):
+-        if self.shuffle:
+-            rng = check_random_state(self.random_state)
+-        else:
+-            rng = self.random_state
++        # Ensure that we do not always produce the same splits
++        # with different random_state
++        rng = check_random_state(self.random_state)
+         y = np.asarray(y)
+         type_of_target_y = type_of_target(y)
+         allowed_target_types = ('binary', 'multiclass')
+
+From b7b8e44ee1ccf70ff30fdcdd242914ae93a58fa7 Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Mon, 11 Feb 2019 16:43:52 +0800
+Subject: [PATCH 4/9] update what's new
+
+---
+ doc/whats_new/v0.20.rst | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
+index bcc8008a0c235..3338b05af5b25 100644
+--- a/doc/whats_new/v0.20.rst
++++ b/doc/whats_new/v0.20.rst
+@@ -55,8 +55,8 @@ Changelog
+ :mod:`sklearn.model_selection`
+ ..............................
+ 
+-- |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold` always
+-  produce the same splits with different ``random_state``.
++- |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold`
++  shuffle each stratification with the same ``random_state``. 
+   :issue:`13124` by :user:`Hanmin Qin <qinhanmin2014>`.
+ 
+ :mod:`sklearn.preprocessing`
+
+From 86751885d0deb7d0659b49bb36c56ef6cd7920fe Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Mon, 11 Feb 2019 16:49:24 +0800
+Subject: [PATCH 5/9] redundant comment
+
+---
+ sklearn/model_selection/_split.py | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index 5a07c3a61e3ae..87e7df05df1ba 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -620,8 +620,6 @@ def __init__(self, n_splits='warn', shuffle=False, random_state=None):
+         super().__init__(n_splits, shuffle, random_state)
+ 
+     def _make_test_folds(self, X, y=None):
+-        # Ensure that we do not always produce the same splits
+-        # with different random_state
+         rng = check_random_state(self.random_state)
+         y = np.asarray(y)
+         type_of_target_y = type_of_target(y)
+
+From 3bec2f1324fc3a858bf85be1091560972f6fe839 Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Mon, 11 Feb 2019 19:21:46 +0800
+Subject: [PATCH 6/9] add a test
+
+---
+ sklearn/model_selection/tests/test_split.py | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/sklearn/model_selection/tests/test_split.py b/sklearn/model_selection/tests/test_split.py
+index 2be8d172ef822..3a739b802ca6f 100644
+--- a/sklearn/model_selection/tests/test_split.py
++++ b/sklearn/model_selection/tests/test_split.py
+@@ -493,6 +493,17 @@ def test_shuffle_stratifiedkfold():
+         assert_not_equal(set(test0), set(test1))
+     check_cv_coverage(kf0, X_40, y, groups=None, expected_n_splits=5)
+ 
++    # Ensure that we shuffle each stratification with different
++    # random_state in StratifiedKFold
++    # See https://github.com/scikit-learn/scikit-learn/pull/13124
++    X = np.arange(10)
++    y = [0] * 5 + [1] * 5
++    kf1 = StratifiedKFold(5, shuffle=True, random_state=0)
++    kf2 = StratifiedKFold(5, shuffle=True, random_state=1)
++    test_set1 = sorted(list(map(lambda x: tuple(x[1]), kf1.split(X, y))))
++    test_set2 = sorted(list(map(lambda x: tuple(x[1]), kf2.split(X, y))))
++    assert test_set1 != test_set2
++
+ 
+ def test_kfold_can_detect_dependent_samples_on_digits():  # see #2372
+     # The digits samples are dependent: they are apparently grouped by authors
+
+From ca2f43080c10572620cee3998701d365617adccc Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Mon, 11 Feb 2019 19:48:48 +0800
+Subject: [PATCH 7/9] move what's new entry
+
+---
+ doc/whats_new/v0.20.rst | 7 -------
+ doc/whats_new/v0.21.rst | 4 ++++
+ 2 files changed, 4 insertions(+), 7 deletions(-)
+
+diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
+index 3338b05af5b25..3483b173dcb16 100644
+--- a/doc/whats_new/v0.20.rst
++++ b/doc/whats_new/v0.20.rst
+@@ -52,13 +52,6 @@ Changelog
+   :class:`linear_model.MultiTaskLasso` which were breaking when
+   ``warm_start = True``. :issue:`12360` by :user:`Aakanksha Joshi <joaak>`.
+ 
+-:mod:`sklearn.model_selection`
+-..............................
+-
+-- |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold`
+-  shuffle each stratification with the same ``random_state``. 
+-  :issue:`13124` by :user:`Hanmin Qin <qinhanmin2014>`.
+-
+ :mod:`sklearn.preprocessing`
+ ............................
+ 
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index fdd0230fc840b..bce487001f642 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -200,6 +200,10 @@ Support for Python 3.4 and below has been officially dropped.
+   :func:`~model_selection.validation_curve` only the latter is required.
+   :issue:`12613` and :issue:`12669` by :user:`Marc Torrellas <marctorrellas>`.
+ 
++- |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold`
++  shuffle each stratification with the same ``random_state``. 
++  :issue:`13124` by :user:`Hanmin Qin <qinhanmin2014>`.
++
+ :mod:`sklearn.neighbors`
+ ........................
+ 
+
+From 4307d64f91c75afc48a7f91ef99775a75d27658e Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Mon, 11 Feb 2019 22:23:00 +0800
+Subject: [PATCH 8/9] review comment
+
+---
+ doc/whats_new/v0.21.rst                     | 2 +-
+ sklearn/model_selection/tests/test_split.py | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index bce487001f642..7dc6ce6fb26fa 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -201,7 +201,7 @@ Support for Python 3.4 and below has been officially dropped.
+   :issue:`12613` and :issue:`12669` by :user:`Marc Torrellas <marctorrellas>`.
+ 
+ - |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold`
+-  shuffle each stratification with the same ``random_state``. 
++  shuffles each stratification with the same ``random_state``.
+   :issue:`13124` by :user:`Hanmin Qin <qinhanmin2014>`.
+ 
+ :mod:`sklearn.neighbors`
+diff --git a/sklearn/model_selection/tests/test_split.py b/sklearn/model_selection/tests/test_split.py
+index 3a739b802ca6f..15ab2600b3459 100644
+--- a/sklearn/model_selection/tests/test_split.py
++++ b/sklearn/model_selection/tests/test_split.py
+@@ -500,8 +500,8 @@ def test_shuffle_stratifiedkfold():
+     y = [0] * 5 + [1] * 5
+     kf1 = StratifiedKFold(5, shuffle=True, random_state=0)
+     kf2 = StratifiedKFold(5, shuffle=True, random_state=1)
+-    test_set1 = sorted(list(map(lambda x: tuple(x[1]), kf1.split(X, y))))
+-    test_set2 = sorted(list(map(lambda x: tuple(x[1]), kf2.split(X, y))))
++    test_set1 = sorted([tuple(s[1]) for s in kf1.split(X, y)])
++    test_set2 = sorted([tuple(s[1]) for s in kf2.split(X, y)])
+     assert test_set1 != test_set2
+ 
+ 
+
+From 85c2d67f530bce44db1eb489c7aa0267384f79d3 Mon Sep 17 00:00:00 2001
+From: Hanmin Qin <qinhanmin2005@sina.com>
+Date: Tue, 12 Feb 2019 09:12:18 +0800
+Subject: [PATCH 9/9] review comment
+
+---
+ doc/whats_new/v0.21.rst                     | 3 ++-
+ sklearn/model_selection/_split.py           | 3 +--
+ sklearn/model_selection/tests/test_split.py | 2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 7dc6ce6fb26fa..3d7393eb901e5 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -201,7 +201,8 @@ Support for Python 3.4 and below has been officially dropped.
+   :issue:`12613` and :issue:`12669` by :user:`Marc Torrellas <marctorrellas>`.
+ 
+ - |Fix| Fixed a bug where :class:`model_selection.StratifiedKFold`
+-  shuffles each stratification with the same ``random_state``.
++  shuffles each class's samples with the same ``random_state``,
++  making ``shuffle=True`` ineffective.
+   :issue:`13124` by :user:`Hanmin Qin <qinhanmin2014>`.
+ 
+ :mod:`sklearn.neighbors`
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index 87e7df05df1ba..e8d46faac91d9 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -576,8 +576,7 @@ class StratifiedKFold(_BaseKFold):
+             ``n_splits`` default value will change from 3 to 5 in v0.22.
+ 
+     shuffle : boolean, optional
+-        Whether to shuffle each stratification of the data before splitting
+-        into batches.
++        Whether to shuffle each class's samples before splitting into batches.
+ 
+     random_state : int, RandomState instance or None, optional, default=None
+         If int, random_state is the seed used by the random number generator;
+diff --git a/sklearn/model_selection/tests/test_split.py b/sklearn/model_selection/tests/test_split.py
+index 15ab2600b3459..cab88fb669db2 100644
+--- a/sklearn/model_selection/tests/test_split.py
++++ b/sklearn/model_selection/tests/test_split.py
+@@ -493,7 +493,7 @@ def test_shuffle_stratifiedkfold():
+         assert_not_equal(set(test0), set(test1))
+     check_cv_coverage(kf0, X_40, y, groups=None, expected_n_splits=5)
+ 
+-    # Ensure that we shuffle each stratification with different
++    # Ensure that we shuffle each class's samples with different
+     # random_state in StratifiedKFold
+     # See https://github.com/scikit-learn/scikit-learn/pull/13124
+     X = np.arange(10)

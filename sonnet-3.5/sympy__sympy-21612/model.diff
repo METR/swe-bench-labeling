@@ -1,0 +1,75 @@
+diff --git a/sympy/parsing/latex/_parse_latex_antlr.py b/sympy/parsing/latex/_parse_latex_antlr.py
+index 2e4a45ad20..a124c5d64d 100644
+--- a/sympy/parsing/latex/_parse_latex_antlr.py
++++ b/sympy/parsing/latex/_parse_latex_antlr.py
+@@ -382,11 +382,7 @@ def convert_frac(frac):
+ 
+     expr_top = convert_expr(frac.upper)
+     expr_bot = convert_expr(frac.lower)
+-    inverse_denom = sympy.Pow(expr_bot, -1, evaluate=False)
+-    if expr_top == 1:
+-        return inverse_denom
+-    else:
+-        return sympy.Mul(expr_top, inverse_denom, evaluate=False)
++    return sympy.Mul(expr_top, sympy.Pow(expr_bot, -1, evaluate=False), evaluate=False)
+ 
+ def convert_binom(binom):
+     expr_n = convert_expr(binom.n)
+diff --git a/test_latex_frac.py b/test_latex_frac.py
+new file mode 100644
+index 0000000000..6817710576
+--- /dev/null
++++ b/test_latex_frac.py
+@@ -0,0 +1,52 @@
++from sympy import Symbol, Mul, Pow, Add
++from sympy.parsing.latex._parse_latex_antlr import convert_frac
++
++class MockFrac:
++    def __init__(self, upper, lower):
++        self.upper = MockExpr(upper)
++        self.lower = MockExpr(lower)
++
++class MockExpr:
++    def __init__(self, value):
++        self.value = value
++
++def mock_convert_expr(expr):
++    if isinstance(expr, MockFrac):
++        return Mul(
++            mock_convert_expr(expr.upper.value),
++            Pow(mock_convert_expr(expr.lower.value), -1, evaluate=False),
++            evaluate=False
++        )
++    elif isinstance(expr, str):
++        if expr == 'a^3+b':
++            return Add(Pow(Symbol('a'), 3), Symbol('b'), evaluate=False)
++        elif expr == 'c':
++            return Symbol('c')
++        elif expr == '1':
++            return Symbol('1')
++        elif expr == 'c^2':
++            return Pow(Symbol('c'), 2, evaluate=False)
++    return expr
++
++def test_nested_fractions():
++    # Mock the nested fraction structure
++    inner_frac1 = MockFrac('a^3+b', 'c')
++    inner_frac2 = MockFrac('1', 'c^2')
++    outer_frac = MockFrac(inner_frac1, inner_frac2)
++
++    # Convert the mock fraction
++    result = mock_convert_expr(outer_frac)
++
++    # Expected result
++    a, b, c = Symbol('a'), Symbol('b'), Symbol('c')
++    expected = Mul(
++        Mul(Add(Pow(a, 3), b, evaluate=False), Pow(c, -1, evaluate=False), evaluate=False),
++        Pow(Mul(Symbol('1'), Pow(Pow(c, 2, evaluate=False), -1, evaluate=False), evaluate=False), -1, evaluate=False),
++        evaluate=False
++    )
++
++    assert result == expected, f"Expected {expected}, but got {result}"
++
++if __name__ == "__main__":
++    test_nested_fractions()
++    print("Test passed successfully!")

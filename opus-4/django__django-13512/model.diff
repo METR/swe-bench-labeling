@@ -1,0 +1,33 @@
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 9de2c60b35..17c7956b53 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -1258,7 +1258,7 @@ class JSONField(CharField):
+     def prepare_value(self, value):
+         if isinstance(value, InvalidJSONInput):
+             return value
+-        return json.dumps(value, cls=self.encoder)
++        return json.dumps(value, ensure_ascii=False, cls=self.encoder)
+ 
+     def has_changed(self, initial, data):
+         if super().has_changed(initial, data):
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_json_unicode.py b/test_json_unicode.py
+new file mode 100644
+index 0000000000..089459ec67
+--- /dev/null
++++ b/test_json_unicode.py
+@@ -0,0 +1,8 @@
++# -*- coding: utf-8 -*-
++import json
++
++# Show the current behavior
++chinese_text = u'\u4e2d\u56fd'  # This is "中国"
++print("Original text: " + chinese_text)
++print("Default json.dumps(): " + json.dumps(chinese_text))
++print("With ensure_ascii=False: " + json.dumps(chinese_text, ensure_ascii=False))
+diff --git a/test_unicode_json.py b/test_unicode_json.py
+new file mode 100644
+index 0000000000..e69de29bb2

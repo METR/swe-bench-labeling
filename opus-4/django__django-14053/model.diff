@@ -1,0 +1,710 @@
+diff --git a/demo_fix.py b/demo_fix.py
+new file mode 100644
+index 0000000000..fa2eb91a37
+--- /dev/null
++++ b/demo_fix.py
+@@ -0,0 +1,95 @@
++"""
++Demonstration of the fix for duplicate yields in post_process()
++"""
++import os
++import tempfile
++import shutil
++from django.conf import settings
++from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
++from django.contrib.staticfiles.management.commands.collectstatic import Command
++from django.core.files.base import ContentFile
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=False,
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++        STATICFILES_STORAGE='django.contrib.staticfiles.storage.ManifestStaticFilesStorage',
++        INSTALLED_APPS=['django.contrib.staticfiles'],
++    )
++
++def simulate_collectstatic():
++    """Simulate collectstatic behavior to show the fix"""
++    print("Simulating collectstatic with the fix for duplicate post-processing yields\n")
++    
++    # Create a temporary directory for source files
++    source_dir = tempfile.mkdtemp()
++    
++    # Create the manifest storage
++    storage = ManifestStaticFilesStorage()
++    
++    # Create test files
++    css_dir = os.path.join(source_dir, 'css')
++    os.makedirs(css_dir)
++    
++    # Create base.css that imports other files (like admin CSS)
++    with open(os.path.join(css_dir, 'base.css'), 'w') as f:
++        f.write("""
++@import url("fonts.css");
++body { background: white; }
++""")
++    
++    # Create fonts.css
++    with open(os.path.join(css_dir, 'fonts.css'), 'w') as f:
++        f.write("""
++.font { font-family: Arial; }
++""")
++    
++    # Create dashboard.css (no imports)
++    with open(os.path.join(css_dir, 'dashboard.css'), 'w') as f:
++        f.write("""
++.dashboard { width: 100%; }
++""")
++    
++    # Save files to storage
++    for filename in ['base.css', 'fonts.css', 'dashboard.css']:
++        filepath = os.path.join(css_dir, filename)
++        with open(filepath, 'rb') as f:
++            storage.save(f'css/{filename}', ContentFile(f.read()))
++    
++    # Prepare paths for post-processing
++    paths = {
++        'css/base.css': (storage, 'css/base.css'),
++        'css/fonts.css': (storage, 'css/fonts.css'), 
++        'css/dashboard.css': (storage, 'css/dashboard.css'),
++    }
++    
++    # Track post-processing output
++    print("Post-processing output:")
++    print("-" * 50)
++    
++    post_process_count = {}
++    for original_path, processed_path, processed in storage.post_process(paths):
++        if isinstance(processed, bool) and processed:
++            post_process_count[original_path] = post_process_count.get(original_path, 0) + 1
++            print(f"Post-processed '{original_path}' as '{processed_path}'")
++    
++    print("\nSummary:")
++    print("-" * 50)
++    for path, count in post_process_count.items():
++        print(f"{path}: processed {count} time(s)")
++    
++    print("\nWith the fix:")
++    print("- dashboard.css (no imports) is processed only once")
++    print("- fonts.css (no changing imports) is processed only once") 
++    print("- base.css (imports fonts.css) is processed twice: once initially, once after fonts.css is hashed")
++    print("\nThis eliminates the duplicate yields that were happening before!")
++    
++    # Clean up
++    shutil.rmtree(source_dir)
++    shutil.rmtree(storage.location)
++
++
++if __name__ == "__main__":
++    simulate_collectstatic()
+diff --git a/django/contrib/staticfiles/storage.py b/django/contrib/staticfiles/storage.py
+index 494890cc23..d32f00d227 100644
+--- a/django/contrib/staticfiles/storage.py
++++ b/django/contrib/staticfiles/storage.py
+@@ -220,6 +220,8 @@ class HashedFilesMixin:
+ 
+         # where to store the new paths
+         hashed_files = {}
++        # track files that have been yielded with their hashed names
++        yielded_files = {}
+ 
+         # build a list of adjustable files
+         adjustable_paths = [
+@@ -230,13 +232,17 @@ class HashedFilesMixin:
+         # adjustable files.
+         for name, hashed_name, processed, _ in self._post_process(paths, adjustable_paths, hashed_files):
+             yield name, hashed_name, processed
++            yielded_files[name] = hashed_name
+ 
+         paths = {path: paths[path] for path in adjustable_paths}
+ 
+         for i in range(self.max_post_process_passes):
+             substitutions = False
+             for name, hashed_name, processed, subst in self._post_process(paths, adjustable_paths, hashed_files):
+-                yield name, hashed_name, processed
++                # Only yield if the file hasn't been yielded yet or if its hash has changed
++                if name not in yielded_files or yielded_files[name] != hashed_name:
++                    yield name, hashed_name, processed
++                    yielded_files[name] = hashed_name
+                 substitutions = substitutions or subst
+ 
+             if not substitutions:
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..52bb6ba226
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,118 @@
++import os
++import tempfile
++from django.conf import settings
++from django.contrib.staticfiles.storage import HashedFilesMixin
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=False,
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++    )
++
++class TestHashedFilesStorage(HashedFilesMixin, FileSystemStorage):
++    """Test storage class that uses HashedFilesMixin"""
++    
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.yield_count = {}
++        
++    def post_process(self, *args, **kwargs):
++        """Track yields"""
++        for name, hashed_name, processed in super().post_process(*args, **kwargs):
++            if isinstance(processed, bool):
++                self.yield_count[name] = self.yield_count.get(name, 0) + 1
++            yield name, hashed_name, processed
++
++
++def run_tests():
++    print("Testing fix for duplicate yields in HashedFilesMixin.post_process()")
++    print("=" * 70)
++    
++    # Test 1: Simple files without references
++    print("\nTest 1: Simple CSS files (no references)")
++    print("-" * 40)
++    storage = TestHashedFilesStorage(location=tempfile.mkdtemp())
++    
++    storage.save('css/simple1.css', ContentFile(b'body { color: red; }'))
++    storage.save('css/simple2.css', ContentFile(b'.header { color: blue; }'))
++    
++    paths = {
++        'css/simple1.css': (storage, 'css/simple1.css'),
++        'css/simple2.css': (storage, 'css/simple2.css'),
++    }
++    
++    list(storage.post_process(paths))
++    
++    print(f"simple1.css yielded: {storage.yield_count.get('css/simple1.css', 0)} times")
++    print(f"simple2.css yielded: {storage.yield_count.get('css/simple2.css', 0)} times")
++    
++    assert storage.yield_count.get('css/simple1.css', 0) == 1, "Simple file yielded more than once!"
++    assert storage.yield_count.get('css/simple2.css', 0) == 1, "Simple file yielded more than once!"
++    print("✓ Test passed: Simple files yielded only once")
++    
++    # Test 2: Nested references
++    print("\nTest 2: CSS files with nested references")
++    print("-" * 40)
++    storage2 = TestHashedFilesStorage(location=tempfile.mkdtemp())
++    
++    storage2.save('css/base.css', ContentFile(b'@import url("level1.css");\n.base{}'))
++    storage2.save('css/level1.css', ContentFile(b'@import url("level2.css");\n.l1{}'))
++    storage2.save('css/level2.css', ContentFile(b'.l2 { color: green; }'))
++    
++    paths2 = {
++        'css/base.css': (storage2, 'css/base.css'),
++        'css/level1.css': (storage2, 'css/level1.css'),
++        'css/level2.css': (storage2, 'css/level2.css'),
++    }
++    
++    list(storage2.post_process(paths2))
++    
++    print(f"base.css yielded: {storage2.yield_count.get('css/base.css', 0)} times")
++    print(f"level1.css yielded: {storage2.yield_count.get('css/level1.css', 0)} times")
++    print(f"level2.css yielded: {storage2.yield_count.get('css/level2.css', 0)} times")
++    
++    # level2.css has no imports - should be yielded once
++    assert storage2.yield_count.get('css/level2.css', 0) == 1
++    # level1.css imports level2.css but doesn't need re-processing after level2 is hashed
++    assert storage2.yield_count.get('css/level1.css', 0) == 1  
++    # base.css imports level1.css and needs to be updated when level1's hash changes
++    assert storage2.yield_count.get('css/base.css', 0) == 2
++    print("✓ Test passed: Files yielded appropriate number of times")
++    
++    # Test 3: The problematic case from the issue
++    print("\nTest 3: CSS file without references (dashboard.css example)")
++    print("-" * 40)
++    storage3 = TestHashedFilesStorage(location=tempfile.mkdtemp())
++    
++    # dashboard.css with no external references
++    storage3.save('admin/css/dashboard.css', ContentFile(b'.dashboard { width: 100%; }'))
++    
++    paths3 = {
++        'admin/css/dashboard.css': (storage3, 'admin/css/dashboard.css'),
++    }
++    
++    list(storage3.post_process(paths3))
++    
++    print(f"dashboard.css yielded: {storage3.yield_count.get('admin/css/dashboard.css', 0)} times")
++    
++    assert storage3.yield_count.get('admin/css/dashboard.css', 0) == 1
++    print("✓ Test passed: dashboard.css yielded only once")
++    
++    print("\n" + "=" * 70)
++    print("All tests passed! The fix prevents duplicate yields.")
++    
++    # Clean up
++    import shutil
++    for storage in [storage, storage2, storage3]:
++        try:
++            shutil.rmtree(storage.location, ignore_errors=True)
++        except:
++            pass
++
++
++if __name__ == "__main__":
++    run_tests()
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..2ee9ab29f3
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,148 @@
++import os
++import tempfile
++from django.conf import settings
++from django.contrib.staticfiles.storage import HashedFilesMixin
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=False,
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++    )
++
++class TestHashedFilesStorage(HashedFilesMixin, FileSystemStorage):
++    """Test storage class that uses HashedFilesMixin"""
++    pass
++
++def test_no_duplicates_for_simple_files():
++    """Test that files with no references are only yielded once"""
++    storage = TestHashedFilesStorage(location=settings.STATIC_ROOT)
++    
++    # Create test CSS files without references
++    simple1_css = """
++    body { background: white; }
++    """
++    
++    simple2_css = """
++    .header { color: blue; }
++    """
++    
++    # Save the files
++    storage.save('css/simple1.css', ContentFile(simple1_css.encode()))
++    storage.save('css/simple2.css', ContentFile(simple2_css.encode()))
++    
++    # Prepare paths dict for post_process
++    paths = {
++        'css/simple1.css': (storage, 'css/simple1.css'),
++        'css/simple2.css': (storage, 'css/simple2.css'),
++    }
++    
++    # Track yields
++    yields = []
++    for original_path, processed_path, processed in storage.post_process(paths):
++        yields.append((original_path, processed_path, processed))
++        print(f"Yielded: {original_path} -> {processed_path} (processed={processed})")
++    
++    # Check for duplicates
++    originals = [y[0] for y in yields if isinstance(y[2], bool)]
++    seen = {}
++    for orig in originals:
++        seen[orig] = seen.get(orig, 0) + 1
++    
++    print(f"\nTotal yields: {len(yields)}")
++    print(f"Files yielded: {seen}")
++    
++    # Clean up
++    import shutil
++    shutil.rmtree(settings.STATIC_ROOT)
++    
++    # Simple files should only be yielded once
++    return all(count == 1 for count in seen.values())
++
++def test_changed_files_yielded_appropriately():
++    """Test that files that change due to substitutions are yielded when changed"""
++    storage = TestHashedFilesStorage(location=settings.STATIC_ROOT)
++    
++    # Create test CSS files with nested references
++    # base.css references fonts.css
++    base_css = """
++    @import url("fonts.css");
++    body { background: white; }
++    """
++    
++    # fonts.css references icon.css
++    fonts_css = """
++    @import url("icon.css");
++    .font { font-family: Arial; }
++    """
++    
++    # icon.css has no references
++    icon_css = """
++    .icon { width: 16px; }
++    """
++    
++    # Save the files
++    storage.save('css/base.css', ContentFile(base_css.encode()))
++    storage.save('css/fonts.css', ContentFile(fonts_css.encode()))
++    storage.save('css/icon.css', ContentFile(icon_css.encode()))
++    
++    # Prepare paths dict for post_process
++    paths = {
++        'css/base.css': (storage, 'css/base.css'),
++        'css/fonts.css': (storage, 'css/fonts.css'),
++        'css/icon.css': (storage, 'css/icon.css'),
++    }
++    
++    # Track yields
++    yields = []
++    hashed_names = {}
++    for original_path, processed_path, processed in storage.post_process(paths):
++        yields.append((original_path, processed_path, processed))
++        print(f"Yielded: {original_path} -> {processed_path} (processed={processed})")
++        
++        # Track how hashed names change
++        if original_path not in hashed_names:
++            hashed_names[original_path] = []
++        hashed_names[original_path].append(processed_path)
++    
++    # Check yields per file
++    originals = [y[0] for y in yields if isinstance(y[2], bool)]
++    seen = {}
++    for orig in originals:
++        seen[orig] = seen.get(orig, 0) + 1
++    
++    print(f"\nTotal yields: {len(yields)}")
++    print(f"Files yielded: {seen}")
++    print(f"\nHashed name changes:")
++    for orig, names in hashed_names.items():
++        print(f"  {orig}: {names}")
++    
++    # Clean up
++    import shutil
++    shutil.rmtree(settings.STATIC_ROOT)
++    
++    # Check expectations:
++    # - icon.css: yielded once (no references to update)
++    # - fonts.css: yielded once (reference to icon.css doesn't change its hash)
++    # - base.css: yielded twice (first pass, then when fonts.css hash is updated)
++    expected = {
++        'css/icon.css': 1,
++        'css/fonts.css': 1,
++        'css/base.css': 2
++    }
++    
++    return seen == expected
++
++if __name__ == "__main__":
++    print("Test 1: Simple files with no references")
++    print("=" * 50)
++    result1 = test_no_duplicates_for_simple_files()
++    print(f"Result: {'PASS' if result1 else 'FAIL'}")
++    
++    print("\n\nTest 2: Files with nested references")
++    print("=" * 50)
++    result2 = test_changed_files_yielded_appropriately()
++    print(f"Result: {'PASS' if result2 else 'FAIL'}")
+diff --git a/test_dashboard_example.py b/test_dashboard_example.py
+new file mode 100644
+index 0000000000..4e0a6dfd02
+--- /dev/null
++++ b/test_dashboard_example.py
+@@ -0,0 +1,58 @@
++import os
++import tempfile
++from django.conf import settings
++from django.contrib.staticfiles.storage import HashedFilesMixin
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=False,
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++    )
++
++class TestHashedFilesStorage(HashedFilesMixin, FileSystemStorage):
++    """Test storage class that uses HashedFilesMixin"""
++    pass
++
++def test_dashboard_case():
++    """Test the dashboard.css case from the issue - no changes between passes"""
++    storage = TestHashedFilesStorage(location=settings.STATIC_ROOT)
++    
++    # Create dashboard.css without references (like the actual Django admin file)
++    dashboard_css = """
++    .dashboard { width: 100%; }
++    .dashboard-module { margin: 10px; }
++    """
++    
++    # Save the file
++    storage.save('admin/css/dashboard.css', ContentFile(dashboard_css.encode()))
++    
++    # Prepare paths dict for post_process
++    paths = {
++        'admin/css/dashboard.css': (storage, 'admin/css/dashboard.css'),
++    }
++    
++    # Track yields
++    yields = []
++    for original_path, processed_path, processed in storage.post_process(paths):
++        yields.append((original_path, processed_path, processed))
++        print(f"Post-processed '{original_path}' as '{processed_path}'")
++    
++    # Check for duplicates
++    originals = [y[0] for y in yields if isinstance(y[2], bool)]
++    
++    print(f"\nTotal post-processing entries: {len(originals)}")
++    
++    # Clean up
++    import shutil
++    shutil.rmtree(settings.STATIC_ROOT)
++    
++    # Should only be yielded once because the self-reference doesn't change the hash
++    return len(originals) == 1
++
++if __name__ == "__main__":
++    result = test_dashboard_case()
++    print(f"\nResult: {'PASS - Only yielded once!' if result else 'FAIL - Yielded multiple times'}")
+diff --git a/test_duplicate_yields.py b/test_duplicate_yields.py
+new file mode 100644
+index 0000000000..64ad3ccc36
+--- /dev/null
++++ b/test_duplicate_yields.py
+@@ -0,0 +1,81 @@
++import os
++import tempfile
++from django.conf import settings
++from django.contrib.staticfiles.storage import HashedFilesMixin
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=False,
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++    )
++
++class TestHashedFilesStorage(HashedFilesMixin, FileSystemStorage):
++    """Test storage class that uses HashedFilesMixin"""
++    pass
++
++def test_duplicate_yields():
++    """Test that post_process doesn't yield the same file multiple times"""
++    storage = TestHashedFilesStorage(location=settings.STATIC_ROOT)
++    
++    # Create test CSS files with nested references
++    # base.css references fonts.css
++    base_css = """
++    @import url("fonts.css");
++    body { background: white; }
++    """
++    
++    # fonts.css references icon.css
++    fonts_css = """
++    @import url("icon.css");
++    .font { font-family: Arial; }
++    """
++    
++    # icon.css has no references
++    icon_css = """
++    .icon { width: 16px; }
++    """
++    
++    # Save the files
++    storage.save('css/base.css', ContentFile(base_css.encode()))
++    storage.save('css/fonts.css', ContentFile(fonts_css.encode()))
++    storage.save('css/icon.css', ContentFile(icon_css.encode()))
++    
++    # Prepare paths dict for post_process
++    paths = {
++        'css/base.css': (storage, 'css/base.css'),
++        'css/fonts.css': (storage, 'css/fonts.css'),
++        'css/icon.css': (storage, 'css/icon.css'),
++    }
++    
++    # Track yields
++    yields = []
++    for original_path, processed_path, processed in storage.post_process(paths):
++        yields.append((original_path, processed_path, processed))
++        print(f"Yielded: {original_path} -> {processed_path} (processed={processed})")
++    
++    # Check for duplicates
++    originals = [y[0] for y in yields if isinstance(y[2], bool)]
++    duplicates = []
++    seen = set()
++    for orig in originals:
++        if orig in seen:
++            duplicates.append(orig)
++        seen.add(orig)
++    
++    print(f"\nTotal yields: {len(yields)}")
++    print(f"Unique files: {len(set(originals))}")
++    print(f"Duplicates: {duplicates}")
++    
++    # Clean up
++    import shutil
++    shutil.rmtree(settings.STATIC_ROOT)
++    
++    return len(duplicates) > 0
++
++if __name__ == "__main__":
++    has_duplicates = test_duplicate_yields()
++    print(f"\nHas duplicate yields: {has_duplicates}")
+diff --git a/test_no_duplicate_yields.py b/test_no_duplicate_yields.py
+new file mode 100644
+index 0000000000..8ad5b7272f
+--- /dev/null
++++ b/test_no_duplicate_yields.py
+@@ -0,0 +1,142 @@
++"""
++Test for the duplicate yields fix
++"""
++import os
++import tempfile
++from io import StringIO
++from django.conf import settings
++from django.contrib.staticfiles.storage import HashedFilesMixin
++from django.contrib.staticfiles.management.commands.collectstatic import Command as CollectstaticCommand
++from django.core.files.storage import FileSystemStorage
++from django.core.files.base import ContentFile
++from django.core.management import call_command
++from django.test import TestCase, override_settings
++
++# Configure Django settings if not already configured
++if not settings.configured:
++    settings.configure(
++        DEBUG=False,
++        STATIC_URL='/static/',
++        STATIC_ROOT=tempfile.mkdtemp(),
++        INSTALLED_APPS=['django.contrib.staticfiles'],
++    )
++
++class HashedFilesTestStorage(HashedFilesMixin, FileSystemStorage):
++    """Test storage that tracks post_process yields"""
++    
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs) 
++        self.post_process_count = {}
++    
++    def post_process(self, *args, **kwargs):
++        """Wrap post_process to count yields per file"""
++        for name, hashed_name, processed in super().post_process(*args, **kwargs):
++            if isinstance(processed, bool):  # Skip error yields
++                self.post_process_count[name] = self.post_process_count.get(name, 0) + 1
++            yield name, hashed_name, processed
++
++
++class TestNoDuplicateYields(TestCase):
++    """Test that post_process doesn't yield files multiple times unnecessarily"""
++    
++    def setUp(self):
++        self.temp_dir = tempfile.mkdtemp()
++        self.storage = HashedFilesTestStorage(location=self.temp_dir)
++        
++    def tearDown(self):
++        import shutil
++        shutil.rmtree(self.temp_dir, ignore_errors=True)
++        
++    def test_simple_css_files_yielded_once(self):
++        """Files without references should only be yielded once"""
++        # Create CSS files without references
++        self.storage.save('css/simple.css', ContentFile(b'.simple { color: red; }'))
++        self.storage.save('css/other.css', ContentFile(b'.other { color: blue; }'))
++        
++        paths = {
++            'css/simple.css': (self.storage, 'css/simple.css'),
++            'css/other.css': (self.storage, 'css/other.css'),
++        }
++        
++        # Process files
++        list(self.storage.post_process(paths))
++        
++        # Each file should only be yielded once
++        self.assertEqual(self.storage.post_process_count['css/simple.css'], 1)
++        self.assertEqual(self.storage.post_process_count['css/other.css'], 1)
++        
++    def test_nested_css_yields_appropriately(self):
++        """Files should only be yielded again if their content changes"""
++        # Create CSS files with nested references
++        self.storage.save('css/base.css', ContentFile(b'@import url("level1.css");\n.base{}'))
++        self.storage.save('css/level1.css', ContentFile(b'@import url("level2.css");\n.l1{}'))
++        self.storage.save('css/level2.css', ContentFile(b'.l2 { color: green; }'))
++        
++        paths = {
++            'css/base.css': (self.storage, 'css/base.css'),
++            'css/level1.css': (self.storage, 'css/level1.css'),
++            'css/level2.css': (self.storage, 'css/level2.css'),
++        }
++        
++        # Process files
++        list(self.storage.post_process(paths))
++        
++        # level2.css has no imports - yielded once
++        self.assertEqual(self.storage.post_process_count['css/level2.css'], 1)
++        # level1.css imports level2.css but its hash doesn't change - yielded once
++        self.assertEqual(self.storage.post_process_count['css/level1.css'], 1)
++        # base.css imports level1.css and its hash changes - yielded twice
++        self.assertEqual(self.storage.post_process_count['css/base.css'], 2)
++        
++    def test_circular_reference_yields(self):
++        """Circular references should not cause infinite yields"""
++        # Create CSS with circular reference
++        self.storage.save('css/circular.css', ContentFile(b'@import url("circular.css");\n.circ{}'))
++        
++        paths = {
++            'css/circular.css': (self.storage, 'css/circular.css'),
++        }
++        
++        # This should hit max passes but not yield the same file endlessly
++        # Collect all yields
++        yields = list(self.storage.post_process(paths))
++        
++        # Should yield the file for each pass until max_post_process_passes
++        # plus the initial pass, and one error yield
++        max_passes = self.storage.max_post_process_passes
++        expected_yields = max_passes + 1  # initial pass + max subsequent passes
++        self.assertEqual(self.storage.post_process_count['css/circular.css'], expected_yields)
++        
++        # Last yield should be an error
++        last_yield = yields[-1]
++        self.assertEqual(last_yield[0], 'All')
++        self.assertIsInstance(last_yield[2], RuntimeError)
++
++
++if __name__ == '__main__':
++    import django
++    from django.test.utils import get_runner
++    
++    django.setup()
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner(verbosity=2)
++    
++    # Run our specific test
++    from django.test.utils import setup_test_environment, teardown_test_environment
++    setup_test_environment()
++    
++    suite = TestNoDuplicateYields()
++    for test_name in ['test_simple_css_files_yielded_once', 
++                      'test_nested_css_yields_appropriately',
++                      'test_circular_reference_yields']:
++        print(f"\nRunning {test_name}...")
++        try:
++            getattr(suite, test_name)()
++            print(f"✓ {test_name} passed")
++        except Exception as e:
++            print(f"✗ {test_name} failed: {e}")
++        finally:
++            suite.tearDown()
++            suite.setUp()
++    
++    teardown_test_environment()

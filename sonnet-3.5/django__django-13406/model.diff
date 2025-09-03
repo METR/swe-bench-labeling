@@ -1,0 +1,76 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index b48d0df9c0..4e642f8557 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -238,7 +238,11 @@ class QuerySet:
+     def __getstate__(self):
+         # Force the cache to be fully populated.
+         self._fetch_all()
+-        return {**self.__dict__, DJANGO_VERSION_PICKLE_KEY: django.__version__}
++        state = {**self.__dict__, DJANGO_VERSION_PICKLE_KEY: django.__version__}
++        # Add information about values() and annotate() calls
++        state['_values'] = getattr(self, '_values', None)
++        state['_annotations'] = getattr(self.query, 'annotations', {})
++        return state
+ 
+     def __setstate__(self, state):
+         pickled_version = state.get(DJANGO_VERSION_PICKLE_KEY)
+@@ -258,6 +262,21 @@ class QuerySet:
+                 stacklevel=2,
+             )
+         self.__dict__.update(state)
++        
++        # Restore values() and annotate() information
++        if '_values' in state:
++            self._values = state['_values']
++        if '_annotations' in state:
++            self.query.annotations = state['_annotations']
++        
++        # Update the iterable class based on the restored state
++        if self._values is not None:
++            if isinstance(self._values, tuple):
++                self._iterable_class = ValuesListIterable
++            else:
++                self._iterable_class = ValuesIterable
++        elif self.query.annotations:
++            self._iterable_class = ModelIterable
+ 
+     def __repr__(self):
+         data = list(self[:REPR_OUTPUT_SIZE + 1])
+@@ -829,6 +848,7 @@ class QuerySet:
+         fields += tuple(expressions)
+         clone = self._values(*fields, **expressions)
+         clone._iterable_class = ValuesIterable
++        clone._values = fields
+         return clone
+ 
+     def values_list(self, *fields, flat=False, named=False):
+@@ -860,6 +880,7 @@ class QuerySet:
+             else FlatValuesListIterable if flat
+             else ValuesListIterable
+         )
++        clone._values = tuple(_fields)
+         return clone
+ 
+     def dates(self, field_name, kind, order='ASC'):
+@@ -1074,7 +1095,9 @@ class QuerySet:
+         with extra data or aggregations.
+         """
+         self._not_support_combined_queries('annotate')
+-        return self._annotate(args, kwargs, select=True)
++        clone = self._annotate(args, kwargs, select=True)
++        clone.query.annotations = dict(self.query.annotations, **kwargs)
++        return clone
+ 
+     def alias(self, *args, **kwargs):
+         """
+@@ -1298,6 +1321,9 @@ class QuerySet:
+         c._known_related_objects = self._known_related_objects
+         c._iterable_class = self._iterable_class
+         c._fields = self._fields
++        c._values = getattr(self, '_values', None)
++        if hasattr(self.query, 'annotations'):
++            c.query.annotations = self.query.annotations.copy()
+         return c
+ 
+     def _fetch_all(self):

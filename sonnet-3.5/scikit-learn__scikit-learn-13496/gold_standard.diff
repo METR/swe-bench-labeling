@@ -1,0 +1,351 @@
+From 528cba3e6a337bd83145d8b9d90457d02fabb00e Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Sat, 23 Mar 2019 10:20:06 +0100
+Subject: [PATCH 1/8] ENH iForest - expose warm_start (#13451)
+
+---
+ sklearn/ensemble/iforest.py            |  8 +++++++-
+ sklearn/ensemble/tests/test_iforest.py | 28 ++++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/ensemble/iforest.py b/sklearn/ensemble/iforest.py
+index 8a1bd36259e48..589171f73eb4d 100644
+--- a/sklearn/ensemble/iforest.py
++++ b/sklearn/ensemble/iforest.py
+@@ -120,6 +120,10 @@ class IsolationForest(BaseBagging, OutlierMixin):
+     verbose : int, optional (default=0)
+         Controls the verbosity of the tree building process.
+ 
++    warm_start : bool, optional (default=False)
++        When set to ``True``, reuse the solution of the previous call to fit
++        and add more estimators to the ensemble, otherwise, just fit a whole
++        new forest. See :term:`the Glossary <warm_start>`.
+ 
+     Attributes
+     ----------
+@@ -173,7 +177,8 @@ def __init__(self,
+                  n_jobs=None,
+                  behaviour='old',
+                  random_state=None,
+-                 verbose=0):
++                 verbose=0,
++                 warm_start=False):
+         super().__init__(
+             base_estimator=ExtraTreeRegressor(
+                 max_features=1,
+@@ -185,6 +190,7 @@ def __init__(self,
+             n_estimators=n_estimators,
+             max_samples=max_samples,
+             max_features=max_features,
++            warm_start=warm_start,
+             n_jobs=n_jobs,
+             random_state=random_state,
+             verbose=verbose)
+diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
+index 67ba2d7f933e3..10a26fa086e74 100644
+--- a/sklearn/ensemble/tests/test_iforest.py
++++ b/sklearn/ensemble/tests/test_iforest.py
+@@ -295,6 +295,34 @@ def test_score_samples():
+                        clf2.score_samples([[2., 2.]]))
+ 
+ 
++@pytest.mark.filterwarnings('ignore:default contamination')
++@pytest.mark.filterwarnings('ignore:behaviour="old"')
++def test_iforest_warmstart():
++    """Test iterative addition of iTrees to an iForest """
++
++    rng = check_random_state(0)
++
++    # Generate regular observations
++    X = 0.3 * rng.randn(90, 2)
++    X_reg = np.r_[X + 4, X - 4]
++    # Generate some abnormal observations
++    X_outliers = rng.uniform(low=-2, high=2, size=(20, 2))
++    X_train = np.r_[X_reg, X_outliers]
++
++    # fit first 10 trees
++    clf = IsolationForest(n_estimators=10, max_samples=20,
++                          random_state=rng, warm_start=True)
++    clf.fit(X_train)
++    # keep the 1st tree
++    tree_1 = clf.estimators_[0]
++    # fit another 10 trees
++    clf.n_estimators += 10
++    clf.fit(X_train)
++    # expecting 20 fitted trees and no overwritten trees
++    assert len(clf.estimators_) == 20
++    assert clf.estimators_[0] is tree_1
++
++
+ @pytest.mark.filterwarnings('ignore:default contamination')
+ @pytest.mark.filterwarnings('ignore:behaviour="old"')
+ def test_deprecation():
+
+From c32ca5634fbd1e933d31aa26edc9d8082da68d78 Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Sat, 23 Mar 2019 19:45:56 +0100
+Subject: [PATCH 2/8] Incorporates comments from PR #13496
+
+* versionadded=0.21
+
+* adition in whatsnew
+
+* test using iris dataset
+---
+ doc/whats_new/v0.21.rst                |  4 ++++
+ sklearn/ensemble/iforest.py            |  2 ++
+ sklearn/ensemble/tests/test_iforest.py | 16 +++++-----------
+ 3 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 1c68efd38570c..7902a99ffc112 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -179,6 +179,10 @@ Support for Python 3.4 and below has been officially dropped.
+   prediction step, thus capping the memory usage. :issue:`13283` by
+   `Nicolas Goix`_.
+ 
++- |Enhancement| :class:`ensemble.IsolationForest` now exposes ``warm_start``
++  parameter, allowing iterative addition of trees to an isolation 
++  forest. :issue:`13451` by :user:`Peter Marko <petibear>`.
++
+ - |Fix| Fixed a bug in :class:`ensemble.GradientBoostingClassifier` where
+   the gradients would be incorrectly computed in multiclass classification
+   problems. :issue:`12715` by :user:`Nicolas Hug<NicolasHug>`.
+diff --git a/sklearn/ensemble/iforest.py b/sklearn/ensemble/iforest.py
+index 589171f73eb4d..eac3519c7d9e2 100644
+--- a/sklearn/ensemble/iforest.py
++++ b/sklearn/ensemble/iforest.py
+@@ -125,6 +125,8 @@ class IsolationForest(BaseBagging, OutlierMixin):
+         and add more estimators to the ensemble, otherwise, just fit a whole
+         new forest. See :term:`the Glossary <warm_start>`.
+ 
++        .. versionadded:: 0.21
++
+     Attributes
+     ----------
+     estimators_ : list of DecisionTreeClassifier
+diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
+index 10a26fa086e74..4d16d19427e30 100644
+--- a/sklearn/ensemble/tests/test_iforest.py
++++ b/sklearn/ensemble/tests/test_iforest.py
+@@ -301,23 +301,17 @@ def test_iforest_warmstart():
+     """Test iterative addition of iTrees to an iForest """
+ 
+     rng = check_random_state(0)
+-
+-    # Generate regular observations
+-    X = 0.3 * rng.randn(90, 2)
+-    X_reg = np.r_[X + 4, X - 4]
+-    # Generate some abnormal observations
+-    X_outliers = rng.uniform(low=-2, high=2, size=(20, 2))
+-    X_train = np.r_[X_reg, X_outliers]
++    X = iris.data
+ 
+     # fit first 10 trees
+     clf = IsolationForest(n_estimators=10, max_samples=20,
+                           random_state=rng, warm_start=True)
+-    clf.fit(X_train)
+-    # keep the 1st tree
++    clf.fit(X)
++    # remember the 1st tree
+     tree_1 = clf.estimators_[0]
+     # fit another 10 trees
+-    clf.n_estimators += 10
+-    clf.fit(X_train)
++    clf.set_params(n_estimators=20)
++    clf.fit(X)
+     # expecting 20 fitted trees and no overwritten trees
+     assert len(clf.estimators_) == 20
+     assert clf.estimators_[0] is tree_1
+
+From 772ba9c0c14f3011b6b4586947a0cbe0079d9d1c Mon Sep 17 00:00:00 2001
+From: Albert Thomas <albertthomas88@gmail.com>
+Date: Sat, 23 Mar 2019 20:35:14 +0100
+Subject: [PATCH 3/8] Update sklearn/ensemble/tests/test_iforest.py
+
+smaller dataset for testing
+
+Co-Authored-By: petibear <40757147+petibear@users.noreply.github.com>
+---
+ sklearn/ensemble/tests/test_iforest.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
+index 4d16d19427e30..90c9087637dd0 100644
+--- a/sklearn/ensemble/tests/test_iforest.py
++++ b/sklearn/ensemble/tests/test_iforest.py
+@@ -301,7 +301,7 @@ def test_iforest_warmstart():
+     """Test iterative addition of iTrees to an iForest """
+ 
+     rng = check_random_state(0)
+-    X = iris.data
++    X = rng.randn(20, 2)
+ 
+     # fit first 10 trees
+     clf = IsolationForest(n_estimators=10, max_samples=20,
+
+From 032ba52f46bcbdf1cd59f48bef4915e18eda113f Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Sun, 24 Mar 2019 16:53:43 +0100
+Subject: [PATCH 4/8] Trigger CI
+
+
+From 30fe6a74b31c1c96e169eecc10b241fe0c4ab2fe Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Sun, 24 Mar 2019 20:07:18 +0100
+Subject: [PATCH 5/8] Corrected the PR reference
+
+---
+ doc/whats_new/v0.21.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index 7902a99ffc112..d7e0aaffee226 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -181,7 +181,7 @@ Support for Python 3.4 and below has been officially dropped.
+ 
+ - |Enhancement| :class:`ensemble.IsolationForest` now exposes ``warm_start``
+   parameter, allowing iterative addition of trees to an isolation 
+-  forest. :issue:`13451` by :user:`Peter Marko <petibear>`.
++  forest. :issue:`13496` by :user:`Peter Marko <petibear>`.
+ 
+ - |Fix| Fixed a bug in :class:`ensemble.GradientBoostingClassifier` where
+   the gradients would be incorrectly computed in multiclass classification
+
+From 10c042a68c7c2e313185033c8df8f4c2f9a7a51a Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Mon, 25 Mar 2019 21:47:02 +0100
+Subject: [PATCH 6/8] doc entry on warm_start + renamed the test
+
+---
+ doc/modules/outlier_detection.rst      | 14 ++++++++++++++
+ sklearn/ensemble/tests/test_iforest.py |  2 +-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/doc/modules/outlier_detection.rst b/doc/modules/outlier_detection.rst
+index b27b0c8a59643..037e89a12f57f 100644
+--- a/doc/modules/outlier_detection.rst
++++ b/doc/modules/outlier_detection.rst
+@@ -269,6 +269,20 @@ This algorithm is illustrated below.
+     * Liu, Fei Tony, Ting, Kai Ming and Zhou, Zhi-Hua. "Isolation forest."
+       Data Mining, 2008. ICDM'08. Eighth IEEE International Conference on.
+ 
++.. _iforest_warm_start:
++
++Fitting additional trees
++~~~~~~~~~~~~~~~~~~~~~~~~
++The :class:`ensemble.IsolationForest` supports ``warm_start=True`` which
++allows you to add more trees to an already fitted model.
++
++::
++
++  >>> clf = IsolationForest(n_estimators=100, warm_start=True)
++  >>> clf.fit(X)
++  >>> clf.set_params(n_estimators=200)  # set warm_start and new nr of trees
++  >>> clf.fit(X) # fit additional 100 trees
++
+ 
+ Local Outlier Factor
+ --------------------
+diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
+index 90c9087637dd0..9ab679ef66e05 100644
+--- a/sklearn/ensemble/tests/test_iforest.py
++++ b/sklearn/ensemble/tests/test_iforest.py
+@@ -297,7 +297,7 @@ def test_score_samples():
+ 
+ @pytest.mark.filterwarnings('ignore:default contamination')
+ @pytest.mark.filterwarnings('ignore:behaviour="old"')
+-def test_iforest_warmstart():
++def test_iforest_warm_start():
+     """Test iterative addition of iTrees to an iForest """
+ 
+     rng = check_random_state(0)
+
+From 5ac735b09023ab1ae188d95135c36256bc8ba91d Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Mon, 25 Mar 2019 23:56:58 +0100
+Subject: [PATCH 7/8] Corrections in the doc example
+
+---
+ doc/modules/outlier_detection.rst | 29 +++++++++++++++--------------
+ 1 file changed, 15 insertions(+), 14 deletions(-)
+
+diff --git a/doc/modules/outlier_detection.rst b/doc/modules/outlier_detection.rst
+index 037e89a12f57f..a4ebfd1d7e6df 100644
+--- a/doc/modules/outlier_detection.rst
++++ b/doc/modules/outlier_detection.rst
+@@ -252,6 +252,21 @@ This algorithm is illustrated below.
+    :align: center
+    :scale: 75%
+ 
++.. _iforest_warm_start:
++
++The :class:`ensemble.IsolationForest` supports ``warm_start=True`` which
++allows you to add more trees to an already fitted model::
++
++  >>> from sklearn.ensemble import IsolationForest
++  >>> import numpy as np
++  >>> X = np.array([[-1, -1], [-2, -1], [-3, -2], [0, 0], [-20, 50], [3, 5]])
++  >>> # fit 10 trees
++  >>> clf = IsolationForest(n_estimators=10, warm_start=True)
++  >>> clf.fit(X)  # doctest: +SKIP
++  >>> # add & fit 10 more trees
++  >>> clf.set_params(n_estimators=20)  # doctest: +SKIP
++  >>> clf.fit(X)  # doctest: +SKIP
++
+ .. topic:: Examples:
+ 
+    * See :ref:`sphx_glr_auto_examples_ensemble_plot_isolation_forest.py` for
+@@ -269,20 +284,6 @@ This algorithm is illustrated below.
+     * Liu, Fei Tony, Ting, Kai Ming and Zhou, Zhi-Hua. "Isolation forest."
+       Data Mining, 2008. ICDM'08. Eighth IEEE International Conference on.
+ 
+-.. _iforest_warm_start:
+-
+-Fitting additional trees
+-~~~~~~~~~~~~~~~~~~~~~~~~
+-The :class:`ensemble.IsolationForest` supports ``warm_start=True`` which
+-allows you to add more trees to an already fitted model.
+-
+-::
+-
+-  >>> clf = IsolationForest(n_estimators=100, warm_start=True)
+-  >>> clf.fit(X)
+-  >>> clf.set_params(n_estimators=200)  # set warm_start and new nr of trees
+-  >>> clf.fit(X) # fit additional 100 trees
+-
+ 
+ Local Outlier Factor
+ --------------------
+
+From 4529c83da2a99d275b2ceeba52fc33a38711b4d3 Mon Sep 17 00:00:00 2001
+From: petibear <40757147+petibear@users.noreply.github.com>
+Date: Tue, 26 Mar 2019 23:22:26 +0100
+Subject: [PATCH 8/8] comments made inline in the doc example
+
+---
+ doc/modules/outlier_detection.rst | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/doc/modules/outlier_detection.rst b/doc/modules/outlier_detection.rst
+index a4ebfd1d7e6df..c061feb0b1d7c 100644
+--- a/doc/modules/outlier_detection.rst
++++ b/doc/modules/outlier_detection.rst
+@@ -260,12 +260,10 @@ allows you to add more trees to an already fitted model::
+   >>> from sklearn.ensemble import IsolationForest
+   >>> import numpy as np
+   >>> X = np.array([[-1, -1], [-2, -1], [-3, -2], [0, 0], [-20, 50], [3, 5]])
+-  >>> # fit 10 trees
+   >>> clf = IsolationForest(n_estimators=10, warm_start=True)
+-  >>> clf.fit(X)  # doctest: +SKIP
+-  >>> # add & fit 10 more trees
+-  >>> clf.set_params(n_estimators=20)  # doctest: +SKIP
+-  >>> clf.fit(X)  # doctest: +SKIP
++  >>> clf.fit(X)  # fit 10 trees  # doctest: +SKIP
++  >>> clf.set_params(n_estimators=20)  # add 10 more trees  # doctest: +SKIP
++  >>> clf.fit(X)  # fit the added trees  # doctest: +SKIP
+ 
+ .. topic:: Examples:
+ 

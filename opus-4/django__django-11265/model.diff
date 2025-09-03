@@ -1,0 +1,191 @@
+diff --git a/debug_exclude.py b/debug_exclude.py
+new file mode 100644
+index 0000000000..4eef5b8540
+--- /dev/null
++++ b/debug_exclude.py
+@@ -0,0 +1,67 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add the project root to the Python path
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++        'tests.filtered_relation',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Now we can import models and test the issue
++from django.db.models import FilteredRelation, Q
++from tests.filtered_relation.models import Author, Book, Editor
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Author)
++    schema_editor.create_model(Editor)
++    schema_editor.create_model(Book)
++
++# Create test data
++Author.objects.all().delete()
++Book.objects.all().delete()
++Editor.objects.all().delete()
++
++author1 = Author.objects.create(name='Alice')
++author2 = Author.objects.create(name='Jane')
++editor_a = Editor.objects.create(name='a')
++book1 = Book.objects.create(
++    title='Poem by Alice',
++    editor=editor_a,
++    author=author1,
++)
++
++# Test the filter
++print("Testing filter:")
++qs_filter = Author.objects.annotate(
++    book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++).filter(book_alice__isnull=False)
++print("SQL:", qs_filter.query)
++print("Results:", list(qs_filter))
++
++# Test the exclude  
++print("\nTesting exclude:")
++qs_exclude = Author.objects.annotate(
++    book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++).exclude(book_alice__isnull=False)
++print("SQL:", qs_exclude.query)
++print("Results:", list(qs_exclude))
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index d69c24419b..92df289303 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1666,6 +1666,9 @@ class Query(BaseExpression):
+             filter_expr = (filter_lhs, OuterRef(filter_rhs.name))
+         # Generate the inner query.
+         query = Query(self.model)
++        # Copy the filtered relations and annotations so they can be resolved in the subquery
++        query._filtered_relations = self._filtered_relations.copy()
++        query.annotations = self.annotations.copy()
+         query.add_filter(filter_expr)
+         query.clear_ordering(True)
+         # Try to have as simple as possible subquery -> trim leading joins from
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..e84d0caad9
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,69 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add the project root to the Python path
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++        'tests.filtered_relation',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Now we can import models and test the issue
++from django.db.models import FilteredRelation, Q
++from tests.filtered_relation.models import Author, Book, Editor
++from django.db import connection
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Author)
++    schema_editor.create_model(Editor)
++    schema_editor.create_model(Book)
++
++# Create test data
++author1 = Author.objects.create(name='Alice')
++author2 = Author.objects.create(name='Jane')
++editor_a = Editor.objects.create(name='a')
++book1 = Book.objects.create(
++    title='Poem by Alice',
++    editor=editor_a,
++    author=author1,
++)
++
++# Test the original filter (should work)
++print("Testing filter (should work):")
++try:
++    result = Author.objects.annotate(
++        book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++    ).filter(book_alice__isnull=False)
++    print(f"Success: {list(result)}")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Test the exclude (should fail with FieldError)
++print("\nTesting exclude (should fail):")
++try:
++    result = Author.objects.annotate(
++        book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++    ).exclude(book_alice__isnull=False)
++    print(f"Success: {list(result)}")
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/tests/filtered_relation/tests.py b/tests/filtered_relation/tests.py
+index 5e85dff16c..4c86b8b7d8 100644
+--- a/tests/filtered_relation/tests.py
++++ b/tests/filtered_relation/tests.py
+@@ -98,6 +98,24 @@ class FilteredRelationTests(TestCase):
+             [self.author1]
+         )
+ 
++    def test_with_join_exclude(self):
++        # This test reproduces the issue where exclude doesn't work with FilteredRelation
++        qs = Author.objects.annotate(
++            book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++        ).exclude(book_alice__isnull=False)
++        # Debug: print the SQL query
++        print("\nExclude Query SQL:")
++        print(str(qs.query))
++        
++        # Also test what filter would produce
++        qs_filter = Author.objects.annotate(
++            book_alice=FilteredRelation('book', condition=Q(book__title__iexact='poem by alice')),
++        ).filter(book_alice__isnull=False)
++        print("\nFilter Query SQL:")
++        print(str(qs_filter.query))
++        
++        self.assertSequenceEqual(qs, [self.author2])
++
+     def test_with_join_and_complex_condition(self):
+         self.assertSequenceEqual(
+             Author.objects.annotate(

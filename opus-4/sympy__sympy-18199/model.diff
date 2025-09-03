@@ -1,0 +1,98 @@
+diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
+index 9a3052d4c3..2717876196 100644
+--- a/sympy/ntheory/residue_ntheory.py
++++ b/sympy/ntheory/residue_ntheory.py
+@@ -775,6 +775,11 @@ def nthroot_mod(a, n, p, all_roots=False):
+         return None
+     if not isprime(p):
+         raise NotImplementedError("Not implemented for composite p")
++    
++    # Special case: when a % p == 0, the only solution is x = 0 (mod p)
++    # This is because for prime p, if p | x^n, then p | x
++    if a % p == 0:
++        return [0] if all_roots else 0
+ 
+     if (p - 1) % n == 0:
+         return _nthroot_mod1(a, n, p, all_roots)
+diff --git a/sympy/ntheory/tests/test_residue.py b/sympy/ntheory/tests/test_residue.py
+index d4854547be..d94567f41a 100644
+--- a/sympy/ntheory/tests/test_residue.py
++++ b/sympy/ntheory/tests/test_residue.py
+@@ -172,6 +172,18 @@ def test_residue():
+     assert nthroot_mod(11, 3, 109) is None
+     raises(NotImplementedError, lambda: nthroot_mod(16, 5, 36))
+     raises(NotImplementedError, lambda: nthroot_mod(9, 16, 36))
++    
++    # Test case for issue: nthroot_mod should handle a % p == 0 correctly
++    # When a % p == 0, the only solution is x = 0 (mod p) for prime p
++    assert nthroot_mod(17*17, 5, 17) == 0
++    assert nthroot_mod(17*17, 5, 17, all_roots=True) == [0]
++    assert nthroot_mod(0, 4, 17) == 0
++    assert nthroot_mod(0, 4, 17, all_roots=True) == [0]
++    for n in [2, 3, 4, 5, 6, 7, 8]:
++        assert nthroot_mod(0, n, 17) == 0
++        assert nthroot_mod(0, n, 17, all_roots=True) == [0]
++        assert nthroot_mod(17, n, 17) == 0
++        assert nthroot_mod(17, n, 17, all_roots=True) == [0]
+ 
+     for p in primerange(5, 100):
+         qv = range(3, p, 4)
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 0000000000..b8d67ff5bd
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python
++"""
++Test script to demonstrate the fix for the nthroot_mod issue.
++
++Issue: nthroot_mod function misses one root of x = 0 mod p.
++When in the equation x**n = a mod p, when a % p == 0, then x = 0 mod p is also a root.
++"""
++
++from sympy.ntheory import nthroot_mod
++
++print("Testing the fix for nthroot_mod with a % p == 0")
++print("=" * 50)
++
++# Original issue case
++print("\nOriginal issue case: nthroot_mod(17*17, 5, 17)")
++print(f"17*17 = {17*17}, and {17*17} mod 17 = {(17*17) % 17}")
++result = nthroot_mod(17*17, 5, 17)
++print(f"nthroot_mod(17*17, 5, 17) = {result}")
++print(f"Verification: {result}^5 mod 17 = {pow(result, 5, 17)}")
++
++result_all = nthroot_mod(17*17, 5, 17, all_roots=True)
++print(f"nthroot_mod(17*17, 5, 17, all_roots=True) = {result_all}")
++
++# Test case that was failing before the fix
++print("\n\nTest case that was failing (n=4):")
++print("nthroot_mod(0, 4, 17)")
++try:
++    result = nthroot_mod(0, 4, 17)
++    print(f"Result: {result}")
++    print(f"Verification: {result}^4 mod 17 = {pow(result, 4, 17)}")
++except Exception as e:
++    print(f"ERROR: {e}")
++
++# More test cases
++print("\n\nAdditional test cases with a % p == 0:")
++test_cases = [
++    (0, 3, 17, "Direct zero"),
++    (17, 5, 17, "a = p"),
++    (34, 7, 17, "a = 2*p"),
++    (51, 6, 17, "a = 3*p"),
++]
++
++for a, n, p, desc in test_cases:
++    print(f"\n{desc}: x^{n} = {a} mod {p} (where {a} mod {p} = {a % p})")
++    result = nthroot_mod(a, n, p, all_roots=True)
++    print(f"Roots: {result}")
++    if result:
++        for x in result:
++            print(f"  Verify: {x}^{n} mod {p} = {pow(x, n, p)}")
++
++print("\n\nConclusion: The fix correctly handles the case when a % p == 0.")
++print("For prime p, when a % p == 0, the equation x^n = a (mod p) has")
++print("exactly one solution: x = 0 (mod p).")

@@ -1,0 +1,267 @@
+diff --git a/lib/matplotlib/widgets.py b/lib/matplotlib/widgets.py
+index a199e45d40..ed7d90049f 100644
+--- a/lib/matplotlib/widgets.py
++++ b/lib/matplotlib/widgets.py
+@@ -1916,7 +1916,25 @@ class _SelectorWidget(AxesWidget):
+ 
+     def _press(self, event):
+         """Button press event handler."""
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
+ 
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
++
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+     def release(self, event):
+         """Button release event handler and validator."""
+         if not self.ignore(event) and self._eventpress:
+@@ -1951,24 +1969,48 @@ class _SelectorWidget(AxesWidget):
+     def _on_scroll(self, event):
+         """Mouse scroll event handler."""
+ 
+-    def on_key_press(self, event):
+-        """Key press event handler and validator for all selection widgets."""
+-        if self.active:
+-            key = event.key or ''
+-            key = key.replace('ctrl', 'control')
+-            if key == self.state_modifier_keys['clear']:
+-                for artist in self.artists:
+-                    artist.set_visible(False)
+-                self.update()
+-                return
+-            for (state, modifier) in self.state_modifier_keys.items():
+-                if modifier in key:
+-                    self._state.add(state)
+-            self._on_key_press(event)
++    def _press(self, event):
++        """Button press event handler."""
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
++
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
++
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
++    def _press(self, event):
++        """Button press event handler."""
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
+ 
+-    def _on_key_press(self, event):
+-        """Key press event handler - for widget-specific key press actions."""
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+ 
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+     def on_key_release(self, event):
+         """Key release event handler and validator."""
+         if self.active:
+@@ -2089,6 +2131,8 @@ class SpanSelector(_SelectorWidget):
+         self._pressv = None
+ 
+         self._rectprops = rectprops
++        self.interactive = interactive
++        self._initial_axes_limits = None
+         self.onmove_callback = onmove_callback
+         self.minspan = minspan
+ 
+@@ -2164,11 +2208,25 @@ class SpanSelector(_SelectorWidget):
+ 
+     def _press(self, event):
+         """Button press event handler."""
+-        if self._interactive and self._rect.get_visible():
+-            self._set_active_handle(event)
+-        else:
+-            self._active_handle = None
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
++
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+ 
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+         if self._active_handle is None or not self._interactive:
+             # Clear previous rectangle before drawing new rectangle.
+             self.update()
+@@ -2687,13 +2745,25 @@ class RectangleSelector(_SelectorWidget):
+ 
+     def _press(self, event):
+         """Button press event handler."""
+-        # make the drawn box/line visible get the click-coordinates,
+-        # button, ...
+-        if self._interactive and self._to_draw.get_visible():
+-            self._set_active_handle(event)
+-        else:
+-            self._active_handle = None
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
+ 
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
++
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+         if self._active_handle is None or not self._interactive:
+             # Clear previous rectangle before drawing new rectangle.
+             self.update()
+@@ -3069,9 +3139,26 @@ class LassoSelector(_SelectorWidget):
+         self.press(event)
+ 
+     def _press(self, event):
+-        self.verts = [self._get_data(event)]
+-        self.line.set_visible(True)
++        """Button press event handler."""
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
+ 
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
++
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+     def onrelease(self, event):
+         self.release(event)
+ 
+@@ -3207,16 +3294,25 @@ class PolygonSelector(_SelectorWidget):
+ 
+     def _press(self, event):
+         """Button press event handler."""
+-        # Check for selection of a tool handle.
+-        if ((self._polygon_completed or 'move_vertex' in self._state)
+-                and len(self._xs) > 0):
+-            h_idx, h_dist = self._polygon_handles.closest(event.x, event.y)
+-            if h_dist < self.vertex_select_radius:
+-                self._active_handle_idx = h_idx
+-        # Save the vertex positions at the time of the press event (needed to
+-        # support the 'move_all' state modifier).
+-        self._xs_at_press, self._ys_at_press = self._xs.copy(), self._ys.copy()
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
++
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+ 
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+     def _release(self, event):
+         """Button release event handler."""
+         # Release active tool handle.
+@@ -3292,16 +3388,27 @@ class PolygonSelector(_SelectorWidget):
+ 
+         self._draw_polygon()
+ 
+-    def _on_key_press(self, event):
+-        """Key press event handler."""
+-        # Remove the pending vertex if entering the 'move_vertex' or
+-        # 'move_all' mode
+-        if (not self._polygon_completed
+-                and ('move_vertex' in self._state or
+-                     'move_all' in self._state)):
+-            self._xs, self._ys = self._xs[:-1], self._ys[:-1]
+-            self._draw_polygon()
++    def _press(self, event):
++        """Button press event handler."""
++        if self.interactive and self._initial_axes_limits is None:
++            self._initial_axes_limits = self.ax.get_xlim(), self.ax.get_ylim()
++        super()._press(event)
+ 
++    def _release(self, event):
++        """Button release event handler."""
++        super()._release(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
++
++    def _onmove(self, event):
++        """Cursor move event handler."""
++        super()._onmove(event)
++        if self.interactive and self._initial_axes_limits:
++            self.ax.set_xlim(self._initial_axes_limits[0])
++            self.ax.set_ylim(self._initial_axes_limits[1])
++            self.ax.figure.canvas.draw()
+     def _on_key_release(self, event):
+         """Key release event handler."""
+         # Add back the pending vertex if leaving the 'move_vertex' or

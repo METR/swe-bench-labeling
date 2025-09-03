@@ -1,0 +1,57 @@
+From 8be79984dce7d819879a6e594ca69c5f95a08378 Mon Sep 17 00:00:00 2001
+From: George Marshall <george@georgemarshall.name>
+Date: Sun, 10 Nov 2019 00:48:36 -0800
+Subject: [PATCH] Fixed #30971 -- Prevented Query.resolve_lookup_value() from
+ coercing list values to tuples.
+
+Regression in 8a281aa7fe76a9da2284f943964a9413697cff1f.
+---
+ django/db/models/sql/query.py | 19 ++++---------------
+ tests/queries/test_query.py   |  7 +++++++
+ 2 files changed, 11 insertions(+), 15 deletions(-)
+
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index ea51912e8b6c..dd5889625f02 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1059,21 +1059,10 @@ def resolve_lookup_value(self, value, can_reuse, allow_joins, simple_col):
+         elif isinstance(value, (list, tuple)):
+             # The items of the iterable may be expressions and therefore need
+             # to be resolved independently.
+-            resolved_values = []
+-            for sub_value in value:
+-                if hasattr(sub_value, 'resolve_expression'):
+-                    if isinstance(sub_value, F):
+-                        resolved_values.append(sub_value.resolve_expression(
+-                            self, reuse=can_reuse, allow_joins=allow_joins,
+-                            simple_col=simple_col,
+-                        ))
+-                    else:
+-                        resolved_values.append(sub_value.resolve_expression(
+-                            self, reuse=can_reuse, allow_joins=allow_joins,
+-                        ))
+-                else:
+-                    resolved_values.append(sub_value)
+-            value = tuple(resolved_values)
++            return type(value)(
++                self.resolve_lookup_value(sub_value, can_reuse, allow_joins, simple_col)
++                for sub_value in value
++            )
+         return value
+ 
+     def solve_lookup_type(self, lookup):
+diff --git a/tests/queries/test_query.py b/tests/queries/test_query.py
+index f0d3a6260a12..012d56a02f54 100644
+--- a/tests/queries/test_query.py
++++ b/tests/queries/test_query.py
+@@ -113,3 +113,10 @@ def test_clone_select_related(self):
+         clone = query.clone()
+         clone.add_select_related(['note', 'creator__extra'])
+         self.assertEqual(query.select_related, {'creator': {}})
++
++    def test_iterable_lookup_value(self):
++        query = Query(Item)
++        where = query.build_where(Q(name=['a', 'b']))
++        name_exact = where.children[0]
++        self.assertIsInstance(name_exact, Exact)
++        self.assertEqual(name_exact.rhs, "['a', 'b']")

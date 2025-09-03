@@ -1,0 +1,78 @@
+From f678977f470f0e752150d97afc4487d7c7647036 Mon Sep 17 00:00:00 2001
+From: Michael Niklas <mick.niklas@gmail.com>
+Date: Thu, 12 May 2022 17:11:56 +0200
+Subject: [PATCH 1/2] re-add timedelta support for polyval
+
+---
+ xarray/core/computation.py       | 6 +++++-
+ xarray/tests/test_computation.py | 6 ++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 823cbe02560..8d450cceef9 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1933,7 +1933,8 @@ def _ensure_numeric(data: T_Xarray) -> T_Xarray:
+     from .dataset import Dataset
+ 
+     def to_floatable(x: DataArray) -> DataArray:
+-        if x.dtype.kind in "mM":
++        if x.dtype.kind == "M":
++            # datetimes
+             return x.copy(
+                 data=datetime_to_numeric(
+                     x.data,
+@@ -1941,6 +1942,9 @@ def to_floatable(x: DataArray) -> DataArray:
+                     datetime_unit="ns",
+                 ),
+             )
++        elif x.dtype.kind == "m":
++            # timedeltas
++            return x.astype(float)
+         return x
+ 
+     if isinstance(data, Dataset):
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index 737ed82bc05..a3156214c08 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -2010,6 +2010,12 @@ def test_where_attrs() -> None:
+             ),
+             id="datetime",
+         ),
++        pytest.param(
++            xr.DataArray(np.array([1000, 2000, 3000], dtype="timedelta64[ns]"), dims="x"),
++            xr.DataArray([0, 1], dims="degree", coords={"degree": [0, 1]}),
++            xr.DataArray([1000.0, 2000.0, 3000.0], dims="x"),
++            id="timedelta",
++        ),
+     ],
+ )
+ def test_polyval(
+
+From 01b8638ba6251c8987d512484c00960540bbea7a Mon Sep 17 00:00:00 2001
+From: "pre-commit-ci[bot]"
+ <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+Date: Thu, 12 May 2022 15:14:24 +0000
+Subject: [PATCH 2/2] [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+for more information, see https://pre-commit.ci
+---
+ xarray/tests/test_computation.py | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index a3156214c08..b8aa05c75e7 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -2011,7 +2011,9 @@ def test_where_attrs() -> None:
+             id="datetime",
+         ),
+         pytest.param(
+-            xr.DataArray(np.array([1000, 2000, 3000], dtype="timedelta64[ns]"), dims="x"),
++            xr.DataArray(
++                np.array([1000, 2000, 3000], dtype="timedelta64[ns]"), dims="x"
++            ),
+             xr.DataArray([0, 1], dims="degree", coords={"degree": [0, 1]}),
+             xr.DataArray([1000.0, 2000.0, 3000.0], dims="x"),
+             id="timedelta",

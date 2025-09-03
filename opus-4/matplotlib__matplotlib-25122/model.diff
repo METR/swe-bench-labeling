@@ -1,0 +1,217 @@
+diff --git a/lib/matplotlib/mlab.py b/lib/matplotlib/mlab.py
+index 3552904c3d..b90c7ada60 100644
+--- a/lib/matplotlib/mlab.py
++++ b/lib/matplotlib/mlab.py
+@@ -427,7 +427,7 @@ def _spectral_helper(x, y=None, NFFT=None, Fs=None, detrend_func=None,
+             result /= (np.abs(window)**2).sum()
+         else:
+             # In this case, preserve power in the segment, not amplitude
+-            result /= np.abs(window).sum()**2
++            result /= window.sum()**2
+ 
+     t = np.arange(NFFT/2, len(x) - NFFT/2 + 1, NFFT - noverlap)/Fs
+ 
+diff --git a/test_bug.py b/test_bug.py
+new file mode 100644
+index 0000000000..b5caf229b3
+--- /dev/null
++++ b/test_bug.py
+@@ -0,0 +1,24 @@
++import numpy as np
++
++# Create a simple window with negative values to demonstrate the issue
++# This mimics a flattop window behavior
++window = np.array([0.2, -0.1, 0.8, -0.05, 0.9, -0.03, 0.7])
++print("Window has negative values:", np.any(window < 0))
++print("Window values:", window)
++
++# Show the bug: np.abs changes the result for the second case
++abs_sum_squared = np.abs(window).sum()**2
++sum_squared = window.sum()**2
++print(f"\nnp.abs(window).sum()**2 = {abs_sum_squared}")
++print(f"window.sum()**2 = {sum_squared}")
++print(f"Difference: {abs_sum_squared - sum_squared}")
++
++# The first case (np.abs(window)**2).sum() is same as (window**2).sum()
++# because squaring makes everything positive anyway
++abs_squared_sum = (np.abs(window)**2).sum()
++squared_sum = (window**2).sum()
++print(f"\n(np.abs(window)**2).sum() = {abs_squared_sum}")
++print(f"(window**2).sum() = {squared_sum}")
++print(f"Difference: {abs_squared_sum - squared_sum}")
++
++print("\n\nThe issue is with np.abs(window).sum()**2 != window.sum()**2 for windows with negative values!")
+diff --git a/test_flattop_window.py b/test_flattop_window.py
+new file mode 100644
+index 0000000000..e2701b7d68
+--- /dev/null
++++ b/test_flattop_window.py
+@@ -0,0 +1,54 @@
++import numpy as np
++import matplotlib.mlab as mlab
++
++# Create a flattop-like window with negative values
++def create_flattop_like_window(N):
++    """Create a window that mimics flattop behavior with negative values"""
++    n = np.arange(N)
++    # Simplified flattop-like window formula that produces negative values
++    window = (0.21557895 - 0.41663158 * np.cos(2*np.pi*n/(N-1)) +
++              0.277263158 * np.cos(4*np.pi*n/(N-1)) - 
++              0.083578947 * np.cos(6*np.pi*n/(N-1)) +
++              0.006947368 * np.cos(8*np.pi*n/(N-1)))
++    return window
++
++# Test with window containing negative values
++N = 512
++window = create_flattop_like_window(N)
++
++print(f"Window has negative values: {np.any(window < 0)}")
++print(f"Min window value: {np.min(window):.6f}")
++print(f"Max window value: {np.max(window):.6f}")
++print(f"Window sum: {window.sum():.6f}")
++print(f"Window abs sum: {np.abs(window).sum():.6f}")
++
++# Create test signal
++fs = 1000
++t = np.arange(N) / fs
++signal = np.sin(2*np.pi*50*t) + 0.5*np.sin(2*np.pi*120*t)
++
++# Test PSD calculation with scale_by_freq=False (uses window.sum()**2)
++try:
++    Pxx1, freqs1 = mlab.psd(signal, NFFT=N, Fs=fs, window=window, 
++                            scale_by_freq=False, noverlap=0, detrend='none')
++    print("\nPSD with scale_by_freq=False: SUCCESS")
++    print(f"Result is finite: {np.all(np.isfinite(Pxx1))}")
++    print(f"Result is non-negative: {np.all(Pxx1 >= 0)}")
++except Exception as e:
++    print(f"\nPSD with scale_by_freq=False: FAILED - {e}")
++
++# Test PSD calculation with scale_by_freq=True (uses (window**2).sum())
++try:
++    Pxx2, freqs2 = mlab.psd(signal, NFFT=N, Fs=fs, window=window,
++                            scale_by_freq=True, noverlap=0, detrend='none')
++    print("\nPSD with scale_by_freq=True: SUCCESS")
++    print(f"Result is finite: {np.all(np.isfinite(Pxx2))}")
++    print(f"Result is non-negative: {np.all(Pxx2 >= 0)}")
++except Exception as e:
++    print(f"\nPSD with scale_by_freq=True: FAILED - {e}")
++
++# Test the specific normalization difference from the bug report
++print(f"\nDifference np.abs(window).sum()**2 - window.sum()**2 = {np.abs(window).sum()**2 - window.sum()**2:.6f}")
++print("(Should be non-zero for windows with negative values)")
++
++print("\nThe fix ensures correct normalization for all window types, including those with negative values.")
+diff --git a/test_spectral_fix.py b/test_spectral_fix.py
+new file mode 100644
+index 0000000000..a6a05720bf
+--- /dev/null
++++ b/test_spectral_fix.py
+@@ -0,0 +1,46 @@
++import numpy as np
++import matplotlib.mlab as mlab
++
++# Create a test signal
++np.random.seed(42)
++fs = 1000  # Sampling frequency
++t = np.arange(0, 1.0, 1/fs)  # Time vector
++x = np.sin(2*np.pi*50*t) + 0.5*np.sin(2*np.pi*120*t)
++
++# Create a window with negative values (similar to flattop)
++# We'll create a simple window that has negative values
++N = 256
++# Start with a standard window
++window = np.hanning(N) - 0.2  # This will create negative values
++
++print("Testing PSD with window containing negative values")
++print(f"Window has negative values: {np.any(window < 0)}")
++print(f"Window sum: {window.sum()}")
++print(f"Window abs sum: {np.abs(window).sum()}")
++
++# Test the spectral helper with scale_by_freq=False (the case we fixed)
++try:
++    # This uses the path where scale_by_freq=False, so it will use window.sum()**2
++    Pxx, freqs = mlab.psd(x[:N], NFFT=N, Fs=fs, window=window, 
++                          scale_by_freq=False, noverlap=0, detrend='none')
++    print("\nPSD calculation successful!")
++    print(f"PSD shape: {Pxx.shape}")
++    print(f"Max PSD value: {np.max(Pxx)}")
++    
++    # Check if the result is reasonable
++    if np.all(np.isfinite(Pxx)) and np.all(Pxx >= 0):
++        print("Result looks valid (all finite and non-negative)")
++    else:
++        print("WARNING: Result contains invalid values!")
++        
++except Exception as e:
++    print(f"\nError in PSD calculation: {e}")
++
++# Also test with scale_by_freq=True (uses the other normalization)
++try:
++    Pxx2, freqs2 = mlab.psd(x[:N], NFFT=N, Fs=fs, window=window, 
++                            scale_by_freq=True, noverlap=0, detrend='none')
++    print("\nPSD with scale_by_freq=True also successful!")
++    print(f"Max PSD value: {np.max(Pxx2)}")
++except Exception as e:
++    print(f"\nError in PSD calculation with scale_by_freq=True: {e}")
+diff --git a/test_window_correction.py b/test_window_correction.py
+new file mode 100644
+index 0000000000..9b7feba97f
+--- /dev/null
++++ b/test_window_correction.py
+@@ -0,0 +1,24 @@
++import numpy as np
++
++# Test window with negative values
++window = np.array([0.2, -0.1, 0.8, -0.05, 0.9, -0.03, 0.7])
++
++print("For PSD mode (power spectral density):")
++print("Current implementation: result /= np.abs(window).sum()**2")
++print(f"  np.abs(window).sum()**2 = {np.abs(window).sum()**2}")
++print("\nCorrect implementation: result /= window.sum()**2")
++print(f"  window.sum()**2 = {window.sum()**2}")
++print(f"\nDifference factor: {np.abs(window).sum()**2 / window.sum()**2}")
++
++print("\n" + "="*50 + "\n")
++
++print("For complex/magnitude modes:")
++print("Current implementation: result /= np.abs(window).sum()")
++print(f"  np.abs(window).sum() = {np.abs(window).sum()}")
++print("\nShould it be: result /= window.sum()?")
++print(f"  window.sum() = {window.sum()}")
++print(f"\nDifference factor: {np.abs(window).sum() / window.sum()}")
++
++# Based on signal processing theory:
++# For spectral analysis, the window normalization should preserve the DC component
++# The sum of the window (not abs sum) is what matters for DC preservation
+diff --git a/test_window_normalization.py b/test_window_normalization.py
+new file mode 100644
+index 0000000000..d73ff9735b
+--- /dev/null
++++ b/test_window_normalization.py
+@@ -0,0 +1,26 @@
++import numpy as np
++
++# Test to demonstrate the fix 
++# The original issue showed that for flattop window:
++# np.abs(window).sum()**2 - window.sum()**2 = 4372.942556173262
++
++# Create a simple window with negative values to show the difference
++window = np.array([0.2, -0.1, 0.8, -0.05, 0.9, -0.03, 0.7])
++
++print("Window values:", window)
++print(f"Window has negative values: {np.any(window < 0)}")
++
++# Show the bug that was fixed
++abs_sum_squared = np.abs(window).sum()**2
++sum_squared = window.sum()**2
++
++print(f"\nOriginal (buggy) normalization: np.abs(window).sum()**2 = {abs_sum_squared}")
++print(f"Fixed normalization: window.sum()**2 = {sum_squared}")
++print(f"Difference: {abs_sum_squared - sum_squared}")
++
++# The expected outcome from the issue is that the difference should be 0
++# But that's only true when window has no negative values
++# For windows with negative values, the normalization factors are different
++
++print("\nThe fix ensures proper normalization for windows with negative values.")
++print("This is important for windows like flattop that have negative components.")

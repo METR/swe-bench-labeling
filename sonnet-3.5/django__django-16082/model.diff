@@ -1,0 +1,16 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 5e3c7cab82..0cba25cbd8 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -656,6 +656,11 @@ class CombinedExpression(SQLiteNumericMixin, Expression):
+             type(self.rhs._output_field_or_none),
+         )
+         if combined_type is None:
++            if self.connector == self.MOD:
++                # For MOD operator, if one of the operands is Decimal, the result should be Decimal
++                if isinstance(self.lhs._output_field_or_none, fields.DecimalField) or \
++                   isinstance(self.rhs._output_field_or_none, fields.DecimalField):
++                    return fields.DecimalField()
+             raise FieldError(
+                 f"Cannot infer type of {self.connector!r} expression involving these "
+                 f"types: {self.lhs.output_field.__class__.__name__}, "

@@ -1,0 +1,178 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 35f3c5e1ea..8737f04103 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -23,7 +23,7 @@ from django.db import DEFAULT_DB_ALIAS, NotSupportedError, connections
+ from django.db.models.aggregates import Count
+ from django.db.models.constants import LOOKUP_SEP
+ from django.db.models.expressions import (
+-    BaseExpression, Col, F, OuterRef, Ref, SimpleCol,
++    BaseExpression, Col, F, OuterRef, Ref, ResolvedOuterRef, SimpleCol,
+ )
+ from django.db.models.fields import Field
+ from django.db.models.fields.related_lookups import MultiColSource
+@@ -1702,7 +1702,7 @@ class Query(BaseExpression):
+         handle.
+         """
+         filter_lhs, filter_rhs = filter_expr
+-        if isinstance(filter_rhs, F):
++        if isinstance(filter_rhs, F) and not isinstance(filter_rhs, (OuterRef, ResolvedOuterRef)):
+             filter_expr = (filter_lhs, OuterRef(filter_rhs.name))
+         # Generate the inner query.
+         query = Query(self.model)
+diff --git a/test_outerref_issue.py b/test_outerref_issue.py
+new file mode 100644
+index 0000000000..d55a5fd732
+--- /dev/null
++++ b/test_outerref_issue.py
+@@ -0,0 +1,71 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++
++# Add tests to the path
++sys.path.insert(0, '/testbed')
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'tests.queries',
++    ],
++    USE_TZ=True,
++    SECRET_KEY='test',
++)
++django.setup()
++
++# Import the required models and functions
++from django.db.models import Exists, OuterRef, Q
++from tests.queries.models import Number, Item, Tag, NamedCategory, Author, Note, ExtraInfo
++from django.test import TestCase
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    for model in [NamedCategory, Tag, Note, ExtraInfo, Author, Item, Number]:
++        if model._meta.db_table not in connection.introspection.table_names():
++            schema_editor.create_model(model)
++
++# Test the issue
++try:
++    # This works - filter()
++    qs = Number.objects.annotate(
++        foo=Exists(
++            Item.objects.filter(tags__category_id=OuterRef('pk'))
++        )
++    ).filter(foo=True)
++    print("Filter with OuterRef works:", qs.query)
++    
++    # This crashes - exclude()
++    qs = Number.objects.annotate(
++        foo=Exists(
++            Item.objects.exclude(tags__category_id=OuterRef('pk'))
++        )
++    ).filter(foo=True)
++    print("Exclude with OuterRef:", qs.query)
++except Exception as e:
++    print("Exclude error:", type(e).__name__, str(e))
++
++try:
++    # This also crashes - filter(~Q())
++    qs = Number.objects.annotate(
++        foo=Exists(
++            Item.objects.filter(~Q(tags__category_id=OuterRef('pk')))
++        )
++    ).filter(foo=True)
++    print("Filter ~Q with OuterRef:", qs.query)
++except Exception as e:
++    print("Filter ~Q error:", type(e).__name__, str(e))
+diff --git a/test_outerref_minimal.py b/test_outerref_minimal.py
+new file mode 100644
+index 0000000000..8221a16e26
+--- /dev/null
++++ b/test_outerref_minimal.py
+@@ -0,0 +1,73 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++
++# Add tests to the path
++sys.path.insert(0, '/testbed')
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'tests.queries',
++    ],
++    USE_TZ=True,
++    SECRET_KEY='test',
++)
++django.setup()
++
++# Import the required models and functions
++from django.db.models import Exists, OuterRef, Q, Value, IntegerField
++from tests.queries.models import Number, Item, Tag, NamedCategory, Author, Note, ExtraInfo
++from django.test import TestCase
++
++# Create tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    for model in [NamedCategory, Tag, Note, ExtraInfo, Author, Item, Number]:
++        if model._meta.db_table not in connection.introspection.table_names():
++            schema_editor.create_model(model)
++
++# Get a simple filter() OuterRef query working
++print("Testing basic OuterRef behavior...")
++try:
++    # filter with OuterRef - should work
++    qs = Number.objects.annotate(
++        my_pk=Value(1, output_field=IntegerField())
++    ).filter(my_pk=OuterRef('pk'))
++    print("Direct OuterRef in filter:", qs.query)
++except Exception as e:
++    print("Error:", type(e).__name__, str(e))
++
++# Check if OuterRef is resolved properly when used inside subqueries
++from django.db.models.sql.query import Query
++query = Query(Item)
++filter_expr = ('tags__category_id', OuterRef('pk'))
++print("\nOriginal OuterRef:", filter_expr[1], type(filter_expr[1]))
++print("Is OuterRef instance of F?", isinstance(filter_expr[1], models.F))
++print("Is OuterRef instance of OuterRef?", isinstance(filter_expr[1], OuterRef))
++
++# Check split_exclude behavior
++query._filtered_relations = {}
++subquery = Query(Item)
++subquery._filtered_relations = query._filtered_relations
++subquery.add_filter(filter_expr)
++
++print("\nSubquery created by split_exclude logic:")
++print("Subquery:", subquery)
++
++# Check the where clause
++print("\nChecking where clause contents...")
++for child in subquery.where.children:
++    print("Child:", child, type(child))

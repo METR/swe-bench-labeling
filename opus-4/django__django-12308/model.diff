@@ -1,0 +1,449 @@
+diff --git a/django/contrib/admin/utils.py b/django/contrib/admin/utils.py
+index e4ddc8f017..87b6436925 100644
+--- a/django/contrib/admin/utils.py
++++ b/django/contrib/admin/utils.py
+@@ -398,6 +398,13 @@ def display_for_field(value, field, empty_value_display):
+         return formats.number_format(value)
+     elif isinstance(field, models.FileField) and value:
+         return format_html('<a href="{}">{}</a>', value.url, value)
++    elif isinstance(field, models.JSONField):
++        # Use the JSONField's form field prepare_value method to properly format the value
++        try:
++            return field.formfield().prepare_value(value)
++        except Exception:
++            # If there's any issue, fall back to the default behavior
++            return display_for_value(value, empty_value_display)
+     else:
+         return display_for_value(value, empty_value_display)
+ 
+diff --git a/test_admin_readonly_json.py b/test_admin_readonly_json.py
+new file mode 100644
+index 0000000000..36893f8f01
+--- /dev/null
++++ b/test_admin_readonly_json.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python
++"""Test JSONField display in admin readonly fields"""
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++BASE_DIR = os.path.dirname(os.path.abspath(__file__))
++
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': os.path.join(BASE_DIR, 'test.db'),
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++        'django.contrib.messages',
++        'django.contrib.sessions',
++        'test_app',
++    ],
++    MIDDLEWARE=[
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.contrib.auth.middleware.AuthenticationMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    ROOT_URLCONF='test_urls',
++    TEMPLATES=[{
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.template.context_processors.debug',
++                'django.template.context_processors.request',
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    }],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create test app models
++from django.db import models
++from django.contrib import admin
++from django.urls import path, include
++import json
++
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    data = models.JSONField(default=dict)
++    
++    class Meta:
++        app_label = 'test_app'
++    
++    def __str__(self):
++        return self.name
++
++
++# Admin registration
++@admin.register(TestModel)
++class TestModelAdmin(admin.ModelAdmin):
++    list_display = ['name', 'data']
++    readonly_fields = ['data']  # This is the key - make JSONField readonly
++
++
++# URL configuration
++urlpatterns = [
++    path('admin/', admin.site.urls),
++]
++
++if __name__ == '__main__':
++    from django.core.management import execute_from_command_line
++    
++    # Create the database tables
++    execute_from_command_line(['manage.py', 'migrate', '--run-syncdb'])
++    
++    # Create a test instance
++    obj = TestModel.objects.create(
++        name='Test Object',
++        data={'foo': 'bar', 'nested': {'key': 'value'}}
++    )
++    
++    print("Created test object with data:", obj.data)
++    print("\nNow let's check how it's displayed in admin...")
++    
++    # Test the display
++    from django.contrib.admin.utils import display_for_field
++    field = TestModel._meta.get_field('data')
++    result = display_for_field(obj.data, field, '-')
++    
++    expected_json = json.dumps({'foo': 'bar', 'nested': {'key': 'value'}})
++    print(f"\nField value displayed as: {result}")
++    print(f"Expected JSON: {expected_json}")
++    print(f"Is it valid JSON? {result == expected_json}")
+diff --git a/test_json_display_patch.py b/test_json_display_patch.py
+new file mode 100644
+index 0000000000..5c597f8441
+--- /dev/null
++++ b/test_json_display_patch.py
+@@ -0,0 +1,86 @@
++#!/usr/bin/env python
++"""Test that our JSONField display fix works with Django's test framework"""
++import os
++import sys
++import django
++from django.test import TestCase
++from django.contrib.admin.utils import display_for_field
++from django.db import models
++from django.forms.fields import InvalidJSONInput
++import json
++
++# Configure Django for testing
++os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_settings'
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++django.setup()
++
++
++class JSONFieldDisplayTest(TestCase):
++    """Test display_for_field properly formats JSONField values"""
++
++    def setUp(self):
++        class TestModel(models.Model):
++            data = models.JSONField()
++            
++            class Meta:
++                app_label = 'test'
++        
++        self.field = TestModel._meta.get_field('data')
++        self.empty_value = '-empty-'
++
++    def test_dict_display(self):
++        """Dict values should be displayed as valid JSON"""
++        test_dict = {"foo": "bar", "nested": {"key": "value"}}
++        result = display_for_field(test_dict, self.field, self.empty_value)
++        self.assertEqual(result, json.dumps(test_dict))
++
++    def test_list_display(self):
++        """List values should be displayed as valid JSON"""
++        test_list = [1, 2, {"key": "value"}]
++        result = display_for_field(test_list, self.field, self.empty_value)
++        self.assertEqual(result, json.dumps(test_list))
++
++    def test_null_display(self):
++        """None values should show empty value display"""
++        result = display_for_field(None, self.field, self.empty_value)
++        self.assertEqual(result, self.empty_value)
++
++    def test_invalid_json_input_display(self):
++        """InvalidJSONInput should be displayed as-is"""
++        invalid_input = InvalidJSONInput("invalid json")
++        result = display_for_field(invalid_input, self.field, self.empty_value)
++        self.assertEqual(result, "invalid json")
++
++    def test_string_display(self):
++        """String values should be displayed as JSON strings"""
++        test_string = "just a string"
++        result = display_for_field(test_string, self.field, self.empty_value)
++        self.assertEqual(result, json.dumps(test_string))
++
++    def test_number_display(self):
++        """Number values should be displayed as JSON numbers"""
++        result = display_for_field(42, self.field, self.empty_value)
++        self.assertEqual(result, "42")
++
++    def test_boolean_display(self):
++        """Boolean values should be displayed as JSON booleans"""
++        result = display_for_field(True, self.field, self.empty_value)
++        self.assertEqual(result, "true")
++        result = display_for_field(False, self.field, self.empty_value)
++        self.assertEqual(result, "false")
++
++    def test_empty_containers(self):
++        """Empty dict and list should be displayed correctly"""
++        result = display_for_field({}, self.field, self.empty_value)
++        self.assertEqual(result, "{}")
++        result = display_for_field([], self.field, self.empty_value)
++        self.assertEqual(result, "[]")
++
++
++if __name__ == '__main__':
++    from django.test.utils import get_runner
++    from django.conf import settings
++
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner(verbosity=2)
++    test_runner.run_tests(["__main__.JSONFieldDisplayTest"])
+diff --git a/test_json_edge_cases.py b/test_json_edge_cases.py
+new file mode 100644
+index 0000000000..b29dd74d21
+--- /dev/null
++++ b/test_json_edge_cases.py
+@@ -0,0 +1,107 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Now test edge cases
++from django.contrib.admin.utils import display_for_field
++from django.db import models
++import json
++
++# Create a test model with JSONField with custom encoder/decoder
++class CustomEncoder(json.JSONEncoder):
++    def default(self, obj):
++        if isinstance(obj, set):
++            return list(obj)
++        return super().default(obj)
++
++class TestModel(models.Model):
++    data = models.JSONField()
++    custom_data = models.JSONField(encoder=CustomEncoder)
++    
++    class Meta:
++        app_label = 'test'
++
++# Test the edge cases
++field = TestModel._meta.get_field('data')
++custom_field = TestModel._meta.get_field('custom_data')
++
++# Test case 1: Empty dict
++test_dict = {}
++result = display_for_field(test_dict, field, '-')
++print(f"Empty dict test - Output: {result}")
++print(f"Empty dict test - Expected: {{}}")
++print()
++
++# Test case 2: Empty list
++test_list = []
++result = display_for_field(test_list, field, '-')
++print(f"Empty list test - Output: {result}")
++print(f"Empty list test - Expected: []")
++print()
++
++# Test case 3: Nested complex structure
++test_complex = {
++    "array": [1, 2, 3],
++    "object": {"nested": True},
++    "string": "value",
++    "number": 42,
++    "boolean": True,
++    "null": None
++}
++result = display_for_field(test_complex, field, '-')
++print(f"Complex test - Output: {result}")
++print(f"Complex test - Expected: {json.dumps(test_complex)}")
++print()
++
++# Test case 4: String values (should remain strings)
++test_string = "just a string"
++result = display_for_field(test_string, field, '-')
++print(f"String test - Output: {result}")
++print(f"String test - Expected: \"just a string\"")
++print()
++
++# Test case 5: Number values
++test_number = 42
++result = display_for_field(test_number, field, '-')
++print(f"Number test - Output: {result}")
++print(f"Number test - Expected: 42")
++print()
++
++# Test case 6: Boolean values
++test_bool = True
++result = display_for_field(test_bool, field, '-')
++print(f"Boolean test - Output: {result}")
++print(f"Boolean test - Expected: true")
++print()
++
++# Test case 7: Custom encoder field
++test_set_data = {"items": {1, 2, 3}}  # This would normally fail in JSON
++try:
++    # First convert the set to list using custom encoder
++    test_set_data_converted = {"items": [1, 2, 3]}
++    result = display_for_field(test_set_data_converted, custom_field, '-')
++    print(f"Custom encoder test - Output: {result}")
++    print(f"Custom encoder test - Expected: {json.dumps(test_set_data_converted)}")
++except Exception as e:
++    print(f"Custom encoder test - Error: {e}")
+diff --git a/test_json_readonly.py b/test_json_readonly.py
+new file mode 100644
+index 0000000000..8c2c2f8229
+--- /dev/null
++++ b/test_json_readonly.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'django.contrib.admin',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Now test the issue
++from django.contrib.admin.utils import display_for_field
++from django.db import models
++from django.forms.fields import InvalidJSONInput
++import json
++
++# Create a test model with JSONField
++class TestModel(models.Model):
++    data = models.JSONField()
++    
++    class Meta:
++        app_label = 'test'
++
++# Test the current behavior
++field = TestModel._meta.get_field('data')
++
++# Test case 1: dict value
++test_dict = {"foo": "bar", "nested": {"key": "value"}}
++result = display_for_field(test_dict, field, '-')
++print(f"Dict test - Input: {json.dumps(test_dict)}")
++print(f"Dict test - Current output: {result}")
++print(f"Dict test - Expected output: {json.dumps(test_dict)}")
++print()
++
++# Test case 2: list value
++test_list = [1, 2, {"key": "value"}]
++result = display_for_field(test_list, field, '-')
++print(f"List test - Input: {json.dumps(test_list)}")
++print(f"List test - Current output: {result}")
++print(f"List test - Expected output: {json.dumps(test_list)}")
++print()
++
++# Test case 3: None value
++result = display_for_field(None, field, '-')
++print(f"None test - Current output: {result}")
++print(f"None test - Expected output: -")
++print()
++
++# Test case 4: InvalidJSONInput
++invalid_input = InvalidJSONInput("invalid json")
++result = display_for_field(invalid_input, field, '-')
++print(f"InvalidJSONInput test - Current output: {result}")
++print(f"InvalidJSONInput test - Expected output: invalid json")
+diff --git a/tests/admin_utils/tests.py b/tests/admin_utils/tests.py
+index 463ba9556d..5d8a9385a0 100644
+--- a/tests/admin_utils/tests.py
++++ b/tests/admin_utils/tests.py
+@@ -197,6 +197,38 @@ class UtilsTests(SimpleTestCase):
+         display_value = display_for_field(12345, models.IntegerField(), self.empty_value)
+         self.assertEqual(display_value, '12,345')
+ 
++    def test_json_display_for_field(self):
++        """
++        Test that JSONField values are displayed as valid JSON, not Python repr.
++        """
++        from django.forms.fields import InvalidJSONInput
++        import json
++        
++        # Test dict display
++        test_dict = {"foo": "bar", "nested": {"key": "value"}}
++        display_value = display_for_field(test_dict, models.JSONField(), self.empty_value)
++        self.assertEqual(display_value, json.dumps(test_dict))
++        
++        # Test list display
++        test_list = [1, 2, {"key": "value"}]
++        display_value = display_for_field(test_list, models.JSONField(), self.empty_value)
++        self.assertEqual(display_value, json.dumps(test_list))
++        
++        # Test None value
++        display_value = display_for_field(None, models.JSONField(), self.empty_value)
++        self.assertEqual(display_value, self.empty_value)
++        
++        # Test InvalidJSONInput
++        invalid_input = InvalidJSONInput("invalid json")
++        display_value = display_for_field(invalid_input, models.JSONField(), self.empty_value)
++        self.assertEqual(display_value, "invalid json")
++        
++        # Test empty containers
++        display_value = display_for_field({}, models.JSONField(), self.empty_value)
++        self.assertEqual(display_value, "{}")
++        display_value = display_for_field([], models.JSONField(), self.empty_value)
++        self.assertEqual(display_value, "[]")
++
+     def test_list_display_for_value(self):
+         display_value = display_for_value([1, 2, 3], self.empty_value)
+         self.assertEqual(display_value, '1, 2, 3')

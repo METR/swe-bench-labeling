@@ -1,0 +1,82 @@
+diff --git a/custom_fields.py b/custom_fields.py
+new file mode 100644
+index 0000000000..bf8237b79a
+--- /dev/null
++++ b/custom_fields.py
+@@ -0,0 +1,17 @@
++from django.db import models
++
++class CustomCharField(models.CharField):
++    def from_db_value(self, value, expression, connection):
++        if value is None:
++            return value
++        if self.choices and isinstance(value, self.choices.__class__):
++            return value.value
++        return value
++
++class CustomIntegerField(models.IntegerField):
++    def from_db_value(self, value, expression, connection):
++        if value is None:
++            return value
++        if self.choices and isinstance(value, self.choices.__class__):
++            return value.value
++        return value
+diff --git a/example_models.py b/example_models.py
+new file mode 100644
+index 0000000000..2ccb8b8d8d
+--- /dev/null
++++ b/example_models.py
+@@ -0,0 +1,18 @@
++from django.db import models
++from django.utils.translation import gettext_lazy as _
++from custom_fields import CustomCharField, CustomIntegerField
++
++class MyChoice(models.TextChoices):
++    FIRST_CHOICE = "first", _("The first choice, it is")
++    SECOND_CHOICE = "second", _("The second choice, it is")
++
++class MyIntegerChoice(models.IntegerChoices):
++    ONE = 1, _("One")
++    TWO = 2, _("Two")
++
++class MyObject(models.Model):
++    my_str_value = CustomCharField(max_length=10, choices=MyChoice.choices)
++    my_int_value = CustomIntegerField(choices=MyIntegerChoice.choices)
++
++    def __str__(self):
++        return f"MyObject(my_str_value={self.my_str_value}, my_int_value={self.my_int_value})"
+diff --git a/test_example_models.py b/test_example_models.py
+new file mode 100644
+index 0000000000..b5c3e746e4
+--- /dev/null
++++ b/test_example_models.py
+@@ -0,0 +1,29 @@
++from django.test import TestCase
++from example_models import MyObject, MyChoice, MyIntegerChoice
++
++class EnumTest(TestCase):
++    def setUp(self):
++        self.my_object = MyObject.objects.create(
++            my_str_value=MyChoice.FIRST_CHOICE,
++            my_int_value=MyIntegerChoice.ONE
++        )
++
++    def test_created_object_is_str(self):
++        my_object = self.my_object
++        self.assertIsInstance(my_object.my_str_value, str)
++        self.assertEqual(my_object.my_str_value, "first")
++
++    def test_created_object_is_int(self):
++        my_object = self.my_object
++        self.assertIsInstance(my_object.my_int_value, int)
++        self.assertEqual(my_object.my_int_value, 1)
++
++    def test_retrieved_object_is_str(self):
++        my_object = MyObject.objects.get(id=self.my_object.id)
++        self.assertIsInstance(my_object.my_str_value, str)
++        self.assertEqual(my_object.my_str_value, "first")
++
++    def test_retrieved_object_is_int(self):
++        my_object = MyObject.objects.get(id=self.my_object.id)
++        self.assertIsInstance(my_object.my_int_value, int)
++        self.assertEqual(my_object.my_int_value, 1)

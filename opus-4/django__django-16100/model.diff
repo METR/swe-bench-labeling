@@ -1,0 +1,575 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 5f07a4208a..088fec9f4d 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -2011,14 +2011,15 @@ class ModelAdmin(BaseModelAdmin):
+             )
+             if formset.is_valid():
+                 changecount = 0
+-                for form in formset.forms:
+-                    if form.has_changed():
+-                        obj = self.save_form(request, form, change=True)
+-                        self.save_model(request, obj, form, change=True)
+-                        self.save_related(request, form, formsets=[], change=True)
+-                        change_msg = self.construct_change_message(request, form, None)
+-                        self.log_change(request, obj, change_msg)
+-                        changecount += 1
++                with transaction.atomic(using=router.db_for_write(self.model)):
++                    for form in formset.forms:
++                        if form.has_changed():
++                            obj = self.save_form(request, form, change=True)
++                            self.save_model(request, obj, form, change=True)
++                            self.save_related(request, form, formsets=[], change=True)
++                            change_msg = self.construct_change_message(request, form, None)
++                            self.log_change(request, obj, change_msg)
++                            changecount += 1
+ 
+                 if changecount:
+                     msg = ngettext(
+diff --git a/test_changelist_fix.py b/test_changelist_fix.py
+new file mode 100644
+index 0000000000..b527ead1a1
+--- /dev/null
++++ b/test_changelist_fix.py
+@@ -0,0 +1,137 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django first
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'django.contrib.admin',
++        ],
++        MIDDLEWARE=[
++            'django.contrib.sessions.middleware.SessionMiddleware',
++            'django.contrib.auth.middleware.AuthenticationMiddleware',
++            'django.contrib.messages.middleware.MessageMiddleware',
++        ],
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++    
++django.setup()
++
++# Now import Django modules
++from django.test import TestCase, TransactionTestCase, RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.contrib.auth.models import User
++from django.contrib.admin import ModelAdmin
++from django.db import models, transaction
++from django.contrib import messages
++from unittest.mock import patch, Mock
++
++# Define test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField(default=0)
++
++    class Meta:
++        app_label = 'test_app'
++
++# Define admin class with list_editable
++class TestModelAdmin(ModelAdmin):
++    list_display = ['id', 'name', 'value']
++    list_editable = ['name', 'value']
++
++class ChangelistTransactionTest(TransactionTestCase):
++    def setUp(self):
++        # Create tables
++        from django.db import connection
++        with connection.schema_editor() as schema_editor:
++            schema_editor.create_model(TestModel)
++        
++        self.factory = RequestFactory()
++        self.site = AdminSite()
++        self.admin = TestModelAdmin(TestModel, self.site)
++        
++        # Create a superuser
++        self.user = User.objects.create_superuser('admin', 'admin@example.com', 'password')
++        
++        # Create test objects
++        self.obj1 = TestModel.objects.create(name='Object 1', value=1)
++        self.obj2 = TestModel.objects.create(name='Object 2', value=2)
++    
++    def tearDown(self):
++        # Drop tables
++        from django.db import connection
++        with connection.schema_editor() as schema_editor:
++            schema_editor.delete_model(TestModel)
++    
++    def test_save_model_raises_exception(self):
++        """Test behavior when save_model raises an exception during list_editable processing"""
++        request = self.factory.post('/', {
++            'form-TOTAL_FORMS': '2',
++            'form-INITIAL_FORMS': '2', 
++            'form-MIN_NUM_FORMS': '0',
++            'form-MAX_NUM_FORMS': '1000',
++            'form-0-id': str(self.obj1.id),
++            'form-0-name': 'Updated Object 1',
++            'form-0-value': '10',
++            'form-1-id': str(self.obj2.id),
++            'form-1-name': 'Updated Object 2',
++            'form-1-value': '20',
++            '_save': 'Save',
++        })
++        request.user = self.user
++        request._messages = messages.storage.default_storage(request)
++        
++        # Mock save_model to raise exception on second object
++        original_save_model = self.admin.save_model
++        call_count = 0
++        
++        def mock_save_model(request, obj, form, change):
++            nonlocal call_count
++            call_count += 1
++            if call_count == 2:
++                raise Exception("Simulated database error")
++            return original_save_model(request, obj, form, change)
++        
++        with patch.object(self.admin, 'save_model', side_effect=mock_save_model):
++            try:
++                response = self.admin.changelist_view(request)
++            except Exception as e:
++                print(f"Exception raised: {e}")
++        
++        # Refresh from DB
++        self.obj1.refresh_from_db()
++        self.obj2.refresh_from_db()
++        
++        # Without transaction, obj1 might be updated but obj2 not
++        print(f"Object 1 after exception: name={self.obj1.name}, value={self.obj1.value}")
++        print(f"Object 2 after exception: name={self.obj2.name}, value={self.obj2.value}")
++        
++        # Without proper transaction handling, obj1 would be updated even though obj2 failed
++        if self.obj1.name == 'Updated Object 1':
++            print("WARNING: Partial update occurred! Object 1 was updated even though Object 2 failed.")
++        else:
++            print("Good: No partial update occurred.")
++
++
++if __name__ == '__main__':
++    # Run the test
++    test = ChangelistTransactionTest()
++    test.setUp()
++    try:
++        test.test_save_model_raises_exception()
++    finally:
++        test.tearDown()
+diff --git a/test_changelist_transaction.py b/test_changelist_transaction.py
+new file mode 100644
+index 0000000000..79b6ea43f5
+--- /dev/null
++++ b/test_changelist_transaction.py
+@@ -0,0 +1,153 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.test import TestCase, TransactionTestCase, RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.contrib.auth.models import User
++from django.contrib.admin import ModelAdmin
++from django.db import models, transaction
++from django.contrib import messages
++from unittest.mock import patch, Mock
++
++# Configure Django
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'django.contrib.admin',
++        ],
++        MIDDLEWARE=[
++            'django.contrib.sessions.middleware.SessionMiddleware',
++            'django.contrib.auth.middleware.AuthenticationMiddleware',
++            'django.contrib.messages.middleware.MessageMiddleware',
++        ],
++        SECRET_KEY='test-secret-key',
++        USE_TZ=True,
++    )
++    django.setup()
++
++# Define test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField(default=0)
++
++    class Meta:
++        app_label = 'test_app'
++
++# Define admin class with list_editable
++class TestModelAdmin(ModelAdmin):
++    list_display = ['id', 'name', 'value']
++    list_editable = ['name', 'value']
++
++class ChangelistTransactionTest(TransactionTestCase):
++    def setUp(self):
++        # Create tables
++        from django.db import connection
++        with connection.schema_editor() as schema_editor:
++            schema_editor.create_model(TestModel)
++        
++        self.factory = RequestFactory()
++        self.site = AdminSite()
++        self.admin = TestModelAdmin(TestModel, self.site)
++        
++        # Create a superuser
++        self.user = User.objects.create_superuser('admin', 'admin@example.com', 'password')
++        
++        # Create test objects
++        self.obj1 = TestModel.objects.create(name='Object 1', value=1)
++        self.obj2 = TestModel.objects.create(name='Object 2', value=2)
++    
++    def tearDown(self):
++        # Drop tables
++        from django.db import connection
++        with connection.schema_editor() as schema_editor:
++            schema_editor.delete_model(TestModel)
++    
++    def test_list_editable_without_transaction_partial_failure(self):
++        """Test that without proper transaction handling, partial updates can occur"""
++        request = self.factory.post('/', {
++            'form-TOTAL_FORMS': '2',
++            'form-INITIAL_FORMS': '2',
++            'form-MIN_NUM_FORMS': '0',
++            'form-MAX_NUM_FORMS': '1000',
++            'form-0-id': str(self.obj1.id),
++            'form-0-name': 'Updated Object 1',
++            'form-0-value': '10',
++            'form-1-id': str(self.obj2.id),
++            'form-1-name': 'Updated Object 2',
++            'form-1-value': 'invalid',  # This will cause a validation error
++            '_save': 'Save',
++        })
++        request.user = self.user
++        request._messages = messages.storage.default_storage(request)
++        
++        # Check current implementation behavior
++        response = self.admin.changelist_view(request)
++        
++        # Refresh from DB
++        self.obj1.refresh_from_db()
++        self.obj2.refresh_from_db()
++        
++        # Print current behavior for debugging
++        print(f"Object 1 name after partial save attempt: {self.obj1.name}")
++        print(f"Object 2 name after partial save attempt: {self.obj2.name}")
++    
++    def test_save_model_raises_exception(self):
++        """Test behavior when save_model raises an exception during list_editable processing"""
++        request = self.factory.post('/', {
++            'form-TOTAL_FORMS': '2',
++            'form-INITIAL_FORMS': '2', 
++            'form-MIN_NUM_FORMS': '0',
++            'form-MAX_NUM_FORMS': '1000',
++            'form-0-id': str(self.obj1.id),
++            'form-0-name': 'Updated Object 1',
++            'form-0-value': '10',
++            'form-1-id': str(self.obj2.id),
++            'form-1-name': 'Updated Object 2',
++            'form-1-value': '20',
++            '_save': 'Save',
++        })
++        request.user = self.user
++        request._messages = messages.storage.default_storage(request)
++        
++        # Mock save_model to raise exception on second object
++        original_save_model = self.admin.save_model
++        call_count = 0
++        
++        def mock_save_model(request, obj, form, change):
++            nonlocal call_count
++            call_count += 1
++            if call_count == 2:
++                raise Exception("Simulated database error")
++            return original_save_model(request, obj, form, change)
++        
++        with patch.object(self.admin, 'save_model', side_effect=mock_save_model):
++            try:
++                response = self.admin.changelist_view(request)
++            except Exception:
++                pass
++        
++        # Refresh from DB
++        self.obj1.refresh_from_db()
++        self.obj2.refresh_from_db()
++        
++        # Without transaction, obj1 might be updated but obj2 not
++        print(f"Object 1 after exception: name={self.obj1.name}, value={self.obj1.value}")
++        print(f"Object 2 after exception: name={self.obj2.name}, value={self.obj2.value}")
++
++
++if __name__ == '__main__':
++    # Run the test
++    import unittest
++    unittest.main()
+diff --git a/test_manual.py b/test_manual.py
+new file mode 100644
+index 0000000000..c4215f289f
+--- /dev/null
++++ b/test_manual.py
+@@ -0,0 +1,49 @@
++"""Manual test to verify transaction behavior"""
++import os
++import sys
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_sqlite'
++
++import django
++django.setup()
++
++from django.db import connection, transaction
++from tests.admin_changelist.models import Parent
++
++# Create test data
++Parent.objects.all().delete()
++p1 = Parent.objects.create(name='Test Parent 1')
++p2 = Parent.objects.create(name='Test Parent 2')
++
++print(f"Created parents: {p1.name} (id={p1.id}), {p2.name} (id={p2.id})")
++
++# Simulate what happens in list_editable processing
++try:
++    with transaction.atomic():
++        # Update first object
++        p1.name = 'Updated Parent 1'
++        p1.save()
++        print(f"Updated first parent to: {p1.name}")
++        
++        # Simulate an error before updating second object
++        raise Exception("Simulated error during list_editable processing")
++        
++        # This would never be reached
++        p2.name = 'Updated Parent 2'
++        p2.save()
++        
++except Exception as e:
++    print(f"Exception occurred: {e}")
++
++# Check if changes were rolled back
++p1.refresh_from_db()
++p2.refresh_from_db()
++
++print(f"\nAfter exception:")
++print(f"Parent 1: {p1.name} (should be 'Test Parent 1' due to rollback)")
++print(f"Parent 2: {p2.name} (should be 'Test Parent 2')")
++
++if p1.name == 'Test Parent 1' and p2.name == 'Test Parent 2':
++    print("\n✅ SUCCESS: Transaction properly rolled back changes!")
++else:
++    print("\n❌ FAILURE: Transaction did not roll back properly!")
+diff --git a/test_transaction_fix.py b/test_transaction_fix.py
+new file mode 100644
+index 0000000000..07cc8bde8b
+--- /dev/null
++++ b/test_transaction_fix.py
+@@ -0,0 +1,114 @@
++"""Test that list_editable processing is wrapped in a transaction."""
++import os
++import sys
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_sqlite'
++
++import django
++django.setup()
++
++from django.test import TestCase, TransactionTestCase
++from django.contrib.admin.sites import AdminSite
++from django.contrib.auth.models import User
++from django.test.client import RequestFactory
++from django.contrib import messages
++from django.db import transaction
++from unittest.mock import patch
++
++# Import the test models
++from tests.admin_changelist.models import Parent
++from tests.admin_changelist.admin import NoListDisplayLinksParentAdmin
++
++
++class ListEditableTransactionTest(TransactionTestCase):
++    def setUp(self):
++        self.factory = RequestFactory()
++        self.site = AdminSite()
++        self.admin = NoListDisplayLinksParentAdmin(Parent, self.site)
++        
++        # Create a superuser
++        self.user = User.objects.create_superuser('admin', 'admin@example.com', 'password')
++        
++        # Create test objects
++        self.obj1 = Parent.objects.create(name='Parent 1')
++        self.obj2 = Parent.objects.create(name='Parent 2')
++    
++    def test_list_editable_wrapped_in_transaction(self):
++        """Test that an exception during list_editable processing rolls back all changes."""
++        request = self.factory.post('/', {
++            'form-TOTAL_FORMS': '2',
++            'form-INITIAL_FORMS': '2',
++            'form-MIN_NUM_FORMS': '0',
++            'form-MAX_NUM_FORMS': '1000',
++            'form-0-id': str(self.obj1.pk),
++            'form-0-name': 'Updated Parent 1',
++            'form-1-id': str(self.obj2.pk),
++            'form-1-name': 'Updated Parent 2',
++            '_save': 'Save',
++        })
++        request.user = self.user
++        request._messages = messages.storage.default_storage(request)
++        
++        # Mock save_model to raise exception on second object
++        original_save_model = self.admin.save_model
++        call_count = 0
++        
++        def mock_save_model(request, obj, form, change):
++            nonlocal call_count
++            call_count += 1
++            if call_count == 2:
++                raise Exception("Simulated database error on second object")
++            return original_save_model(request, obj, form, change)
++        
++        with patch.object(self.admin, 'save_model', side_effect=mock_save_model):
++            with self.assertRaises(Exception) as cm:
++                self.admin.changelist_view(request)
++            self.assertEqual(str(cm.exception), "Simulated database error on second object")
++        
++        # Refresh from DB
++        self.obj1.refresh_from_db()
++        self.obj2.refresh_from_db()
++        
++        # With transaction, neither object should be updated
++        self.assertEqual(self.obj1.name, 'Parent 1', 
++                        "First object should not be updated when second fails")
++        self.assertEqual(self.obj2.name, 'Parent 2',
++                        "Second object should not be updated when it fails")
++        
++        print("✓ Transaction correctly rolled back all changes when an error occurred")
++    
++    def test_list_editable_success_commits(self):
++        """Test that successful list_editable processing commits all changes."""
++        request = self.factory.post('/', {
++            'form-TOTAL_FORMS': '2',
++            'form-INITIAL_FORMS': '2',
++            'form-MIN_NUM_FORMS': '0',
++            'form-MAX_NUM_FORMS': '1000',
++            'form-0-id': str(self.obj1.pk),
++            'form-0-name': 'Successfully Updated Parent 1',
++            'form-1-id': str(self.obj2.pk),
++            'form-1-name': 'Successfully Updated Parent 2',
++            '_save': 'Save',
++        })
++        request.user = self.user
++        request._messages = messages.storage.default_storage(request)
++        
++        response = self.admin.changelist_view(request)
++        
++        # Should redirect after successful save
++        self.assertEqual(response.status_code, 302)
++        
++        # Refresh from DB
++        self.obj1.refresh_from_db()
++        self.obj2.refresh_from_db()
++        
++        # Both objects should be updated
++        self.assertEqual(self.obj1.name, 'Successfully Updated Parent 1')
++        self.assertEqual(self.obj2.name, 'Successfully Updated Parent 2')
++        
++        print("✓ Successful updates are correctly committed")
++
++
++if __name__ == '__main__':
++    import unittest
++    unittest.main()
+diff --git a/tests/admin_changelist/tests.py b/tests/admin_changelist/tests.py
+index b85d5383cd..6bad5e9c78 100644
+--- a/tests/admin_changelist/tests.py
++++ b/tests/admin_changelist/tests.py
+@@ -1169,6 +1169,65 @@ class ChangeListTests(TestCase):
+             # Check only the first few characters since the UUID may have dashes.
+             self.assertIn(str(a.pk)[:8], context.captured_queries[4]["sql"])
+ 
++    def test_list_editable_saves_in_transaction(self):
++        """Test that list_editable processing is wrapped in a transaction."""
++        from unittest.mock import patch
++        from django.db import transaction
++        
++        # Create test objects
++        parent1 = Parent.objects.create(name='Parent 1')
++        parent2 = Parent.objects.create(name='Parent 2')
++        
++        # Prepare POST data for list_editable
++        data = {
++            'form-TOTAL_FORMS': '2',
++            'form-INITIAL_FORMS': '2',
++            'form-MIN_NUM_FORMS': '0',
++            'form-MAX_NUM_FORMS': '1000',
++            'form-0-id': str(parent1.pk),
++            'form-0-name': 'Updated Parent 1',
++            'form-1-id': str(parent2.pk),
++            'form-1-name': 'Updated Parent 2',
++            '_save': 'Save',
++        }
++        
++        superuser = self._create_superuser("superuser")
++        self.client.force_login(superuser)
++        
++        # Simulate an error during save using a mock
++        with patch.object(NoListDisplayLinksParentAdmin, 'save_model') as mock_save:
++            call_count = 0
++            
++            def side_effect(request, obj, form, change):
++                nonlocal call_count
++                call_count += 1
++                # Save the first object successfully
++                if call_count == 1:
++                    obj.save()
++                else:
++                    # Raise exception on second object
++                    raise Exception("Simulated database error")
++            
++            mock_save.side_effect = side_effect
++            
++            changelist_url = reverse("admin:admin_changelist_parent_changelist")
++            
++            # The view should raise the exception
++            with self.assertRaises(Exception) as cm:
++                self.client.post(changelist_url, data=data)
++            
++            self.assertEqual(str(cm.exception), "Simulated database error")
++        
++        # Refresh objects from database
++        parent1.refresh_from_db()
++        parent2.refresh_from_db()
++        
++        # Due to transaction, neither object should be updated
++        self.assertEqual(parent1.name, 'Parent 1', 
++                        "First object should not be updated when second fails due to transaction rollback")
++        self.assertEqual(parent2.name, 'Parent 2',
++                        "Second object should not be updated when it fails")
++
+     def test_deterministic_order_for_unordered_model(self):
+         """
+         The primary key is used in the ordering of the changelist's results to

@@ -1,0 +1,21 @@
+diff --git a/sklearn/linear_model/huber.py b/sklearn/linear_model/huber.py
+index 65c686400..ae2d52985 100644
+--- a/sklearn/linear_model/huber.py
++++ b/sklearn/linear_model/huber.py
+@@ -48,6 +48,7 @@ def _huber_loss_and_gradient(w, X, y, epsilon, alpha, sample_weight=None):
+         Returns the derivative of the Huber loss with respect to each
+         coefficient, intercept and the scale as a vector.
+     """
++    X = np.asarray(X, dtype=float)
+     _, n_features = X.shape
+     fit_intercept = (n_features + 2 == w.shape[0])
+     if fit_intercept:
+@@ -251,7 +252,7 @@ class HuberRegressor(LinearModel, RegressorMixin, BaseEstimator):
+         self : object
+         """
+         X, y = check_X_y(
+-            X, y, copy=False, accept_sparse=['csr'], y_numeric=True)
++            X, y, copy=False, accept_sparse=['csr'], y_numeric=True, dtype=float)
+         if sample_weight is not None:
+             sample_weight = np.array(sample_weight)
+             check_consistent_length(y, sample_weight)

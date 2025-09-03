@@ -1,0 +1,421 @@
+From 063e081237cb0e384ab5fe7a209ef17a9dff3395 Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Fri, 2 Dec 2022 14:40:14 -0500
+Subject: [PATCH 1/6] ENH Preserve DataFrame dtypes in transform for feature
+ selectors
+
+---
+ doc/whats_new/v1.3.rst                        |  6 +++
+ sklearn/feature_selection/_base.py            | 35 ++++++++++------
+ sklearn/feature_selection/tests/test_base.py  | 42 ++++++++++++++++---
+ .../tests/test_feature_select.py              | 40 +++++++++++++++++-
+ 4 files changed, 104 insertions(+), 19 deletions(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index 6012ac7a336a4..ea13527ee2474 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -36,6 +36,12 @@ Changelog
+     :pr:`123456` by :user:`Joe Bloggs <joeongithub>`.
+     where 123456 is the *pull request* number, not the issue number.
+ 
++:mod:`sklearn.feature_selection`
++................................
++
++- |Enhancement| All selectors in :mod:`sklearn.feature_selection` will preserve
++  a DataFrame's dtype when transformed. :pr:`xxxxx` by `Thomas Fan`_.
++
+ Code and Documentation Contributors
+ -----------------------------------
+ 
+diff --git a/sklearn/feature_selection/_base.py b/sklearn/feature_selection/_base.py
+index e306c102cdd53..a1060708e7542 100644
+--- a/sklearn/feature_selection/_base.py
++++ b/sklearn/feature_selection/_base.py
+@@ -14,10 +14,11 @@
+ from ..cross_decomposition._pls import _PLS
+ from ..utils import (
+     check_array,
+-    safe_mask,
+     safe_sqr,
+ )
+ from ..utils._tags import _safe_tags
++from ..utils._set_output import _get_output_config
++from ..utils import _safe_indexing
+ from ..utils.validation import _check_feature_names_in
+ 
+ 
+@@ -78,15 +79,23 @@ def transform(self, X):
+         X_r : array of shape [n_samples, n_selected_features]
+             The input samples with only the selected features.
+         """
+-        # note: we use _safe_tags instead of _get_tags because this is a
+-        # public Mixin.
+-        X = self._validate_data(
+-            X,
+-            dtype=None,
+-            accept_sparse="csr",
+-            force_all_finite=not _safe_tags(self, key="allow_nan"),
+-            reset=False,
+-        )
++        output_config_dense = _get_output_config("transform", estimator=self)["dense"]
++        if hasattr(X, "iloc") and output_config_dense == "pandas":
++            # Only check feature names and n_features when output is a dataframe
++            # This allow _transform to preserve `X`'s dtype
++            self._check_feature_names(X, reset=False)
++            self._check_n_features(X, reset=False)
++        else:
++            # note: we use _safe_tags instead of _get_tags because this is a
++            # public Mixin.
++            X = self._validate_data(
++                X,
++                dtype=None,
++                accept_sparse="csr",
++                force_all_finite=not _safe_tags(self, key="allow_nan"),
++                reset=False,
++            )
++
+         return self._transform(X)
+ 
+     def _transform(self, X):
+@@ -98,10 +107,10 @@ def _transform(self, X):
+                 " too noisy or the selection test too strict.",
+                 UserWarning,
+             )
++            if hasattr(X, "iloc"):
++                return X.iloc[:, :0]
+             return np.empty(0, dtype=X.dtype).reshape((X.shape[0], 0))
+-        if len(mask) != X.shape[1]:
+-            raise ValueError("X has a different shape than during fitting.")
+-        return X[:, safe_mask(X, mask)]
++        return _safe_indexing(X, mask, axis=1)
+ 
+     def inverse_transform(self, X):
+         """Reverse the transformation operation.
+diff --git a/sklearn/feature_selection/tests/test_base.py b/sklearn/feature_selection/tests/test_base.py
+index 9df0749427976..3add87a461d6b 100644
+--- a/sklearn/feature_selection/tests/test_base.py
++++ b/sklearn/feature_selection/tests/test_base.py
+@@ -6,7 +6,6 @@
+ 
+ from sklearn.base import BaseEstimator
+ from sklearn.feature_selection._base import SelectorMixin
+-from sklearn.utils import check_array
+ 
+ 
+ class StepSelector(SelectorMixin, BaseEstimator):
+@@ -16,13 +15,13 @@ def __init__(self, step=2):
+         self.step = step
+ 
+     def fit(self, X, y=None):
+-        X = check_array(X, accept_sparse="csc")
+-        self.n_input_feats = X.shape[1]
++        X = self._validate_data(X, accept_sparse="csc")
+         return self
+ 
+     def _get_support_mask(self):
+-        mask = np.zeros(self.n_input_feats, dtype=bool)
+-        mask[:: self.step] = True
++        mask = np.zeros(self.n_features_in_, dtype=bool)
++        if self.step >= 1:
++            mask[:: self.step] = True
+         return mask
+ 
+ 
+@@ -114,3 +113,36 @@ def test_get_support():
+     sel.fit(X, y)
+     assert_array_equal(support, sel.get_support())
+     assert_array_equal(support_inds, sel.get_support(indices=True))
++
++
++def test_output_dataframe():
++    """Check output dtypes for dataframes is consistent with the input dtypes."""
++    pd = pytest.importorskip("pandas")
++
++    X = pd.DataFrame(
++        {
++            "a": pd.Series([1.0, 2.4, 4.5], dtype=np.float32),
++            "b": pd.Series(["a", "b", "a"], dtype="category"),
++            "c": pd.Series(["j", "b", "b"], dtype="category"),
++            "d": pd.Series([3.0, 2.4, 1.2], dtype=np.float64),
++        }
++    )
++
++    for step in [2, 3]:
++        sel = StepSelector(step=step).set_output(transform="pandas")
++        sel.fit(X)
++
++        output = sel.transform(X)
++        for name, dtype in output.dtypes.items():
++            assert dtype == X.dtypes[name]
++
++    # step=0 will select nothing
++    sel0 = StepSelector(step=0).set_output(transform="pandas")
++    sel0.fit(X, y)
++
++    msg = "No features were selected"
++    with pytest.warns(UserWarning, match=msg):
++        output0 = sel0.transform(X)
++
++    assert_array_equal(output0.index, X.index)
++    assert output0.shape == (X.shape[0], 0)
+diff --git a/sklearn/feature_selection/tests/test_feature_select.py b/sklearn/feature_selection/tests/test_feature_select.py
+index df8d2134ecf0e..ff51243bb1378 100644
+--- a/sklearn/feature_selection/tests/test_feature_select.py
++++ b/sklearn/feature_selection/tests/test_feature_select.py
+@@ -15,7 +15,7 @@
+ from sklearn.utils._testing import ignore_warnings
+ from sklearn.utils import safe_mask
+ 
+-from sklearn.datasets import make_classification, make_regression
++from sklearn.datasets import make_classification, make_regression, load_iris
+ from sklearn.feature_selection import (
+     chi2,
+     f_classif,
+@@ -944,3 +944,41 @@ def test_mutual_info_regression():
+     gtruth = np.zeros(10)
+     gtruth[:2] = 1
+     assert_array_equal(support, gtruth)
++
++
++def test_dataframe_output_dtypes():
++    """Check that the output datafarme dtypes are the same as the input.
++
++    Non-regression test for gh-24860.
++    """
++    pd = pytest.importorskip("pandas")
++
++    X, y = load_iris(return_X_y=True, as_frame=True)
++    X = X.astype(
++        {
++            "petal length (cm)": np.float32,
++            "petal width (cm)": np.float64,
++        }
++    )
++    X["petal_width_binned"] = pd.cut(X["petal width (cm)"], bins=10)
++
++    column_order = X.columns
++
++    def selector(X, y):
++        ranking = {
++            "sepal length (cm)": 1,
++            "sepal width (cm)": 2,
++            "petal length (cm)": 3,
++            "petal width (cm)": 4,
++            "petal_width_binned": 5,
++        }
++        return np.asarray([ranking[name] for name in column_order])
++
++    univariate_filter = SelectKBest(selector, k=3).set_output(transform="pandas")
++    output = univariate_filter.fit_transform(X, y)
++
++    assert_array_equal(
++        output.columns, ["petal length (cm)", "petal width (cm)", "petal_width_binned"]
++    )
++    for name, dtype in output.dtypes.items():
++        assert dtype == X.dtypes[name]
+
+From dfb4884cfd96bcfef7e616e24181c99b952045a7 Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Fri, 2 Dec 2022 15:37:52 -0500
+Subject: [PATCH 2/6] DOC Adds whats new number
+
+---
+ doc/whats_new/v1.3.rst             | 2 +-
+ sklearn/feature_selection/_base.py | 1 -
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index ea13527ee2474..d6ab3e57b37ca 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -40,7 +40,7 @@ Changelog
+ ................................
+ 
+ - |Enhancement| All selectors in :mod:`sklearn.feature_selection` will preserve
+-  a DataFrame's dtype when transformed. :pr:`xxxxx` by `Thomas Fan`_.
++  a DataFrame's dtype when transformed. :pr:`25102` by `Thomas Fan`_.
+ 
+ Code and Documentation Contributors
+ -----------------------------------
+diff --git a/sklearn/feature_selection/_base.py b/sklearn/feature_selection/_base.py
+index a1060708e7542..7f9b9f8803a9f 100644
+--- a/sklearn/feature_selection/_base.py
++++ b/sklearn/feature_selection/_base.py
+@@ -95,7 +95,6 @@ def transform(self, X):
+                 force_all_finite=not _safe_tags(self, key="allow_nan"),
+                 reset=False,
+             )
+-
+         return self._transform(X)
+ 
+     def _transform(self, X):
+
+From c7d46a12e0afb6c601fe85aebc15a97e22e417cc Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Mon, 5 Dec 2022 11:12:23 -0500
+Subject: [PATCH 3/6] DOC Better comment
+
+---
+ sklearn/feature_selection/_base.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sklearn/feature_selection/_base.py b/sklearn/feature_selection/_base.py
+index 7f9b9f8803a9f..e3fc8df3989ab 100644
+--- a/sklearn/feature_selection/_base.py
++++ b/sklearn/feature_selection/_base.py
+@@ -82,7 +82,7 @@ def transform(self, X):
+         output_config_dense = _get_output_config("transform", estimator=self)["dense"]
+         if hasattr(X, "iloc") and output_config_dense == "pandas":
+             # Only check feature names and n_features when output is a dataframe
+-            # This allow _transform to preserve `X`'s dtype
++            # preserving the dataframe for _transform to mask
+             self._check_feature_names(X, reset=False)
+             self._check_n_features(X, reset=False)
+         else:
+
+From 17fb2d18093c8158f93bf9e103d380070e20ee69 Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Mon, 5 Dec 2022 11:25:54 -0500
+Subject: [PATCH 4/6] DOC Better wording
+
+---
+ sklearn/feature_selection/_base.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/feature_selection/_base.py b/sklearn/feature_selection/_base.py
+index e3fc8df3989ab..0bb098b4c30c2 100644
+--- a/sklearn/feature_selection/_base.py
++++ b/sklearn/feature_selection/_base.py
+@@ -81,8 +81,8 @@ def transform(self, X):
+         """
+         output_config_dense = _get_output_config("transform", estimator=self)["dense"]
+         if hasattr(X, "iloc") and output_config_dense == "pandas":
+-            # Only check feature names and n_features when output is a dataframe
+-            # preserving the dataframe for _transform to mask
++            # Only perform input validation on feature names and n_features when the
++            # output is a dataframe, preserving the dataframe for _transform to mask
+             self._check_feature_names(X, reset=False)
+             self._check_n_features(X, reset=False)
+         else:
+
+From 4c301f0664dcbd30f4098668aa550f052c345035 Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Mon, 19 Dec 2022 13:38:25 -0500
+Subject: [PATCH 5/6] CLN Add cast_to_ndarray to _validate_data
+
+---
+ sklearn/base.py                    | 14 +++++++++++---
+ sklearn/feature_selection/_base.py | 29 ++++++++++++++---------------
+ 2 files changed, 25 insertions(+), 18 deletions(-)
+
+diff --git a/sklearn/base.py b/sklearn/base.py
+index 064b414806d55..7e18b98867032 100644
+--- a/sklearn/base.py
++++ b/sklearn/base.py
+@@ -467,6 +467,7 @@ def _validate_data(
+         y="no_validation",
+         reset=True,
+         validate_separately=False,
++        cast_to_ndarray=True,
+         **check_params,
+     ):
+         """Validate input data and set or check the `n_features_in_` attribute.
+@@ -512,6 +513,11 @@ def _validate_data(
+             `estimator=self` is automatically added to these dicts to generate
+             more informative error message in case of invalid input data.
+ 
++        cast_to_ndarray : bool, default=True
++            Cast `X` and `y` to ndarray with checks in `check_params`. If
++            `False`, `X` and `y` are unchanged and only `feature_names` and
++            `n_features_in_` are checked.
++
+         **check_params : kwargs
+             Parameters passed to :func:`sklearn.utils.check_array` or
+             :func:`sklearn.utils.check_X_y`. Ignored if validate_separately
+@@ -543,13 +549,15 @@ def _validate_data(
+         if no_val_X and no_val_y:
+             raise ValueError("Validation should be done on X, y or both.")
+         elif not no_val_X and no_val_y:
+-            X = check_array(X, input_name="X", **check_params)
++            if cast_to_ndarray:
++                X = check_array(X, input_name="X", **check_params)
+             out = X
+         elif no_val_X and not no_val_y:
+-            y = _check_y(y, **check_params)
++            if cast_to_ndarray:
++                y = _check_y(y, **check_params) if cast_to_ndarray else y
+             out = y
+         else:
+-            if validate_separately:
++            if validate_separately and cast_to_ndarray:
+                 # We need this because some estimators validate X and y
+                 # separately, and in general, separately calling check_array()
+                 # on X and y isn't equivalent to just calling check_X_y()
+diff --git a/sklearn/feature_selection/_base.py b/sklearn/feature_selection/_base.py
+index 0bb098b4c30c2..b6ed93cc5c4e7 100644
+--- a/sklearn/feature_selection/_base.py
++++ b/sklearn/feature_selection/_base.py
+@@ -79,22 +79,21 @@ def transform(self, X):
+         X_r : array of shape [n_samples, n_selected_features]
+             The input samples with only the selected features.
+         """
++        # Preserve X when X is a dataframe and the output is configured to
++        # be pandas.
+         output_config_dense = _get_output_config("transform", estimator=self)["dense"]
+-        if hasattr(X, "iloc") and output_config_dense == "pandas":
+-            # Only perform input validation on feature names and n_features when the
+-            # output is a dataframe, preserving the dataframe for _transform to mask
+-            self._check_feature_names(X, reset=False)
+-            self._check_n_features(X, reset=False)
+-        else:
+-            # note: we use _safe_tags instead of _get_tags because this is a
+-            # public Mixin.
+-            X = self._validate_data(
+-                X,
+-                dtype=None,
+-                accept_sparse="csr",
+-                force_all_finite=not _safe_tags(self, key="allow_nan"),
+-                reset=False,
+-            )
++        preserve_X = hasattr(X, "iloc") and output_config_dense == "pandas"
++
++        # note: we use _safe_tags instead of _get_tags because this is a
++        # public Mixin.
++        X = self._validate_data(
++            X,
++            dtype=None,
++            accept_sparse="csr",
++            force_all_finite=not _safe_tags(self, key="allow_nan"),
++            cast_to_ndarray=not preserve_X,
++            reset=False,
++        )
+         return self._transform(X)
+ 
+     def _transform(self, X):
+
+From 1e5b8eeb00dee61f5494bf1e7626c834165c4acd Mon Sep 17 00:00:00 2001
+From: "Thomas J. Fan" <thomasjpfan@gmail.com>
+Date: Tue, 3 Jan 2023 17:28:25 -0500
+Subject: [PATCH 6/6] DOC Add info about step < 1
+
+---
+ sklearn/feature_selection/tests/test_base.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/feature_selection/tests/test_base.py b/sklearn/feature_selection/tests/test_base.py
+index 3add87a461d6b..9869a1c03e677 100644
+--- a/sklearn/feature_selection/tests/test_base.py
++++ b/sklearn/feature_selection/tests/test_base.py
+@@ -9,7 +9,10 @@
+ 
+ 
+ class StepSelector(SelectorMixin, BaseEstimator):
+-    """Retain every `step` features (beginning with 0)"""
++    """Retain every `step` features (beginning with 0).
++
++    If `step < 1`, then no features are selected.
++    """
+ 
+     def __init__(self, step=2):
+         self.step = step

@@ -1,0 +1,91 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index ce18098fd2..48cfba2c49 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1266,7 +1266,9 @@ class Query(BaseExpression):
+         used_joins = {k for k, v in self.alias_refcount.items() if v > pre_joins.get(k, 0)}
+ 
+         if check_filterable:
+-            self.check_filterable(value)
++            # Don't check filterable for model instances - they are values, not expressions
++            if not hasattr(value, '_meta'):
++                self.check_filterable(value)
+ 
+         clause = self.where_class()
+         if reffed_expression:
+diff --git a/tests/queries/test_filterable_model_field.py b/tests/queries/test_filterable_model_field.py
+new file mode 100644
+index 0000000000..f2dd08d289
+--- /dev/null
++++ b/tests/queries/test_filterable_model_field.py
+@@ -0,0 +1,70 @@
++"""
++Test for the fix to ensure model instances with a 'filterable' field
++don't raise NotSupportedError when used as filter values.
++"""
++from django.db import models
++from django.test import TestCase
++
++
++class ModelWithFilterableField(models.Model):
++    """Model with a field named 'filterable' that could cause issues."""
++    name = models.CharField(max_length=100)
++    filterable = models.BooleanField(default=False)
++    
++    class Meta:
++        app_label = 'queries'
++
++
++class RelatedToFilterable(models.Model):
++    """Model with FK to ModelWithFilterableField."""
++    related = models.ForeignKey(ModelWithFilterableField, on_delete=models.CASCADE)
++    value = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'queries'
++
++
++class FilterableFieldTests(TestCase):
++    """Test that model instances with 'filterable' field work in filters."""
++    
++    @classmethod
++    def setUpTestData(cls):
++        cls.obj_false = ModelWithFilterableField.objects.create(
++            name="Object with filterable=False", 
++            filterable=False
++        )
++        cls.obj_true = ModelWithFilterableField.objects.create(
++            name="Object with filterable=True", 
++            filterable=True
++        )
++        cls.related = RelatedToFilterable.objects.create(
++            related=cls.obj_false,
++            value="Test value"
++        )
++    
++    def test_filter_with_filterable_false(self):
++        """Model instance with filterable=False should work in filters."""
++        # This should not raise NotSupportedError
++        result = RelatedToFilterable.objects.filter(related=self.obj_false)
++        self.assertEqual(result.count(), 1)
++        self.assertEqual(result.first(), self.related)
++    
++    def test_filter_with_filterable_true(self):
++        """Model instance with filterable=True should work in filters."""
++        # This should also work
++        RelatedToFilterable.objects.create(related=self.obj_true, value="Another")
++        result = RelatedToFilterable.objects.filter(related=self.obj_true)
++        self.assertEqual(result.count(), 1)
++    
++    def test_filter_with_in_lookup(self):
++        """Model instances should work with __in lookup."""
++        result = RelatedToFilterable.objects.filter(
++            related__in=[self.obj_false, self.obj_true]
++        )
++        self.assertEqual(result.count(), 1)
++    
++    def test_exclude_with_filterable_false(self):
++        """Exclude should also work with filterable=False model instances."""
++        result = RelatedToFilterable.objects.exclude(related=self.obj_true)
++        self.assertEqual(result.count(), 1)
++        self.assertEqual(result.first(), self.related)

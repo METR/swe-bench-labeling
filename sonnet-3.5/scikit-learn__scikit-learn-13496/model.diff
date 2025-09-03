@@ -1,0 +1,101 @@
+diff --git a/examples/ensemble/plot_isolation_forest.py b/examples/ensemble/plot_isolation_forest.py
+index 1b79072df..e1be9eb61 100644
+--- a/examples/ensemble/plot_isolation_forest.py
++++ b/examples/ensemble/plot_isolation_forest.py
+@@ -21,6 +21,11 @@ Random partitioning produces noticeable shorter paths for anomalies.
+ Hence, when a forest of random trees collectively produce shorter path lengths
+ for particular samples, they are highly likely to be anomalies.
+ 
++The IsolationForest also supports warm_start, which allows you to add more
++trees to an existing fitted model. This can be useful when you want to
++incrementally add more estimators to the ensemble without retraining the
++entire model.
++
+ """
+ print(__doc__)
+ 
+diff --git a/sklearn/ensemble/iforest.py b/sklearn/ensemble/iforest.py
+index 8a1bd3625..3281069b8 100644
+--- a/sklearn/ensemble/iforest.py
++++ b/sklearn/ensemble/iforest.py
+@@ -98,6 +98,11 @@ class IsolationForest(BaseBagging, OutlierMixin):
+         the default behaviour in the future. As explained in details in the
+         ``offset_`` attribute documentation, the ``decision_function`` becomes
+         dependent on the contamination parameter, in such a way that 0 becomes
++
++    warm_start : bool, optional (default=False)
++        When set to ``True``, reuse the solution of the previous call to fit
++        and add more estimators to the ensemble, otherwise, just fit a whole
++        new forest. See :term:`the Glossary <warm_start>`.
+         its natural threshold to detect outliers.
+ 
+         .. versionadded:: 0.20
+@@ -173,7 +178,8 @@ class IsolationForest(BaseBagging, OutlierMixin):
+                  n_jobs=None,
+                  behaviour='old',
+                  random_state=None,
+-                 verbose=0):
++                 verbose=0,
++                 warm_start=False):
+         super().__init__(
+             base_estimator=ExtraTreeRegressor(
+                 max_features=1,
+@@ -187,10 +193,12 @@ class IsolationForest(BaseBagging, OutlierMixin):
+             max_features=max_features,
+             n_jobs=n_jobs,
+             random_state=random_state,
+-            verbose=verbose)
++            verbose=verbose,
++            warm_start=warm_start)
+ 
+         self.behaviour = behaviour
+         self.contamination = contamination
++        self.warm_start = warm_start
+ 
+     def _set_oob_score(self, X, y):
+         raise NotImplementedError("OOB score not supported by iforest")
+diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
+index 67ba2d7f9..98f066687 100644
+--- a/sklearn/ensemble/tests/test_iforest.py
++++ b/sklearn/ensemble/tests/test_iforest.py
+@@ -359,3 +359,39 @@ def test_iforest_chunks_works2(
+ ):
+     test_iforest_works(contamination)
+     assert mocked_get_chunk.call_count == n_predict_calls
++
++def test_warm_start():
++    """Test warm_start functionality in IsolationForest"""
++    X = iris.data
++    
++    # Train an initial model
++    clf = IsolationForest(n_estimators=10, random_state=0, warm_start=True)
++    clf.fit(X)
++    
++    # Get the initial number of trees
++    initial_n_estimators = len(clf.estimators_)
++    
++    # Increase n_estimators and refit
++    clf.set_params(n_estimators=20)
++    clf.fit(X)
++    
++    # Check that the number of trees has increased
++    assert len(clf.estimators_) == 20
++    assert len(clf.estimators_) > initial_n_estimators
++    
++    # Check that the first 10 trees are the same as before
++    clf_2 = IsolationForest(n_estimators=10, random_state=0, warm_start=False)
++    clf_2.fit(X)
++    
++    for tree_1, tree_2 in zip(clf.estimators_[:10], clf_2.estimators_):
++        assert_array_almost_equal(
++            tree_1.tree_.feature, tree_2.tree_.feature
++        )
++        assert_array_almost_equal(
++            tree_1.tree_.threshold, tree_2.tree_.threshold
++        )
++    
++    # Check that fitting with warm_start=False resets the ensemble
++    clf.set_params(warm_start=False, n_estimators=10)
++    clf.fit(X)
++    assert len(clf.estimators_) == 10
+\ No newline at end of file

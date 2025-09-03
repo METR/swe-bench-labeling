@@ -1,0 +1,216 @@
+diff --git a/setup.py b/setup.py
+index 3dbc8746b..31bd48c0a 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/extension.py b/sphinx/extension.py
+index 7ec6c8518..5e9c36519 100644
+--- a/sphinx/extension.py
++++ b/sphinx/extension.py
+@@ -10,6 +10,8 @@
+ 
+ from typing import TYPE_CHECKING, Any, Dict
+ 
++from packaging.version import Version, InvalidVersion
++
+ from sphinx.config import Config
+ from sphinx.errors import VersionRequirementError
+ from sphinx.locale import __
+@@ -51,11 +53,29 @@ def verify_needs_extensions(app: "Sphinx", config: Config) -> None:
+                               'but it is not loaded.'), extname)
+             continue
+ 
+-        if extension.version == 'unknown version' or reqversion > extension.version:
++        if extension.version == 'unknown version':
+             raise VersionRequirementError(__('This project needs the extension %s at least in '
+                                              'version %s and therefore cannot be built with '
+                                              'the loaded version (%s).') %
+                                           (extname, reqversion, extension.version))
++        
++        try:
++            required_version = Version(reqversion)
++            actual_version = Version(extension.version)
++            if actual_version < required_version:
++                raise VersionRequirementError(__('This project needs the extension %s at least in '
++                                                 'version %s and therefore cannot be built with '
++                                                 'the loaded version (%s).') %
++                                              (extname, reqversion, extension.version))
++        except InvalidVersion:
++            # Fall back to string comparison if version parsing fails
++            logger.warning(__('Version comparison for %s extension failed. '
++                              'Using string comparison as fallback.'), extname)
++            if reqversion > extension.version:
++                raise VersionRequirementError(__('This project needs the extension %s at least in '
++                                                 'version %s and therefore cannot be built with '
++                                                 'the loaded version (%s).') %
++                                              (extname, reqversion, extension.version))
+ 
+ 
+ def setup(app: "Sphinx") -> Dict[str, Any]:
+diff --git a/tests/test_needs_extensions.py b/tests/test_needs_extensions.py
+new file mode 100644
+index 000000000..f0804359d
+--- /dev/null
++++ b/tests/test_needs_extensions.py
+@@ -0,0 +1,110 @@
++"""Test the needs_extensions functionality."""
++
++import pytest
++
++from sphinx.config import Config
++from sphinx.errors import VersionRequirementError
++from sphinx.extension import Extension, verify_needs_extensions
++
++
++class MockApp:
++    """Mock Sphinx application for testing."""
++    def __init__(self):
++        self.extensions = {}
++
++
++def test_needs_extensions_version_comparison():
++    """Test that version comparison works correctly with semantic versioning."""
++    app = MockApp()
++    
++    # Test case 1: Version 0.10 should be accepted when 0.6 is required
++    config = Config({}, {})
++    config.needs_extensions = {'test_ext': '0.6'}
++    ext = Extension('test_ext', None, version='0.10')
++    app.extensions['test_ext'] = ext
++    
++    # Should not raise an error
++    verify_needs_extensions(app, config)
++    
++    # Test case 2: Version 0.5 should be rejected when 0.6 is required
++    config2 = Config({}, {})
++    config2.needs_extensions = {'test_ext': '0.6'}
++    ext2 = Extension('test_ext', None, version='0.5')
++    app.extensions['test_ext'] = ext2
++    
++    with pytest.raises(VersionRequirementError):
++        verify_needs_extensions(app, config2)
++    
++    # Test case 3: Same version should be accepted
++    config3 = Config({}, {})
++    config3.needs_extensions = {'test_ext': '0.6'}
++    ext3 = Extension('test_ext', None, version='0.6')
++    app.extensions['test_ext'] = ext3
++    
++    # Should not raise an error
++    verify_needs_extensions(app, config3)
++    
++    # Test case 4: Version 1.0 should be accepted when 0.10 is required
++    config4 = Config({}, {})
++    config4.needs_extensions = {'test_ext': '0.10'}
++    ext4 = Extension('test_ext', None, version='1.0')
++    app.extensions['test_ext'] = ext4
++    
++    # Should not raise an error
++    verify_needs_extensions(app, config4)
++    
++    # Test case 5: Version 0.9 should be rejected when 0.10 is required
++    config5 = Config({}, {})
++    config5.needs_extensions = {'test_ext': '0.10'}
++    ext5 = Extension('test_ext', None, version='0.9')
++    app.extensions['test_ext'] = ext5
++    
++    with pytest.raises(VersionRequirementError):
++        verify_needs_extensions(app, config5)
++
++
++def test_needs_extensions_unknown_version():
++    """Test handling of 'unknown version'."""
++    app = MockApp()
++    config = Config({}, {})
++    config.needs_extensions = {'test_ext': '0.6'}
++    ext = Extension('test_ext', None, version='unknown version')
++    app.extensions['test_ext'] = ext
++    
++    with pytest.raises(VersionRequirementError):
++        verify_needs_extensions(app, config)
++
++
++def test_needs_extensions_missing_extension():
++    """Test handling of missing extensions."""
++    app = MockApp()
++    config = Config({}, {})
++    config.needs_extensions = {'missing_ext': '0.6'}
++    
++    # Should not raise an error, just warn
++    verify_needs_extensions(app, config)
++
++
++def test_needs_extensions_none():
++    """Test when needs_extensions is None."""
++    app = MockApp()
++    config = Config({}, {})
++    config.needs_extensions = None
++    
++    # Should not raise an error
++    verify_needs_extensions(app, config)
++
++
++def test_needs_extensions_invalid_version_format():
++    """Test fallback to string comparison for invalid version formats."""
++    app = MockApp()
++    config = Config({}, {})
++    
++    # Both versions are invalid for packaging.version.Version
++    config.needs_extensions = {'test_ext': 'custom-0.6'}
++    ext = Extension('test_ext', None, version='custom-0.10')
++    app.extensions['test_ext'] = ext
++    
++    # With string comparison 'custom-0.10' < 'custom-0.6', so it should fail
++    with pytest.raises(VersionRequirementError):
++        verify_needs_extensions(app, config)
+diff --git a/tox.ini b/tox.ini
+index 00c8e13bd..11d3352df 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -22,14 +22,14 @@ deps =
+     du15: docutils==0.15.*
+     du16: docutils==0.16.*
+     du17: docutils==0.17.*
+-    py311: git+https://github.com/pytest-dev/py
++    py311: git+https://github.com/pytest -rA-dev/py
+ extras =
+     test
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:du-latest]
+ commands =

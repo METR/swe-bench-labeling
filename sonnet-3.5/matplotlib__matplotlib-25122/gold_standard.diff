@@ -1,0 +1,256 @@
+From cebd3d7b44e678562175d8f144cb7d07b88f6e3b Mon Sep 17 00:00:00 2001
+From: Julian Chen <gapplef@gmail.com>
+Date: Wed, 1 Feb 2023 11:37:18 +0800
+Subject: [PATCH 1/5] FIX: scaling factor for window with negative value
+
+Simply drop the `np.abs()` on window to fix the wrong scaling factor for window with negative value.
+For more detail refer to https://github.com/matplotlib/matplotlib/issues/24821
+
+**Caution**: With this fix, the behavior would change for window with complex value.
+With `np.abs()` on window, it seems can handle complex value, but I don't think it's the right way to do it. As it can't fall back to real value case for complex value with zero imaginary part and negative real part (for example -1 + 0j).
+Also, I didn't understand the need for complex window, so here I simply ignore the complex case. And this is consistent with the implementation of [scipy](https://github.com/scipy/scipy/blob/d9f75db82fdffef06187c9d8d2f0f5b36c7a791b/scipy/signal/_spectral_py.py#L1854-L1859).
+---
+ lib/matplotlib/mlab.py | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/lib/matplotlib/mlab.py b/lib/matplotlib/mlab.py
+index 3552904c3d74..efa2f84cae4b 100644
+--- a/lib/matplotlib/mlab.py
++++ b/lib/matplotlib/mlab.py
+@@ -395,12 +395,12 @@ def _spectral_helper(x, y=None, NFFT=None, Fs=None, detrend_func=None,
+     elif mode == 'psd':
+         result = np.conj(result) * result
+     elif mode == 'magnitude':
+-        result = np.abs(result) / np.abs(window).sum()
++        result = np.abs(result) / window.sum()
+     elif mode == 'angle' or mode == 'phase':
+         # we unwrap the phase later to handle the onesided vs. twosided case
+         result = np.angle(result)
+     elif mode == 'complex':
+-        result /= np.abs(window).sum()
++        result /= window.sum()
+ 
+     if mode == 'psd':
+ 
+@@ -424,10 +424,10 @@ def _spectral_helper(x, y=None, NFFT=None, Fs=None, detrend_func=None,
+             result /= Fs
+             # Scale the spectrum by the norm of the window to compensate for
+             # windowing loss; see Bendat & Piersol Sec 11.5.2.
+-            result /= (np.abs(window)**2).sum()
++            result /= (window**2).sum()
+         else:
+             # In this case, preserve power in the segment, not amplitude
+-            result /= np.abs(window).sum()**2
++            result /= window.sum()**2
+ 
+     t = np.arange(NFFT/2, len(x) - NFFT/2 + 1, NFFT - noverlap)/Fs
+ 
+
+From b2c8f8845ce52850b37de561e55870801dd5764f Mon Sep 17 00:00:00 2001
+From: Julian Chen <gapplef@gmail.com>
+Date: Wed, 1 Feb 2023 16:36:52 +0800
+Subject: [PATCH 2/5] Test function for scale factor of flattop window
+
+Add new test function for scale factor of flattop window.
+Also remove the unnecessary `np.abs()` on window in other functions.
+---
+ lib/matplotlib/tests/test_mlab.py | 42 +++++++++++++++++++++++++++++--
+ 1 file changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/lib/matplotlib/tests/test_mlab.py b/lib/matplotlib/tests/test_mlab.py
+index 86beb5c8c803..267d19d9a6ca 100644
+--- a/lib/matplotlib/tests/test_mlab.py
++++ b/lib/matplotlib/tests/test_mlab.py
+@@ -615,7 +615,7 @@ def test_psd_window_hanning(self):
+                                  noverlap=0,
+                                  sides=self.sides,
+                                  window=mlab.window_none)
+-        spec_c *= len(ycontrol1)/(np.abs(windowVals)**2).sum()
++        spec_c *= len(ycontrol1)/(windowVals**2).sum()
+         assert_array_equal(fsp_g, fsp_c)
+         assert_array_equal(fsp_b, fsp_c)
+         assert_allclose(spec_g, spec_c, atol=1e-08)
+@@ -662,7 +662,7 @@ def test_psd_window_hanning_detrend_linear(self):
+                                  noverlap=0,
+                                  sides=self.sides,
+                                  window=mlab.window_none)
+-        spec_c *= len(ycontrol1)/(np.abs(windowVals)**2).sum()
++        spec_c *= len(ycontrol1)/(windowVals**2).sum()
+         assert_array_equal(fsp_g, fsp_c)
+         assert_array_equal(fsp_b, fsp_c)
+         assert_allclose(spec_g, spec_c, atol=1e-08)
+@@ -670,6 +670,44 @@ def test_psd_window_hanning_detrend_linear(self):
+         with pytest.raises(AssertionError):
+             assert_allclose(spec_b, spec_c, atol=1e-08)
+ 
++    def test_psd_window_flattop(self):
++        # flattop window
++        # adaption from https://github.com/scipy/scipy/blob/v1.10.0/scipy/signal/windows/_windows.py#L562-L622
++        if self.NFFT_density_real <=1:
++            win = np.ones(self.NFFT_density_real)
++        else:
++            a = [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368]
++            fac = np.linspace(-np.pi, np.pi, self.NFFT_density_real)
++            win = np.zeros(self.NFFT_density_real)
++            for k in range(len(a)):
++                win += a[k] * np.cos(k * fac)
++
++        spec, fsp = mlab.psd(x=self.y,
++                             NFFT=self.NFFT_density,
++                             Fs=self.Fs,
++                             noverlap=0,
++                             sides=self.sides,
++                             window=win,
++                             scale_by_freq=False)
++        spec_a, fsp_a = mlab.psd(x=self.y,
++                                 NFFT=self.NFFT_density,
++                                 Fs=self.Fs,
++                                 noverlap=0,
++                                 sides=self.sides,
++                                 window=win)
++        spec_b, fsp_b = mlab.psd(x=self.y * win,
++                                 NFFT=self.NFFT_density,
++                                 Fs=self.Fs,
++                                 noverlap=0,
++                                 sides=self.sides,
++                                 window=mlab.window_none)
++        assert_allclose(spec*win.sum()**2,
++                        spec_a*self.Fs*(win**2).sum(),
++                        atol=1e-08)
++        assert_allclose(spec*win.sum()**2,
++                        spec_b*self.Fs*self.NFFT_density,
++                        atol=1e-08)
++
+     def test_psd_windowarray(self):
+         freqs = self.freqs_density
+         spec, fsp = mlab.psd(x=self.y,
+
+From 76e53c11fcb73dcdbf22887e19fb30483da1cbff Mon Sep 17 00:00:00 2001
+From: Julian Chen <gapplef@gmail.com>
+Date: Wed, 1 Feb 2023 17:20:26 +0800
+Subject: [PATCH 3/5] fix bug in `test_psd_window_flattop`
+
+---
+ lib/matplotlib/tests/test_mlab.py | 20 ++++++++++----------
+ 1 file changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/lib/matplotlib/tests/test_mlab.py b/lib/matplotlib/tests/test_mlab.py
+index 267d19d9a6ca..7def4f4163e7 100644
+--- a/lib/matplotlib/tests/test_mlab.py
++++ b/lib/matplotlib/tests/test_mlab.py
+@@ -673,7 +673,7 @@ def test_psd_window_hanning_detrend_linear(self):
+     def test_psd_window_flattop(self):
+         # flattop window
+         # adaption from https://github.com/scipy/scipy/blob/v1.10.0/scipy/signal/windows/_windows.py#L562-L622
+-        if self.NFFT_density_real <=1:
++        if self.NFFT_density_real <= 1:
+             win = np.ones(self.NFFT_density_real)
+         else:
+             a = [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368]
+@@ -695,18 +695,18 @@ def test_psd_window_flattop(self):
+                                  noverlap=0,
+                                  sides=self.sides,
+                                  window=win)
+-        spec_b, fsp_b = mlab.psd(x=self.y * win,
+-                                 NFFT=self.NFFT_density,
+-                                 Fs=self.Fs,
+-                                 noverlap=0,
+-                                 sides=self.sides,
+-                                 window=mlab.window_none)
++        # spec_b, fsp_b = mlab.psd(x=self.y * win,
++        #                          NFFT=self.NFFT_density,
++        #                          Fs=self.Fs,
++        #                          noverlap=0,
++        #                          sides=self.sides,
++        #                          window=mlab.window_none)
+         assert_allclose(spec*win.sum()**2,
+                         spec_a*self.Fs*(win**2).sum(),
+                         atol=1e-08)
+-        assert_allclose(spec*win.sum()**2,
+-                        spec_b*self.Fs*self.NFFT_density,
+-                        atol=1e-08)
++        # assert_allclose(spec*win.sum()**2,
++        #                 spec_b*self.Fs*self.NFFT_density,
++        #                 atol=1e-08)
+ 
+     def test_psd_windowarray(self):
+         freqs = self.freqs_density
+
+From 456c4cf0f77752a7dbbd2b56108010e95f105d49 Mon Sep 17 00:00:00 2001
+From: Julian Chen <gapplef@gmail.com>
+Date: Thu, 2 Feb 2023 14:10:28 +0800
+Subject: [PATCH 4/5] update code formatting for `test_psd_window_flattop`
+
+---
+ lib/matplotlib/tests/test_mlab.py | 26 ++++++++------------------
+ 1 file changed, 8 insertions(+), 18 deletions(-)
+
+diff --git a/lib/matplotlib/tests/test_mlab.py b/lib/matplotlib/tests/test_mlab.py
+index 7def4f4163e7..1cf468e2baae 100644
+--- a/lib/matplotlib/tests/test_mlab.py
++++ b/lib/matplotlib/tests/test_mlab.py
+@@ -672,15 +672,13 @@ def test_psd_window_hanning_detrend_linear(self):
+ 
+     def test_psd_window_flattop(self):
+         # flattop window
+-        # adaption from https://github.com/scipy/scipy/blob/v1.10.0/scipy/signal/windows/_windows.py#L562-L622
+-        if self.NFFT_density_real <= 1:
+-            win = np.ones(self.NFFT_density_real)
+-        else:
+-            a = [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368]
+-            fac = np.linspace(-np.pi, np.pi, self.NFFT_density_real)
+-            win = np.zeros(self.NFFT_density_real)
+-            for k in range(len(a)):
+-                win += a[k] * np.cos(k * fac)
++        # adaption from https://github.com/scipy/scipy/blob\
++        # /v1.10.0/scipy/signal/windows/_windows.py#L562-L622
++        a = [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368]
++        fac = np.linspace(-np.pi, np.pi, self.NFFT_density_real)
++        win = np.zeros(self.NFFT_density_real)
++        for k in range(len(a)):
++            win += a[k] * np.cos(k * fac)
+ 
+         spec, fsp = mlab.psd(x=self.y,
+                              NFFT=self.NFFT_density,
+@@ -695,18 +693,10 @@ def test_psd_window_flattop(self):
+                                  noverlap=0,
+                                  sides=self.sides,
+                                  window=win)
+-        # spec_b, fsp_b = mlab.psd(x=self.y * win,
+-        #                          NFFT=self.NFFT_density,
+-        #                          Fs=self.Fs,
+-        #                          noverlap=0,
+-        #                          sides=self.sides,
+-        #                          window=mlab.window_none)
+         assert_allclose(spec*win.sum()**2,
+                         spec_a*self.Fs*(win**2).sum(),
+                         atol=1e-08)
+-        # assert_allclose(spec*win.sum()**2,
+-        #                 spec_b*self.Fs*self.NFFT_density,
+-        #                 atol=1e-08)
++
+ 
+     def test_psd_windowarray(self):
+         freqs = self.freqs_density
+
+From 0a9e63209ea7c30e9d23ea64e6284ae9aa253198 Mon Sep 17 00:00:00 2001
+From: Julian Chen <gapplef@gmail.com>
+Date: Tue, 7 Feb 2023 16:40:55 +0800
+Subject: [PATCH 5/5] code formatting: remove extra blank line
+
+---
+ lib/matplotlib/tests/test_mlab.py | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/lib/matplotlib/tests/test_mlab.py b/lib/matplotlib/tests/test_mlab.py
+index 1cf468e2baae..9cd1b44cc1e2 100644
+--- a/lib/matplotlib/tests/test_mlab.py
++++ b/lib/matplotlib/tests/test_mlab.py
+@@ -697,7 +697,6 @@ def test_psd_window_flattop(self):
+                         spec_a*self.Fs*(win**2).sum(),
+                         atol=1e-08)
+ 
+-
+     def test_psd_windowarray(self):
+         freqs = self.freqs_density
+         spec, fsp = mlab.psd(x=self.y,

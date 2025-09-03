@@ -1,0 +1,431 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index e19c881cda..072a2efc14 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -273,7 +273,7 @@ class TupleSerializer(BaseSequenceSerializer):
+ class TypeSerializer(BaseSerializer):
+     def serialize(self):
+         special_cases = [
+-            (models.Model, "models.Model", []),
++            (models.Model, "models.Model", ["from django.db import models"]),
+             (type(None), 'type(None)', []),
+         ]
+         for case, string, imports in special_cases:
+diff --git a/test_bug_fix.py b/test_bug_fix.py
+new file mode 100644
+index 0000000000..5b527f6676
+--- /dev/null
++++ b/test_bug_fix.py
+@@ -0,0 +1,113 @@
++#!/usr/bin/env python
++"""
++Test that verifies the fix for the missing import statement bug.
++This test creates a migration exactly as described in the issue and verifies it works.
++"""
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++django.setup()
++
++from io import StringIO
++from django.db import models
++from django.db.migrations import CreateModel, Migration
++from django.db.migrations.writer import MigrationWriter
++
++# Create test classes as described in the issue
++class MyField(models.TextField):
++    pass
++
++class MyBaseModel(models.Model):
++    class Meta:
++        abstract = True
++
++class MyMixin:
++    pass
++
++# Create the migration operation
++operation = CreateModel(
++    name='MyModel',
++    fields=[
++        ('name', MyField(primary_key=True)),
++    ],
++    options={
++        'abstract': False,
++    },
++    bases=(MyMixin, models.Model),
++)
++
++# Create a migration with this operation
++class TestMigration(Migration):
++    initial = True
++    dependencies = []
++    operations = [operation]
++
++# Write the migration
++writer = MigrationWriter(TestMigration)
++migration_string = writer.as_string()
++
++print("Generated migration:")
++print("=" * 80)
++print(migration_string)
++print("=" * 80)
++
++# Check if the migration is valid Python
++print("\nChecking if migration is valid Python...")
++try:
++    compiled = compile(migration_string, '<string>', 'exec')
++    print("✓ Migration compiles successfully")
++    
++    # Try to execute it to check for NameError
++    import sys
++    import tempfile
++    import os
++    
++    # Create a temporary module to test execution
++    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
++        f.write(migration_string)
++        temp_file = f.name
++    
++    # Import the module to check for NameError
++    import importlib.util
++    spec = importlib.util.spec_from_file_location("test_migration", temp_file)
++    module = importlib.util.module_from_spec(spec)
++    
++    # Add necessary modules to sys.modules for the import
++    class MockModule:
++        class MyMixin:
++            pass
++        class MyField(models.TextField):
++            pass
++    
++    sys.modules['__main__'] = MockModule()
++    
++    try:
++        spec.loader.exec_module(module)
++        print("✓ Migration executes without NameError")
++    except NameError as e:
++        print(f"✗ NameError occurred: {e}")
++    finally:
++        os.unlink(temp_file)
++        
++except SyntaxError as e:
++    print(f"✗ Migration has syntax error: {e}")
++
++# Check for the specific issue mentioned in the bug report
++print("\nChecking for the specific bug...")
++if "bases=(MyMixin, models.Model)" in migration_string or "bases=(__main__.MyMixin, models.Model)" in migration_string:
++    if "from django.db import models" in migration_string:
++        print("✓ BUG FIXED: Migration correctly imports 'models' when using 'models.Model' in bases")
++    else:
++        print("✗ BUG PRESENT: Migration uses 'models.Model' in bases but doesn't import 'models'")
++else:
++    print("? Could not find the expected bases pattern in the migration")
+diff --git a/test_full_migration.py b/test_full_migration.py
+new file mode 100644
+index 0000000000..caa11b3681
+--- /dev/null
++++ b/test_full_migration.py
+@@ -0,0 +1,124 @@
++#!/usr/bin/env python
++"""
++Test script to verify the fix for the missing import statement in generated migration
++"""
++import os
++import tempfile
++import subprocess
++
++# Create a test Django project structure
++test_dir = tempfile.mkdtemp()
++project_dir = os.path.join(test_dir, 'test_project')
++os.makedirs(project_dir)
++
++# Create basic Django project files
++manage_py = """#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_project.settings')
++    from django.core.management import execute_from_command_line
++    execute_from_command_line(sys.argv)
++"""
++
++settings_py = """
++SECRET_KEY = 'test'
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++    'test_app',
++]
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++"""
++
++# Create the project structure
++with open(os.path.join(project_dir, 'manage.py'), 'w') as f:
++    f.write(manage_py)
++os.chmod(os.path.join(project_dir, 'manage.py'), 0o755)
++
++with open(os.path.join(project_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++with open(os.path.join(project_dir, 'settings.py'), 'w') as f:
++    f.write(settings_py)
++
++# Create app
++app_dir = os.path.join(project_dir, 'test_app')
++os.makedirs(app_dir)
++
++with open(os.path.join(app_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++# Create models with the exact structure from the issue
++models_py = """from django.db import models
++
++class MyField(models.TextField):
++    pass
++
++class MyBaseModel(models.Model):
++    class Meta:
++        abstract = True
++
++class MyMixin:
++    pass
++
++class MyModel(MyMixin, MyBaseModel):
++    name = MyField(primary_key=True)
++"""
++
++with open(os.path.join(app_dir, 'models.py'), 'w') as f:
++    f.write(models_py)
++
++# Create migrations directory
++migrations_dir = os.path.join(app_dir, 'migrations')
++os.makedirs(migrations_dir)
++with open(os.path.join(migrations_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++# Run makemigrations
++print("Running makemigrations...")
++os.chdir(project_dir)
++result = subprocess.run([
++    'python', 'manage.py', 'makemigrations', 'test_app'
++], capture_output=True, text=True)
++
++print(f"makemigrations output: {result.stdout}")
++if result.stderr:
++    print(f"makemigrations errors: {result.stderr}")
++
++# Check the generated migration file
++migration_file = os.path.join(migrations_dir, '0001_initial.py')
++if os.path.exists(migration_file):
++    print("\nGenerated migration file:")
++    print("=" * 80)
++    with open(migration_file, 'r') as f:
++        migration_content = f.read()
++        print(migration_content)
++    print("=" * 80)
++    
++    # Check if the migration is valid Python
++    print("\nTesting if migration is valid Python...")
++    try:
++        compile(migration_content, migration_file, 'exec')
++        print("✓ Migration file is valid Python code")
++    except SyntaxError as e:
++        print(f"✗ Migration file has syntax error: {e}")
++    
++    # Check if proper imports are present
++    if "models.Model" in migration_content:
++        if "from django.db import models" in migration_content:
++            print("✓ Migration correctly imports 'models' when using 'models.Model'")
++        else:
++            print("✗ ERROR: Migration uses 'models.Model' but doesn't import 'models'!")
++else:
++    print("No migration file was generated!")
++
++# Clean up
++import shutil
++shutil.rmtree(test_dir)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..db55fb21c2
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,95 @@
++import os
++import tempfile
++import shutil
++import django
++from django.conf import settings
++
++# Set up Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=['test_app'],
++)
++django.setup()
++
++from django.db import models
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations import CreateModel
++
++# Create a temporary app directory structure
++app_name = 'test_app'
++temp_dir = tempfile.mkdtemp()
++app_dir = os.path.join(temp_dir, app_name)
++os.makedirs(app_dir)
++
++# Create __init__.py
++with open(os.path.join(app_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++# Create models.py
++models_content = '''from django.db import models
++
++class MyField(models.TextField):
++    pass
++
++class MyBaseModel(models.Model):
++    class Meta:
++        abstract = True
++
++class MyMixin:
++    pass
++
++class MyModel(MyMixin, MyBaseModel):
++    name = MyField(primary_key=True)
++'''
++
++with open(os.path.join(app_dir, 'models.py'), 'w') as f:
++    f.write(models_content)
++
++# Import the models
++import sys
++sys.path.insert(0, temp_dir)
++from test_app.models import MyField, MyMixin, MyModel
++
++# Create a migration operation
++operation = CreateModel(
++    name='MyModel',
++    fields=[
++        ('name', MyField(primary_key=True)),
++    ],
++    options={
++        'abstract': False,
++    },
++    bases=(MyMixin, models.Model),
++)
++
++# Create a migration
++from django.db.migrations import Migration
++
++class TestMigration(Migration):
++    initial = True
++    dependencies = []
++    operations = [operation]
++
++# Write the migration
++writer = MigrationWriter(TestMigration)
++migration_string = writer.as_string()
++
++print("Generated migration:")
++print("=" * 80)
++print(migration_string)
++print("=" * 80)
++
++# Check if the migration has the necessary imports
++if "models.Model" in migration_string and "from django.db import models" not in migration_string:
++    print("\nERROR: Migration uses models.Model but doesn't import models!")
++else:
++    print("\nOK: Migration has necessary imports")
++
++# Clean up
++shutil.rmtree(temp_dir)
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 0000000000..a1d44adad4
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,44 @@
++#!/usr/bin/env python
++"""
++Test script to reproduce the issue with missing import statement in generated migration
++"""
++from django.db import models
++from django.db.migrations.serializer import serializer_factory
++
++# Test serializing models.Model type directly
++print("Testing TypeSerializer with models.Model:")
++print("-" * 50)
++
++value = models.Model
++serializer = serializer_factory(value)
++result, imports = serializer.serialize()
++
++print(f"Value: {value}")
++print(f"Serialized result: {result}")
++print(f"Required imports: {imports}")
++print()
++
++# Test serializing a tuple with models.Model
++print("Testing TupleSerializer with (MyMixin, models.Model):")
++print("-" * 50)
++
++class MyMixin:
++    pass
++
++value = (MyMixin, models.Model)
++serializer = serializer_factory(value)
++result, imports = serializer.serialize()
++
++print(f"Value: {value}")
++print(f"Serialized result: {result}")
++print(f"Required imports: {imports}")
++print()
++
++# Check if the imports are correct
++print("Analysis:")
++print("-" * 50)
++if "models.Model" in result and not any("models" in imp for imp in imports):
++    print("ERROR: The serialized result contains 'models.Model' but no import for 'models' is included!")
++    print("This will cause a NameError when the migration is executed.")
++else:
++    print("OK: All necessary imports are included.")
+diff --git a/tests/migrations/test_writer.py b/tests/migrations/test_writer.py
+index a590ff4398..4d76611d43 100644
+--- a/tests/migrations/test_writer.py
++++ b/tests/migrations/test_writer.py
+@@ -658,6 +658,13 @@ class WriterTests(SimpleTestCase):
+     def test_serialize_type_none(self):
+         self.assertSerializedEqual(type(None))
+ 
++    def test_serialize_type_model(self):
++        """Test that models.Model serialization includes proper imports."""
++        self.assertSerializedResultEqual(
++            models.Model,
++            ("models.Model", {"from django.db import models"})
++        )
++
+     def test_simple_migration(self):
+         """
+         Tests serializing a simple migration.

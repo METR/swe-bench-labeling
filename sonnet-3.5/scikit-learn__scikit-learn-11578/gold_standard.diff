@@ -1,0 +1,211 @@
+From 748467f010249fe24b5178a7efeb2a39625b86ac Mon Sep 17 00:00:00 2001
+From: William de Vazelhes <william.de-vazelhes@inria.fr>
+Date: Tue, 17 Jul 2018 01:18:57 +0200
+Subject: [PATCH 1/4] FIX: fixes multinomial scoring for LogisticRegressionCV
+
+---
+ sklearn/linear_model/logistic.py            |  2 +-
+ sklearn/linear_model/tests/test_logistic.py | 34 ++++++++++++++++++++-
+ 2 files changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/sklearn/linear_model/logistic.py b/sklearn/linear_model/logistic.py
+index e4ea696ce7146..a3afb06e449c4 100644
+--- a/sklearn/linear_model/logistic.py
++++ b/sklearn/linear_model/logistic.py
+@@ -922,7 +922,7 @@ def _log_reg_scoring_path(X, y, train, test, pos_class=None, Cs=10,
+         check_input=False, max_squared_sum=max_squared_sum,
+         sample_weight=sample_weight)
+ 
+-    log_reg = LogisticRegression(fit_intercept=fit_intercept)
++    log_reg = LogisticRegression(multi_class=multi_class)
+ 
+     # The score method of Logistic Regression has a classes_ attribute.
+     if multi_class == 'ovr':
+diff --git a/sklearn/linear_model/tests/test_logistic.py b/sklearn/linear_model/tests/test_logistic.py
+index 56be87f71015a..53ab5a2aa277c 100644
+--- a/sklearn/linear_model/tests/test_logistic.py
++++ b/sklearn/linear_model/tests/test_logistic.py
+@@ -6,6 +6,7 @@
+ 
+ from sklearn.datasets import load_iris, make_classification
+ from sklearn.metrics import log_loss
++from sklearn.metrics.scorer import get_scorer
+ from sklearn.model_selection import StratifiedKFold
+ from sklearn.preprocessing import LabelEncoder
+ from sklearn.utils import compute_class_weight
+@@ -29,7 +30,7 @@
+     logistic_regression_path, LogisticRegressionCV,
+     _logistic_loss_and_grad, _logistic_grad_hess,
+     _multinomial_grad_hess, _logistic_loss,
+-)
++    _log_reg_scoring_path)
+ 
+ X = [[-1, 0], [0, 1], [1, 1]]
+ X_sp = sp.csr_matrix(X)
+@@ -492,6 +493,37 @@ def test_logistic_cv():
+     assert_array_equal(scores.shape, (1, 3, 1))
+ 
+ 
++@pytest.mark.parametrize('scoring', ['accuracy', 'f1', 'neg_log_loss',
++                                     'precision', 'recall'])
++def test_logistic_cv_multinomial_score(scoring):
++    # test that LogisticRegressionCV uses the right score to compute its
++    # cross-validation scores when using a multinomial scoring
++    # see https://github.com/scikit-learn/scikit-learn/issues/8720
++    X, y = make_classification(n_samples=100, random_state=0, n_classes=3,
++                               n_informative=6)
++    train, test = np.arange(80), np.arange(80, 100)
++    lr = LogisticRegression(C=1., solver='lbfgs', multi_class='multinomial')
++    # we use lbfgs to support multinomial
++    params = lr.get_params()
++    # we store the params to set them further in _log_reg_scoring_path
++    for key in ['C', 'n_jobs', 'warm_start']:
++        del(params[key])
++    lr.fit(X[train], y[train])
++    if scoring in ['f1', 'precision', 'recall']:
++        for averaging in ['micro', 'macro', 'weighted']:
++            scorer = get_scorer('{0}_{1}'.format(scoring, averaging))
++            np.testing.assert_array_almost_equal(
++                _log_reg_scoring_path(X, y, train, test, Cs=[1.], **params,
++                                      scoring=scorer)[2][0],
++                scorer(lr, X[test], y[test]))
++    else:
++        scorer = get_scorer(scoring)
++        np.testing.assert_array_almost_equal(
++            _log_reg_scoring_path(X, y, train, test, Cs=[1.], **params,
++                                  scoring=scorer)[2][0],
++            scorer(lr, X[test], y[test]))
++
++
+ def test_multinomial_logistic_regression_string_inputs():
+     # Test with string labels for LogisticRegression(CV)
+     n_samples, n_features, n_classes = 50, 5, 3
+
+From e8a3180aed182fc9d47eb4494322b4e22111ad1d Mon Sep 17 00:00:00 2001
+From: William de Vazelhes <william.de-vazelhes@inria.fr>
+Date: Tue, 17 Jul 2018 16:21:14 +0200
+Subject: [PATCH 2/4] MAINT: changes according to review
+ https://github.com/scikit-learn/scikit-learn/pull/11578#pullrequestreview-137785752
+
+---
+ sklearn/linear_model/tests/test_logistic.py | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/sklearn/linear_model/tests/test_logistic.py b/sklearn/linear_model/tests/test_logistic.py
+index 53ab5a2aa277c..c74cfd753d4af 100644
+--- a/sklearn/linear_model/tests/test_logistic.py
++++ b/sklearn/linear_model/tests/test_logistic.py
+@@ -512,15 +512,15 @@ def test_logistic_cv_multinomial_score(scoring):
+     if scoring in ['f1', 'precision', 'recall']:
+         for averaging in ['micro', 'macro', 'weighted']:
+             scorer = get_scorer('{0}_{1}'.format(scoring, averaging))
+-            np.testing.assert_array_almost_equal(
+-                _log_reg_scoring_path(X, y, train, test, Cs=[1.], **params,
+-                                      scoring=scorer)[2][0],
++            assert_array_almost_equal(
++                _log_reg_scoring_path(X, y, train, test, Cs=[1.],
++                                      scoring=scorer, **params)[2][0],
+                 scorer(lr, X[test], y[test]))
+     else:
+         scorer = get_scorer(scoring)
+-        np.testing.assert_array_almost_equal(
+-            _log_reg_scoring_path(X, y, train, test, Cs=[1.], **params,
+-                                  scoring=scorer)[2][0],
++        assert_array_almost_equal(
++            _log_reg_scoring_path(X, y, train, test, Cs=[1.],
++                                  scoring=scorer, **params)[2][0],
+             scorer(lr, X[test], y[test]))
+ 
+ 
+
+From 364f6a19b072f7a9467e48ec0192e80f9867dfa6 Mon Sep 17 00:00:00 2001
+From: William de Vazelhes <william.de-vazelhes@inria.fr>
+Date: Tue, 17 Jul 2018 16:37:21 +0200
+Subject: [PATCH 3/4] MAINT Add what s new entry
+
+---
+ doc/whats_new/v0.20.rst | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
+index 0df0635d57c75..24f5219d83211 100644
+--- a/doc/whats_new/v0.20.rst
++++ b/doc/whats_new/v0.20.rst
+@@ -71,6 +71,7 @@ random sampling procedures.
+ - :class:`linear_model.PassiveAggressiveRegressor` (bug fix)
+ - :class:`linear_model.Perceptron` (bug fix)
+ - :class:`ensemble.gradient_boosting.GradientBoostingClassifier` (bug fix affecting feature importances)
++- :class:`linear_model.LogisticRegressionCV` (bug fix)
+ - The v0.19.0 release notes failed to mention a backwards incompatibility with
+   :class:`model_selection.StratifiedKFold` when ``shuffle=True`` due to
+   :issue:`7823`.
+@@ -442,6 +443,11 @@ Classifiers and regressors
+   the ``scoring`` parameter.
+   :issue:`10998` by :user:`Thomas Fan <thomasjpfan>`.
+ 
++- Fixed a bug in :class:`linear_model.LogisticRegressionCV` where the 'ovr'
++  strategy was always used to compute cross-validation scores in the
++  multiclass setting, even if 'multinomial' was set.
++  :issue:`8720` by :user:`William de Vazelhes <wdevazelhes>`.
++
+ - Fixed a bug in :class:`linear_model.OrthogonalMatchingPursuit` that was
+   broken when setting ``normalize=False``.
+   :issue:`10071` by `Alexandre Gramfort`_.
+
+From 8ac2c65b6afb3d0cf8ac4f574339f7f2215ec20c Mon Sep 17 00:00:00 2001
+From: William de Vazelhes <william.de-vazelhes@inria.fr>
+Date: Wed, 18 Jul 2018 08:01:47 +0200
+Subject: [PATCH 4/4] MAINT: Adress comments from review
+ https://github.com/scikit-learn/scikit-learn/pull/11578#pullrequestreview-138098118
+
+---
+ sklearn/linear_model/tests/test_logistic.py | 28 +++++++++++----------
+ 1 file changed, 15 insertions(+), 13 deletions(-)
+
+diff --git a/sklearn/linear_model/tests/test_logistic.py b/sklearn/linear_model/tests/test_logistic.py
+index c74cfd753d4af..343d8211b1ef4 100644
+--- a/sklearn/linear_model/tests/test_logistic.py
++++ b/sklearn/linear_model/tests/test_logistic.py
+@@ -493,9 +493,18 @@ def test_logistic_cv():
+     assert_array_equal(scores.shape, (1, 3, 1))
+ 
+ 
+-@pytest.mark.parametrize('scoring', ['accuracy', 'f1', 'neg_log_loss',
+-                                     'precision', 'recall'])
+-def test_logistic_cv_multinomial_score(scoring):
++@pytest.mark.parametrize('scoring, multiclass_agg_list',
++                         [('accuracy', ['']),
++                          ('precision', ['_macro', '_weighted']),
++                          # no need to test for micro averaging because it
++                          # is the same as accuracy for f1, precision,
++                          # and recall (see https://github.com/
++                          # scikit-learn/scikit-learn/pull/
++                          # 11578#discussion_r203250062)
++                          ('f1', ['_macro', '_weighted']),
++                          ('neg_log_loss', ['']),
++                          ('recall', ['_macro', '_weighted'])])
++def test_logistic_cv_multinomial_score(scoring, multiclass_agg_list):
+     # test that LogisticRegressionCV uses the right score to compute its
+     # cross-validation scores when using a multinomial scoring
+     # see https://github.com/scikit-learn/scikit-learn/issues/8720
+@@ -507,17 +516,10 @@ def test_logistic_cv_multinomial_score(scoring):
+     params = lr.get_params()
+     # we store the params to set them further in _log_reg_scoring_path
+     for key in ['C', 'n_jobs', 'warm_start']:
+-        del(params[key])
++        del params[key]
+     lr.fit(X[train], y[train])
+-    if scoring in ['f1', 'precision', 'recall']:
+-        for averaging in ['micro', 'macro', 'weighted']:
+-            scorer = get_scorer('{0}_{1}'.format(scoring, averaging))
+-            assert_array_almost_equal(
+-                _log_reg_scoring_path(X, y, train, test, Cs=[1.],
+-                                      scoring=scorer, **params)[2][0],
+-                scorer(lr, X[test], y[test]))
+-    else:
+-        scorer = get_scorer(scoring)
++    for averaging in multiclass_agg_list:
++        scorer = get_scorer(scoring + averaging)
+         assert_array_almost_equal(
+             _log_reg_scoring_path(X, y, train, test, Cs=[1.],
+                                   scoring=scorer, **params)[2][0],

@@ -1,0 +1,60 @@
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+index 397146a354..559a8ec51c 100644
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -986,9 +986,13 @@ class ForeignKey(ForeignObject):
+             raise ValueError("Cannot create form field for %r yet, because "
+                              "its related model %r has not been loaded yet" %
+                              (self.name, self.remote_field.model))
++        limit_choices_to = self.get_limit_choices_to()
++        queryset = self.remote_field.model._default_manager.using(using)
++        if limit_choices_to is not None:
++            queryset = queryset.complex_filter(limit_choices_to)
+         return super().formfield(**{
+             'form_class': forms.ModelChoiceField,
+-            'queryset': self.remote_field.model._default_manager.using(using),
++            'queryset': queryset,
+             'to_field_name': self.remote_field.field_name,
+             **kwargs,
+             'blank': self.blank,
+diff --git a/tests/model_fields/test_foreignkey.py b/tests/model_fields/test_foreignkey.py
+index d30cca9b5c..cad407a14b 100644
+--- a/tests/model_fields/test_foreignkey.py
++++ b/tests/model_fields/test_foreignkey.py
+@@ -130,6 +130,36 @@ class ForeignKeyTests(TestCase):
+         with self.assertRaisesMessage(ValueError, 'Cannot resolve output_field'):
+             Foo._meta.get_field('bar').get_col('alias')
+ 
++    @isolate_apps('model_fields')
++    def test_limit_choices_to_prevents_duplicates(self):
++        from django.forms.models import modelform_factory
++
++        class Parent(models.Model):
++            name = models.CharField(max_length=50)
++
++        class Child(models.Model):
++            parent = models.ForeignKey(Parent, models.CASCADE, limit_choices_to={'name__startswith': 'A'})
++
++        class GrandChild(models.Model):
++            parent = models.ForeignKey(Child, models.CASCADE)
++
++        Parent.objects.bulk_create([
++            Parent(name='Apple'),
++            Parent(name='Banana'),
++            Parent(name='Apricot'),
++        ])
++
++        form_class = modelform_factory(GrandChild, fields=['parent'])
++        form = form_class()
++        
++        # Check that only parents with names starting with 'A' are in the choices
++        choices = form.fields['parent'].queryset
++        self.assertEqual(choices.count(), 2)
++        self.assertQuerysetEqual(choices, ['Apple', 'Apricot'], lambda x: x.parent.name, ordered=False)
++
++        # Ensure no duplicates in the choices
++        self.assertEqual(len(set(choices)), choices.count())
++
+     @isolate_apps('model_fields')
+     def test_non_local_to_field(self):
+         class Parent(models.Model):

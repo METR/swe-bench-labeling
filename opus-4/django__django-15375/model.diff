@@ -1,0 +1,428 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index e3fdea6f3a..56aea0d47f 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -480,6 +480,8 @@ class Query(BaseExpression):
+                     annotation_select_mask.remove(alias)
+                 # Make sure the annotation_select wont use cached results.
+                 inner_query.set_annotation_mask(inner_query.annotation_select_mask)
++            # Set the annotation mask for the outer query to include all annotations
++            outer_query.set_annotation_mask(outer_query.annotations.keys())
+             if inner_query.select == () and not inner_query.default_cols and not inner_query.annotation_select_mask:
+                 # In case of Model.objects[0:3].count(), there would be no
+                 # field selected in the inner query, yet we must use a subquery.
+diff --git a/test_aggregate_default.py b/test_aggregate_default.py
+new file mode 100644
+index 0000000000..70552ddd5a
+--- /dev/null
++++ b/test_aggregate_default.py
+@@ -0,0 +1,84 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create a test model
++from django.db import models
++from django.db.models import F, Sum
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Book)
++
++# Create some test data
++Book.objects.create(title="Book 1")
++Book.objects.create(title="Book 2")
++Book.objects.create(title="Book 3")
++
++print("Testing aggregate with default after annotate...")
++
++# This should work (without default)
++try:
++    result = Book.objects.annotate(idx=F("id")).aggregate(Sum("id"))
++    print(f"✓ Without default: {result}")
++except Exception as e:
++    print(f"✗ Without default failed: {e}")
++
++# This should fail (with default)
++try:
++    result = Book.objects.annotate(idx=F("id")).aggregate(Sum("id", default=0))
++    print(f"✓ With default: {result}")
++except Exception as e:
++    print(f"✗ With default failed: {e}")
++
++# Let's also check the SQL being generated
++from django.db import connection
++connection.queries_log.clear()
++
++# Get the queryset
++qs = Book.objects.annotate(idx=F("id"))
++# Try to get the SQL for the aggregate with default
++try:
++    from django.db.models.sql.query import Query
++    from django.db.models import Sum
++    
++    # Create a clone of the query
++    query = qs.query.chain()
++    query.add_annotation(Sum("id", default=0), alias="id__sum", is_summary=True)
++    
++    # Get the compiler
++    compiler = query.get_compiler(using='default')
++    sql, params = compiler.as_sql()
++    print(f"\nGenerated SQL: {sql}")
++    print(f"Params: {params}")
++except Exception as e:
++    print(f"\nError generating SQL: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_debug_fix.py b/test_debug_fix.py
+new file mode 100644
+index 0000000000..d62bab6462
+--- /dev/null
++++ b/test_debug_fix.py
+@@ -0,0 +1,57 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create a test model
++from django.db import models
++from django.db.models import F, Sum
++from django.db.models.sql.query import Query
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Book)
++
++# Create some test data
++Book.objects.create(title="Book 1")
++Book.objects.create(title="Book 2")
++Book.objects.create(title="Book 3")
++
++# Let's trace the get_aggregation code path
++print("Tracing get_aggregation()...")
++
++qs = Book.objects.annotate(idx=F("id"))
++
++# Manually recreate what happens in aggregate()
++query = qs.query.chain()
++query.add_annotation(Sum("id", default=0), alias="id__sum", is_summary=True)
++
++# Now let's call get_aggregation
++result = query.get_aggregation('default', {'id__sum': Sum("id", default=0)})
++print(f"Result: {result}")
+diff --git a/test_debug_fix2.py b/test_debug_fix2.py
+new file mode 100644
+index 0000000000..23b3d8bf78
+--- /dev/null
++++ b/test_debug_fix2.py
+@@ -0,0 +1,90 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create a test model
++from django.db import models
++from django.db.models import F, Sum
++from django.db.models.sql.query import Query
++from django.db.models.sql.subqueries import AggregateQuery
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Book)
++
++# Create some test data
++Book.objects.create(title="Book 1")
++Book.objects.create(title="Book 2")
++Book.objects.create(title="Book 3")
++
++# Let's debug what happens when outer_query.annotations is populated
++print("Debugging annotation mask...")
++
++qs = Book.objects.annotate(idx=F("id"))
++query = qs.query.chain()
++query.add_annotation(Sum("id", default=0), alias="id__sum", is_summary=True)
++
++# Trace the same steps as in get_aggregation
++inner_query = query.clone()
++inner_query.subquery = True
++outer_query = AggregateQuery(Book, inner_query)
++
++# Print state before
++print(f"Before: outer_query.annotations = {outer_query.annotations}")
++print(f"Before: outer_query.annotation_select_mask = {outer_query.annotation_select_mask}")
++
++# Simulate the loop
++relabels = {t: 'subquery' for t in inner_query.alias_map}
++relabels[None] = 'subquery'
++
++for alias, expression in list(inner_query.annotation_select.items()):
++    annotation_select_mask = inner_query.annotation_select_mask
++    if expression.is_summary:
++        expression, col_cnt = inner_query.rewrite_cols(expression, 0)
++        outer_query.annotations[alias] = expression.relabeled_clone(relabels)
++        print(f"Added {alias} to outer_query.annotations")
++
++# Apply our fix
++outer_query.set_annotation_mask(outer_query.annotations.keys())
++
++print(f"\nAfter fix: outer_query.annotations = {outer_query.annotations}")
++print(f"After fix: outer_query.annotation_select_mask = {outer_query.annotation_select_mask}")
++print(f"After fix: outer_query.annotation_select = {outer_query.annotation_select}")
++
++# Now test the SQL generation
++compiler = outer_query.get_compiler(using='default')
++try:
++    sql, params = compiler.as_sql()
++    print(f"\nSQL: {sql}")
++    print(f"Params: {params}")
++except Exception as e:
++    print(f"\nError: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_debug_fix3.py b/test_debug_fix3.py
+new file mode 100644
+index 0000000000..0398777636
+--- /dev/null
++++ b/test_debug_fix3.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create a test model
++from django.db import models
++from django.db.models import F, Sum
++from django.db.models.sql.query import Query
++from django.db.models.sql.subqueries import AggregateQuery
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Book)
++
++# Create some test data
++Book.objects.create(title="Book 1")
++Book.objects.create(title="Book 2")
++Book.objects.create(title="Book 3")
++
++# Let's debug what's going on with the annotations
++print("Debugging is_summary...")
++
++qs = Book.objects.annotate(idx=F("id"))
++query = qs.query.chain()
++query.add_annotation(Sum("id", default=0), alias="id__sum", is_summary=True)
++
++# Check annotation details
++print(f"query.annotations = {query.annotations}")
++for alias, expr in query.annotations.items():
++    print(f"  {alias}: {expr}, is_summary={getattr(expr, 'is_summary', 'NO ATTR')}")
++
++# Trace the same steps as in get_aggregation
++inner_query = query.clone()
++inner_query.subquery = True
++
++print(f"\ninner_query.annotation_select = {inner_query.annotation_select}")
++for alias, expr in inner_query.annotation_select.items():
++    print(f"  {alias}: {expr}, is_summary={getattr(expr, 'is_summary', 'NO ATTR')}")
+diff --git a/test_debug_sql.py b/test_debug_sql.py
+new file mode 100644
+index 0000000000..85b8ed25a2
+--- /dev/null
++++ b/test_debug_sql.py
+@@ -0,0 +1,89 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Create a test model
++from django.db import models
++from django.db.models import F, Sum
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Book)
++
++# Create some test data
++Book.objects.create(title="Book 1")
++Book.objects.create(title="Book 2")
++Book.objects.create(title="Book 3")
++
++# Let's debug the SQL generation step by step
++print("Debugging SQL generation...")
++
++from django.db.models.sql.subqueries import AggregateQuery
++from django.db.models.sql.compiler import SQLAggregateCompiler
++
++# Get the queryset with annotation
++qs = Book.objects.annotate(idx=F("id"))
++
++# Create the aggregate query as done in get_aggregation
++query = qs.query.chain()
++query.add_annotation(Sum("id", default=0), alias="id__sum", is_summary=True)
++
++# Check what happens when it creates the subquery
++inner_query = query.clone()
++inner_query.subquery = True
++outer_query = AggregateQuery(Book, inner_query)
++
++# Check the annotations
++print(f"outer_query.annotation_select: {outer_query.annotation_select}")
++print(f"inner_query.annotation_select: {inner_query.annotation_select}")
++
++# Let's trace what's happening in the compiler
++compiler = outer_query.get_compiler(using='default')
++print(f"compiler type: {type(compiler)}")
++
++# Look at the SQL generation
++try:
++    sql, params = compiler.as_sql()
++    print(f"SQL: {sql}")
++    print(f"Params: {params}")
++except Exception as e:
++    print(f"Error in as_sql: {e}")
++    import traceback
++    traceback.print_exc()
++    
++# Let's check what the annotation looks like after resolve_expression
++from django.db.models import Sum
++from django.db.models.functions.comparison import Coalesce
++
++sum_expr = Sum("id", default=0)
++resolved_expr = sum_expr.resolve_expression(query)
++print(f"\nOriginal expression: {sum_expr}")
++print(f"Resolved expression: {resolved_expr}")
++print(f"Is it a Coalesce? {isinstance(resolved_expr, Coalesce)}")

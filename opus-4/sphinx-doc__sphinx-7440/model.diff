@@ -1,0 +1,407 @@
+diff --git a/setup.py b/setup.py
+index a427d5493..978e3d8e0 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/std.py b/sphinx/domains/std.py
+index d820cfe5c..0784fc470 100644
+--- a/sphinx/domains/std.py
++++ b/sphinx/domains/std.py
+@@ -305,7 +305,7 @@ def make_glossary_term(env: "BuildEnvironment", textnodes: Iterable[Node], index
+         term['ids'].append(node_id)
+ 
+     std = cast(StandardDomain, env.get_domain('std'))
+-    std.note_object('term', termtext.lower(), node_id, location=term)
++    std.note_object('term', termtext, node_id, location=term)
+ 
+     # add an index entry too
+     indexnode = addnodes.index()
+@@ -931,6 +931,15 @@ class StandardDomain(Domain):
+             if (objtype, target) in self.objects:
+                 docname, labelid = self.objects[objtype, target]
+                 break
++            elif objtype == 'term':
++                # For terms, perform case-insensitive lookup
++                for (obj_type, obj_name), (doc, label) in self.objects.items():
++                    if obj_type == 'term' and obj_name.lower() == target.lower():
++                        docname, labelid = doc, label
++                        break
++                else:
++                    continue
++                break
+         else:
+             docname, labelid = '', ''
+         if not docname:
+@@ -953,8 +962,15 @@ class StandardDomain(Domain):
+         for objtype in self.object_types:
+             key = (objtype, target)
+             if objtype == 'term':
+-                key = (objtype, ltarget)
+-            if key in self.objects:
++                # For terms, perform case-insensitive lookup
++                for (obj_type, obj_name), (doc, label) in self.objects.items():
++                    if obj_type == 'term' and obj_name.lower() == ltarget:
++                        docname, labelid = doc, label
++                        results.append(('std:' + self.role_for_objtype(objtype),
++                                        make_refnode(builder, fromdocname, docname,
++                                                     labelid, contnode)))
++                        break
++            elif key in self.objects:
+                 docname, labelid = self.objects[key]
+                 results.append(('std:' + self.role_for_objtype(objtype),
+                                 make_refnode(builder, fromdocname, docname,
+diff --git a/test_case_sensitive_glossary.py b/test_case_sensitive_glossary.py
+new file mode 100644
+index 000000000..8b9b8b211
+--- /dev/null
++++ b/test_case_sensitive_glossary.py
+@@ -0,0 +1,49 @@
++"""Test case-sensitive glossary terms"""
++
++import pytest
++from docutils import nodes
++from sphinx.testing import restructuredtext
++
++
++def test_glossary_case_sensitive_terms(app):
++    text = (".. glossary::\n"
++            "\n"
++            "   MySQL\n"
++            "      A database management system\n"
++            "\n" 
++            "   mysql\n"
++            "      The command-line client for MySQL\n")
++    
++    # This should not produce a duplicate term warning
++    with app._warning.suppress_logging():
++        doctree = restructuredtext.parse(app, text)
++    
++    # Check that both terms are in the glossary
++    terms = []
++    for node in doctree.traverse(nodes.term):
++        terms.append(node.astext())
++    
++    assert "MySQL" in terms
++    assert "mysql" in terms
++    assert len(terms) == 2
++
++
++def test_glossary_case_insensitive_reference(app):
++    text = (".. glossary::\n"
++            "\n"
++            "   MySQL\n"
++            "      A database management system\n"
++            "\n"
++            "Now reference with different case: :term:`mysql`\n")
++    
++    with app._warning.suppress_logging():
++        doctree = restructuredtext.parse(app, text)
++    
++    # The reference should still work (case-insensitive)
++    refs = list(doctree.traverse(nodes.reference))
++    assert len(refs) > 0
++    
++
++if __name__ == "__main__":
++    import sys
++    sys.exit(pytest.main([__file__, "-v"]))
+diff --git a/test_glossary_case.py b/test_glossary_case.py
+new file mode 100644
+index 000000000..23a4017ad
+--- /dev/null
++++ b/test_glossary_case.py
+@@ -0,0 +1,50 @@
++#!/usr/bin/env python
++"""Test case for glossary duplicate term with different case"""
++
++import tempfile
++import os
++import sys
++import subprocess
++
++def test_glossary_case_sensitivity():
++    with tempfile.TemporaryDirectory() as tmpdir:
++        srcdir = os.path.join(tmpdir, 'source')
++        os.makedirs(srcdir)
++        
++        # Create conf.py
++        with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++            f.write("project = 'Test'\nextensions = []\n")
++        
++        # Create index.rst with glossary containing MySQL and mysql
++        with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++            f.write("""Test Glossary
++=============
++
++.. glossary::
++
++   MySQL
++      A database management system
++
++   mysql
++      The command-line client for MySQL
++""")
++        
++        # Try to build
++        outdir = os.path.join(tmpdir, 'build')
++        
++        # Run sphinx-build
++        result = subprocess.run([sys.executable, '-m', 'sphinx', '-b', 'html', srcdir, outdir],
++                              capture_output=True, text=True)
++        
++        print("STDOUT:")
++        print(result.stdout)
++        print("\nSTDERR:")
++        print(result.stderr)
++        
++        if "duplicate term description" in result.stderr or "duplicate term description" in result.stdout:
++            print("\nConfirmed: Different case terms are treated as duplicates")
++        else:
++            print("\nNo duplicate term error detected")
++
++if __name__ == "__main__":
++    test_glossary_case_sensitivity()
+diff --git a/test_glossary_comprehensive.py b/test_glossary_comprehensive.py
+new file mode 100644
+index 000000000..1859af241
+--- /dev/null
++++ b/test_glossary_comprehensive.py
+@@ -0,0 +1,97 @@
++#!/usr/bin/env python
++"""Comprehensive test for glossary case sensitivity fix"""
++
++import tempfile
++import os
++import sys
++import subprocess
++
++def test_glossary_comprehensive():
++    with tempfile.TemporaryDirectory() as tmpdir:
++        srcdir = os.path.join(tmpdir, 'source')
++        os.makedirs(srcdir)
++        
++        # Create conf.py
++        with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++            f.write("project = 'Test'\nextensions = []\n")
++        
++        # Create index.rst with glossary containing terms with different cases
++        with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++            f.write("""Test Glossary
++=============
++
++.. glossary::
++
++   MySQL
++      A database management system
++
++   mysql
++      The command-line client for MySQL
++      
++   API
++      Application Programming Interface
++      
++   api
++      A specific implementation of an API
++
++Now let's reference these terms:
++
++- :term:`MySQL` - should link to MySQL (uppercase)
++- :term:`mysql` - should link to mysql (lowercase) 
++- :term:`MYSQL` - should link to MySQL (case-insensitive)
++- :term:`Mysql` - should link to either MySQL or mysql (case-insensitive)
++- :term:`API` - should link to API
++- :term:`api` - should link to api
++- :term:`Api` - should link to either API or api (case-insensitive)
++""")
++        
++        # Try to build
++        outdir = os.path.join(tmpdir, 'build')
++        
++        # Run sphinx-build
++        result = subprocess.run([sys.executable, '-m', 'sphinx', '-b', 'html', srcdir, outdir],
++                              capture_output=True, text=True)
++        
++        print("=== BUILD OUTPUT ===")
++        print("STDOUT:")
++        print(result.stdout)
++        print("\nSTDERR:")
++        print(result.stderr)
++        print("\n=== ANALYSIS ===")
++        
++        if "duplicate term description" in result.stderr or "duplicate term description" in result.stdout:
++            print("ERROR: Duplicate term warning detected!")
++            return False
++        
++        if result.returncode != 0:
++            print("ERROR: Build failed with return code:", result.returncode)
++            return False
++            
++        # Check the generated HTML to verify links are working
++        index_html = os.path.join(outdir, 'index.html')
++        if os.path.exists(index_html):
++            with open(index_html, 'r') as f:
++                html_content = f.read()
++                
++            # Count term references in the HTML
++            mysql_refs = html_content.count('href="#term-MySQL"') + html_content.count('href="#term-mysql"')
++            api_refs = html_content.count('href="#term-API"') + html_content.count('href="#term-api"')
++            
++            print(f"Found {mysql_refs} references to MySQL/mysql terms")
++            print(f"Found {api_refs} references to API/api terms")
++            
++            if mysql_refs > 0 and api_refs > 0:
++                print("\nSUCCESS: All tests passed!")
++                print("- Different case terms can coexist in glossary")
++                print("- Case-insensitive term references are working")
++                return True
++            else:
++                print("\nERROR: Term references not found in HTML")
++                return False
++        else:
++            print("\nERROR: index.html not generated")
++            return False
++
++if __name__ == "__main__":
++    success = test_glossary_comprehensive()
++    sys.exit(0 if success else 1)
+diff --git a/test_phpmyadmin_case.py b/test_phpmyadmin_case.py
+new file mode 100644
+index 000000000..f3d8d0d5a
+--- /dev/null
++++ b/test_phpmyadmin_case.py
+@@ -0,0 +1,92 @@
++#!/usr/bin/env python
++"""Test the specific phpMyAdmin case from the issue"""
++
++import tempfile
++import os
++import sys
++import subprocess
++
++def test_phpmyadmin_glossary_case():
++    with tempfile.TemporaryDirectory() as tmpdir:
++        srcdir = os.path.join(tmpdir, 'source')
++        os.makedirs(srcdir)
++        
++        # Create conf.py
++        with open(os.path.join(srcdir, 'conf.py'), 'w') as f:
++            f.write("project = 'phpMyAdmin'\nextensions = []\n")
++        
++        # Create glossary.rst mimicking the phpMyAdmin case
++        with open(os.path.join(srcdir, 'glossary.rst'), 'w') as f:
++            f.write("""Glossary
++========
++
++.. glossary::
++    :sorted:
++
++    .htaccess
++        Directory-level configuration file supported by Apache and compatible web servers.
++
++    Apache
++        The Apache HTTP Server is a free and open-source cross-platform web server software.
++
++    BLOB
++        Binary large object, a collection of binary data stored as a single entity in a database.
++
++    Cookie
++        A small piece of data stored on the user's computer by the web browser.
++
++    MySQL
++        The world's most popular open source database.
++        
++    mysql
++        MySQL client command line tool.
++
++    SSL
++        Secure Sockets Layer is a standard security technology for establishing an encrypted connection.
++""")
++        
++        # Create index.rst
++        with open(os.path.join(srcdir, 'index.rst'), 'w') as f:
++            f.write("""phpMyAdmin Documentation
++========================
++
++.. toctree::
++   :maxdepth: 2
++   
++   glossary
++
++Terms:
++
++- :term:`MySQL` is the database
++- :term:`mysql` is the command line tool
++- You can use :term:`MYSQL` (case insensitive)
++""")
++        
++        # Try to build with -W flag to turn warnings into errors
++        outdir = os.path.join(tmpdir, 'build')
++        
++        # Run sphinx-build
++        result = subprocess.run([sys.executable, '-m', 'sphinx', '-W', '-b', 'html', srcdir, outdir],
++                              capture_output=True, text=True)
++        
++        print("=== BUILD OUTPUT ===")
++        print("Return code:", result.returncode)
++        print("\nSTDOUT:")
++        print(result.stdout)
++        print("\nSTDERR:")  
++        print(result.stderr)
++        
++        if result.returncode == 0:
++            print("\n✓ SUCCESS: Build completed without errors!")
++            print("  - MySQL and mysql terms can coexist")
++            print("  - No 'duplicate term description' error")
++            return True
++        else:
++            print("\n✗ FAILED: Build failed")
++            if "duplicate term description" in result.stderr:
++                print("  - Still getting duplicate term error")
++            return False
++
++if __name__ == "__main__":
++    success = test_phpmyadmin_glossary_case()
++    sys.exit(0 if success else 1)
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

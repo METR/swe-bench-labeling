@@ -1,0 +1,536 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 5e7b23f9a0..bd461810e3 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -580,9 +580,15 @@ class ModelAdmin(BaseModelAdmin):
+     def __str__(self):
+         return "%s.%s" % (self.model._meta.app_label, self.__class__.__name__)
+ 
++    def get_inlines(self, request, obj=None):
++        """
++        Hook for specifying custom inlines based on the request or model instance.
++        """
++        return self.inlines
++
+     def get_inline_instances(self, request, obj=None):
+         inline_instances = []
+-        for inline_class in self.inlines:
++        for inline_class in self.get_inlines(request, obj):
+             inline = inline_class(self.model, self.admin_site)
+             if request:
+                 if not (inline.has_view_or_change_permission(request, obj) or
+diff --git a/test_default_behavior.py b/test_default_behavior.py
+new file mode 100644
+index 0000000000..ea239d4df9
+--- /dev/null
++++ b/test_default_behavior.py
+@@ -0,0 +1,104 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.admin',
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++        'django.contrib.sessions',
++        'django.contrib.messages',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++django.setup()
++
++# Now import Django components
++from django.contrib import admin
++from django.contrib.admin import TabularInline
++from django.db import models
++
++
++# Test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++
++
++# Test inline classes
++class BookInline(TabularInline):
++    model = Book
++
++
++# Test admin class without get_inlines override (default behavior)
++class AuthorAdminDefault(admin.ModelAdmin):
++    inlines = [BookInline]
++
++
++# Test that default behavior is preserved
++def test_default_behavior():
++    print("Testing default behavior (without get_inlines override)...")
++    
++    # Create test instances
++    admin_site = admin.AdminSite()
++    author_admin = AuthorAdminDefault(Author, admin_site)
++    
++    # Mock request with user
++    class MockUser:
++        def has_perm(self, perm):
++            return True
++        
++        def has_module_perms(self, app_label):
++            return True
++    
++    class MockRequest:
++        def __init__(self):
++            self.user = MockUser()
++    
++    request = MockRequest()
++    
++    # Create mock author objects
++    class MockAuthor:
++        def __init__(self, name):
++            self.name = name
++    
++    # Test without object
++    inline_instances = author_admin.get_inline_instances(request, None)
++    print(f"Without object: {len(inline_instances)} inlines")
++    assert len(inline_instances) == 1, f"Expected 1 inline, got {len(inline_instances)}"
++    
++    # Test with object
++    author1 = MockAuthor(name="Bob")
++    inline_instances = author_admin.get_inline_instances(request, author1)
++    print(f"With object: {len(inline_instances)} inlines")
++    assert len(inline_instances) == 1, f"Expected 1 inline, got {len(inline_instances)}"
++    
++    # Verify that get_inlines method exists and returns self.inlines by default
++    inlines = author_admin.get_inlines(request, author1)
++    assert inlines == author_admin.inlines, "Default get_inlines should return self.inlines"
++    print("Default get_inlines returns self.inlines as expected")
++    
++    print("\nSuccess! Default behavior is preserved when get_inlines is not overridden.")
++
++
++if __name__ == "__main__":
++    test_default_behavior()
+diff --git a/test_get_inlines.py b/test_get_inlines.py
+new file mode 100644
+index 0000000000..33a5a5fa02
+--- /dev/null
++++ b/test_get_inlines.py
+@@ -0,0 +1,125 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.admin',
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++        'django.contrib.sessions',
++        'django.contrib.messages',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++django.setup()
++
++# Now import Django components
++from django.contrib import admin
++from django.contrib.admin import TabularInline
++from django.db import models
++
++
++# Test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++
++
++# Test inline classes
++class BookInline(TabularInline):
++    model = Book
++
++
++class ArticleInline(TabularInline):
++    model = Article
++
++
++# Test admin class - this will show the expected behavior
++class AuthorAdmin(admin.ModelAdmin):
++    inlines = [BookInline, ArticleInline]
++    
++    def get_inlines(self, request, obj=None):
++        """This is the new method we want to add"""
++        # Example: only show ArticleInline if the author has a name starting with 'A'
++        if obj and obj.name and obj.name.startswith('A'):
++            return [ArticleInline]
++        return self.inlines
++
++
++# Test that shows current behavior 
++def test_current_behavior():
++    print("Testing current behavior without get_inlines hook...")
++    
++    # Create test instances
++    admin_site = admin.AdminSite()
++    
++    # First test with default ModelAdmin (without get_inlines)
++    class DefaultAuthorAdmin(admin.ModelAdmin):
++        inlines = [BookInline, ArticleInline]
++    
++    default_admin = DefaultAuthorAdmin(Author, admin_site)
++    
++    # Mock request with user
++    class MockUser:
++        def has_perm(self, perm):
++            return True
++        
++        def has_module_perms(self, app_label):
++            return True
++    
++    class MockRequest:
++        def __init__(self):
++            self.user = MockUser()
++    
++    request = MockRequest()
++    
++    # Test without object
++    inline_instances = default_admin.get_inline_instances(request, None)
++    print(f"Without object: {len(inline_instances)} inlines")
++    
++    # Create mock author objects
++    class MockAuthor:
++        def __init__(self, name):
++            self.name = name
++    
++    # Test with object whose name doesn't start with 'A'
++    author1 = MockAuthor(name="Bob")
++    inline_instances = default_admin.get_inline_instances(request, author1)
++    print(f"Author 'Bob': {len(inline_instances)} inlines")
++    
++    # Test with object whose name starts with 'A'
++    author2 = MockAuthor(name="Alice")
++    inline_instances = default_admin.get_inline_instances(request, author2)
++    print(f"Author 'Alice': {len(inline_instances)} inlines")
++    print("Currently all cases show the same number of inlines!")
++
++
++if __name__ == "__main__":
++    test_current_behavior()
+diff --git a/test_get_inlines_implementation.py b/test_get_inlines_implementation.py
+new file mode 100644
+index 0000000000..94d31fcbf0
+--- /dev/null
++++ b/test_get_inlines_implementation.py
+@@ -0,0 +1,128 @@
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.admin',
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++        'django.contrib.sessions',
++        'django.contrib.messages',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++django.setup()
++
++# Now import Django components
++from django.contrib import admin
++from django.contrib.admin import TabularInline
++from django.db import models
++
++
++# Test models
++class Author(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test'
++
++
++class Book(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    author = models.ForeignKey(Author, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test'
++
++
++# Test inline classes
++class BookInline(TabularInline):
++    model = Book
++
++
++class ArticleInline(TabularInline):
++    model = Article
++
++
++# Test admin class with get_inlines override
++class AuthorAdminWithGetInlines(admin.ModelAdmin):
++    inlines = [BookInline, ArticleInline]
++    
++    def get_inlines(self, request, obj=None):
++        """Override get_inlines to show different inlines based on obj"""
++        # Example: only show ArticleInline if the author has a name starting with 'A'
++        if obj and obj.name and obj.name.startswith('A'):
++            return [ArticleInline]
++        return self.inlines
++
++
++# Test that the new get_inlines method works 
++def test_get_inlines_implementation():
++    print("Testing get_inlines implementation...")
++    
++    # Create test instances
++    admin_site = admin.AdminSite()
++    
++    # Test with custom get_inlines
++    author_admin = AuthorAdminWithGetInlines(Author, admin_site)
++    
++    # Mock request with user
++    class MockUser:
++        def has_perm(self, perm):
++            return True
++        
++        def has_module_perms(self, app_label):
++            return True
++    
++    class MockRequest:
++        def __init__(self):
++            self.user = MockUser()
++    
++    request = MockRequest()
++    
++    # Create mock author objects
++    class MockAuthor:
++        def __init__(self, name):
++            self.name = name
++    
++    # Test without object
++    inline_instances = author_admin.get_inline_instances(request, None)
++    print(f"Without object: {len(inline_instances)} inlines (expected: 2)")
++    assert len(inline_instances) == 2, f"Expected 2 inlines, got {len(inline_instances)}"
++    
++    # Test with object whose name doesn't start with 'A'
++    author1 = MockAuthor(name="Bob")
++    inline_instances = author_admin.get_inline_instances(request, author1)
++    print(f"Author 'Bob': {len(inline_instances)} inlines (expected: 2)")
++    assert len(inline_instances) == 2, f"Expected 2 inlines for Bob, got {len(inline_instances)}"
++    
++    # Test with object whose name starts with 'A'
++    author2 = MockAuthor(name="Alice")
++    inline_instances = author_admin.get_inline_instances(request, author2)
++    print(f"Author 'Alice': {len(inline_instances)} inlines (expected: 1)")
++    assert len(inline_instances) == 1, f"Expected 1 inline for Alice, got {len(inline_instances)}"
++    
++    print("\nSuccess! The get_inlines hook works correctly!")
++    print("- Default behavior is preserved when not overridden")
++    print("- When overridden, it allows dynamic inline selection based on request/obj")
++
++
++if __name__ == "__main__":
++    test_get_inlines_implementation()
+diff --git a/tests/admin_inlines/test_get_inlines.py b/tests/admin_inlines/test_get_inlines.py
+new file mode 100644
+index 0000000000..e29d9b901c
+--- /dev/null
++++ b/tests/admin_inlines/test_get_inlines.py
+@@ -0,0 +1,134 @@
++from django.contrib import admin
++from django.contrib.admin import ModelAdmin, TabularInline
++from django.test import RequestFactory, TestCase, override_settings
++from django.urls import reverse
++
++from .models import Author, Book, Holder, Inner
++
++
++class BookInline(TabularInline):
++    model = Book
++
++
++class InnerInline(TabularInline):
++    model = Inner
++
++
++class AuthorAdminWithDynamicInlines(ModelAdmin):
++    """Admin with dynamic inlines based on object state"""
++    inlines = [BookInline]
++    
++    def get_inlines(self, request, obj=None):
++        # Only show BookInline for authors whose name starts with 'A'
++        if obj and obj.name and obj.name.startswith('A'):
++            return [BookInline]
++        return []
++
++
++class HolderAdminWithRequestBasedInlines(ModelAdmin):
++    """Admin with inlines based on request"""
++    inlines = [InnerInline]
++    
++    def get_inlines(self, request, obj=None):
++        # Show inlines only if user has specific permission
++        if request.user.has_perm('admin_inlines.add_inner'):
++            return self.inlines
++        return []
++
++
++@override_settings(ROOT_URLCONF='admin_inlines.urls')
++class TestGetInlines(TestCase):
++    """Test the get_inlines hook"""
++    
++    factory = RequestFactory()
++    
++    def test_get_inlines_default_behavior(self):
++        """Test that default behavior returns self.inlines"""
++        admin_site = admin.AdminSite()
++        admin_obj = ModelAdmin(Author, admin_site)
++        admin_obj.inlines = [BookInline]
++        
++        request = self.factory.get('/')
++        request.user = None
++        
++        inlines = admin_obj.get_inlines(request, None)
++        self.assertEqual(inlines, admin_obj.inlines)
++    
++    def test_get_inlines_with_object(self):
++        """Test get_inlines can be customized based on object"""
++        admin_site = admin.AdminSite()
++        admin_obj = AuthorAdminWithDynamicInlines(Author, admin_site)
++        
++        request = self.factory.get('/')
++        request.user = None
++        
++        # Author with name starting with 'A'
++        author_a = Author(name='Alice')
++        inlines = admin_obj.get_inlines(request, author_a)
++        self.assertEqual(inlines, [BookInline])
++        
++        # Author with name not starting with 'A'
++        author_b = Author(name='Bob')
++        inlines = admin_obj.get_inlines(request, author_b)
++        self.assertEqual(inlines, [])
++        
++        # No object
++        inlines = admin_obj.get_inlines(request, None)
++        self.assertEqual(inlines, [])
++    
++    def test_get_inline_instances_uses_get_inlines(self):
++        """Test that get_inline_instances uses get_inlines"""
++        admin_site = admin.AdminSite()
++        admin_obj = AuthorAdminWithDynamicInlines(Author, admin_site)
++        
++        # Create a mock user
++        class MockUser:
++            def has_perm(self, perm):
++                return True
++            
++            def has_module_perms(self, app_label):
++                return True
++        
++        request = self.factory.get('/')
++        request.user = MockUser()
++        
++        # Author with name starting with 'A'
++        author_a = Author(name='Alice')
++        inline_instances = admin_obj.get_inline_instances(request, author_a)
++        self.assertEqual(len(inline_instances), 1)
++        self.assertIsInstance(inline_instances[0], BookInline)
++        
++        # Author with name not starting with 'A'
++        author_b = Author(name='Bob')
++        inline_instances = admin_obj.get_inline_instances(request, author_b)
++        self.assertEqual(len(inline_instances), 0)
++    
++    def test_get_inlines_with_request(self):
++        """Test get_inlines can be customized based on request"""
++        admin = HolderAdminWithRequestBasedInlines(Holder, None)
++        
++        # User with permission
++        class UserWithPerm:
++            def has_perm(self, perm):
++                return perm == 'admin_inlines.add_inner'
++            
++            def has_module_perms(self, app_label):
++                return True
++        
++        request = self.factory.get('/')
++        request.user = UserWithPerm()
++        
++        inlines = admin.get_inlines(request, None)
++        self.assertEqual(inlines, [InnerInline])
++        
++        # User without permission
++        class UserWithoutPerm:
++            def has_perm(self, perm):
++                return False
++            
++            def has_module_perms(self, app_label):
++                return True
++        
++        request.user = UserWithoutPerm()
++        inlines = admin.get_inlines(request, None)
++        self.assertEqual(inlines, [])

@@ -1,0 +1,13 @@
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index 72f95f0194..bc6c739869 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -1622,7 +1622,7 @@ class FTimeDeltaTests(TestCase):
+         delta = datetime.timedelta(microseconds=8999999999999999)
+         Experiment.objects.update(end=F('start') + delta)
+         qs = Experiment.objects.annotate(
+-            delta=ExpressionWrapper(F('end') - F('start'), output_field=DurationField())
++            delta=F('end') - F('start')
+         )
+         for e in qs:
+             self.assertEqual(e.delta, delta)

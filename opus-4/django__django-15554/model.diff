@@ -1,0 +1,186 @@
+diff --git a/django/db/models/sql/datastructures.py b/django/db/models/sql/datastructures.py
+index 1edf040e82..72eab2b4b6 100644
+--- a/django/db/models/sql/datastructures.py
++++ b/django/db/models/sql/datastructures.py
+@@ -162,8 +162,10 @@ class Join:
+         return hash(self.identity)
+ 
+     def equals(self, other):
+-        # Ignore filtered_relation in equality check.
+-        return self.identity[:-1] == other.identity[:-1]
++        # Include filtered_relation in equality check to ensure that
++        # multiple FilteredRelations to the same relation with different
++        # conditions generate separate JOINs.
++        return self.identity == other.identity
+ 
+     def demote(self):
+         new = self.relabeled_clone({})
+diff --git a/test_bug_simple.py b/test_bug_simple.py
+new file mode 100644
+index 0000000000..db72227ba3
+--- /dev/null
++++ b/test_bug_simple.py
+@@ -0,0 +1,48 @@
++#!/usr/bin/env python
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db.models import FilteredRelation, Q, F, Case, When
++from django.db.models.sql.query import Query
++from django.db.models.sql.datastructures import Join
++
++# Create a mock join_field with minimal attributes
++class MockJoinField:
++    def get_joining_columns(self):
++        return [("parent_id", "id")]
++
++# Test the issue with the equals method
++def test_join_equality():
++    # Create two Join instances with the same parameters except filtered_relation
++    mock_field = MockJoinField()
++    
++    join1 = Join(
++        table_name="test_table",
++        parent_alias="parent",
++        table_alias="alias1",
++        join_type="INNER",
++        join_field=mock_field,
++        nullable=False,
++        filtered_relation=FilteredRelation("test", condition=Q(test__field1=1))
++    )
++    
++    join2 = Join(
++        table_name="test_table",
++        parent_alias="parent",
++        table_alias="alias2",
++        join_type="INNER",
++        join_field=mock_field,
++        nullable=False,
++        filtered_relation=FilteredRelation("test", condition=Q(test__field2=2))
++    )
++    
++    print("Join 1 identity:", join1.identity)
++    print("Join 2 identity:", join2.identity)
++    print("\njoin1.equals(join2):", join1.equals(join2))
++    print("\nNote: equals() ignores filtered_relation, so they appear equal!")
++    print("This is the root cause of the bug - Django thinks these are the same join")
++    print("and reuses the first one, ignoring the second FilteredRelation.")
++    
++if __name__ == "__main__":
++    test_join_equality()
+diff --git a/test_filtered_relation_issue.py b/test_filtered_relation_issue.py
+new file mode 100644
+index 0000000000..1fd6390556
+--- /dev/null
++++ b/test_filtered_relation_issue.py
+@@ -0,0 +1,109 @@
++import os
++import django
++from django.db import models
++from django.db.models import FilteredRelation, Q, F, Case, When
++from django.test import TestCase
++from django.test.utils import setup_test_environment, teardown_test_environment
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++# Define test models
++class Zone(models.Model):
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        app_label = 'test_app'
++
++class Product(models.Model):
++    name = models.CharField(max_length=100)
++    zone = models.ForeignKey(Zone, on_delete=models.CASCADE, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class PriceEntry(models.Model):
++    price = models.DecimalField(max_digits=10, decimal_places=2)
++    is_all = models.BooleanField(default=False)
++    zone = models.ForeignKey(Zone, on_delete=models.CASCADE, null=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class MyRelation(models.Model):
++    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='myrelation')
++    nested = models.ForeignKey(PriceEntry, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test the issue
++def test_filtered_relation_issue():
++    # Create test data
++    zone1 = Zone.objects.create(name="Zone 1")
++    product = Product.objects.create(name="Product 1", zone=zone1)
++    
++    # Create price entries
++    price_all = PriceEntry.objects.create(price=100.00, is_all=True)
++    price_zone = PriceEntry.objects.create(price=150.00, zone=zone1)
++    
++    # Create relations
++    MyRelation.objects.create(product=product, nested=price_all)
++    MyRelation.objects.create(product=product, nested=price_zone)
++    
++    # Test the query
++    qs = Product.objects.alias(
++        relation_zone=FilteredRelation(
++            "myrelation__nested",
++            condition=Q(myrelation__nested__zone=F("zone"))
++        ),
++        relation_all=FilteredRelation(
++            "myrelation__nested",
++            condition=Q(myrelation__nested__is_all=True)
++        ),
++        price_zone=F("relation_zone__price")
++    ).annotate(
++        price_final=Case(
++            When(
++                price_zone__isnull=True,
++                then=F("relation_all__price"),
++            ),
++            default=F("price_zone")
++        )
++    )
++    
++    print("SQL Query:")
++    print(str(qs.query))
++    print("\n")
++    
++    # Check if both joins are present
++    sql_str = str(qs.query)
++    join_count = sql_str.count('LEFT OUTER JOIN')
++    print(f"Number of LEFT OUTER JOINs found: {join_count}")
++    
++    # We expect 2 joins for myrelation__nested (one for each FilteredRelation)
++    # but due to the bug, we'll likely see only 1
++
++if __name__ == "__main__":
++    # Set up test environment
++    setup_test_environment()
++    
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Zone)
++        schema_editor.create_model(Product) 
++        schema_editor.create_model(PriceEntry)
++        schema_editor.create_model(MyRelation)
++    
++    try:
++        test_filtered_relation_issue()
++    finally:
++        # Clean up
++        with connection.schema_editor() as schema_editor:
++            schema_editor.delete_model(MyRelation)
++            schema_editor.delete_model(PriceEntry)
++            schema_editor.delete_model(Product)
++            schema_editor.delete_model(Zone)
++        teardown_test_environment()

@@ -1,0 +1,51 @@
+From 1ea8b3160e31c26427ef4309e160a10501530e38 Mon Sep 17 00:00:00 2001
+From: himanshukgp <hs80941@gmail.com>
+Date: Wed, 29 Nov 2017 02:40:00 +0530
+Subject: [PATCH 1/2] removed bug in col_insert
+
+---
+ sympy/matrices/common.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/matrices/common.py b/sympy/matrices/common.py
+index 68656467f545..602e5417eb84 100644
+--- a/sympy/matrices/common.py
++++ b/sympy/matrices/common.py
+@@ -86,7 +86,7 @@ def entry(i, j):
+                 return self[i, j]
+             elif pos <= j < pos + other.cols:
+                 return other[i, j - pos]
+-            return self[i, j - pos - other.cols]
++            return self[i, j - other.cols]
+ 
+         return self._new(self.rows, self.cols + other.cols,
+                          lambda i, j: entry(i, j))
+
+From 96f2ae735ba7c62028e583cb0a97071f9249e4d6 Mon Sep 17 00:00:00 2001
+From: himanshukgp <hs80941@gmail.com>
+Date: Wed, 29 Nov 2017 11:09:38 +0530
+Subject: [PATCH 2/2] Added test for #issue 13643
+
+---
+ sympy/matrices/tests/test_commonmatrix.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/sympy/matrices/tests/test_commonmatrix.py b/sympy/matrices/tests/test_commonmatrix.py
+index 3e27ecc8b25d..0bdb65177d55 100644
+--- a/sympy/matrices/tests/test_commonmatrix.py
++++ b/sympy/matrices/tests/test_commonmatrix.py
+@@ -200,6 +200,14 @@ def test_col_insert():
+         l = [0, 0, 0]
+         l.insert(i, 4)
+         assert flatten(zeros_Shaping(3).col_insert(i, c4).row(0).tolist()) == l
++    # issue 13643
++    assert eye_Shaping(6).col_insert(3, Matrix([[2, 2], [2, 2], [2, 2], [2, 2], [2, 2], [2, 2]])) == \
++           Matrix([[1, 0, 0, 2, 2, 0, 0, 0],
++                   [0, 1, 0, 2, 2, 0, 0, 0],
++                   [0, 0, 1, 2, 2, 0, 0, 0],
++                   [0, 0, 0, 2, 2, 1, 0, 0],
++                   [0, 0, 0, 2, 2, 0, 1, 0],
++                   [0, 0, 0, 2, 2, 0, 0, 1]])
+ 
+ def test_extract():
+     m = ShapingOnlyMatrix(4, 3, lambda i, j: i*3 + j)

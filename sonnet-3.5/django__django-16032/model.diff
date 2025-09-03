@@ -1,0 +1,156 @@
+diff --git a/django/db/models/lookups.py b/django/db/models/lookups.py
+index 866e38df83..bba0b54d83 100644
+--- a/django/db/models/lookups.py
++++ b/django/db/models/lookups.py
+@@ -449,6 +449,11 @@ class In(FieldGetDbPrepValueIterableMixin, BuiltinLookup):
+             sqls, sqls_params = self.batch_process_rhs(compiler, connection, rhs)
+             placeholder = "(" + ", ".join(sqls) + ")"
+             return (placeholder, sqls_params)
++        elif hasattr(self.rhs, 'query'):
++            # Handle annotated and aliased querysets
++            compiler.compile(self.rhs.query)
++            sql, params = self.rhs.query.get_compiler(connection=connection).as_sql()
++            return f"({sql})", params
+         return super().process_rhs(compiler, connection)
+ 
+     def get_rhs_op(self, connection, rhs):
+diff --git a/tests/annotations/test_annotation_alias.py b/tests/annotations/test_annotation_alias.py
+new file mode 100644
+index 0000000000..aea84497fc
+--- /dev/null
++++ b/tests/annotations/test_annotation_alias.py
+@@ -0,0 +1,80 @@
++import os
++import django
++from django.test import TestCase
++from django.db import models
++from django.db.models import Value
++from django.conf import settings
++
++# Set up Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'tests.annotations',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++class Publisher(models.Model):
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        app_label = 'tests_annotations'
++
++class Book(models.Model):
++    name = models.CharField(max_length=100)
++    pages = models.IntegerField()
++    publisher = models.ForeignKey(Publisher, on_delete=models.CASCADE)
++
++    class Meta:
++        app_label = 'tests_annotations'
++
++class AnnotationAliasTestCase(TestCase):
++    def setUp(self):
++        self.publisher1 = Publisher.objects.create(name='Apress')
++        self.publisher2 = Publisher.objects.create(name='Sams')
++        self.publisher3 = Publisher.objects.create(name='Prentice Hall')
++        self.publisher4 = Publisher.objects.create(name='Morgan Kaufmann')
++
++        Book.objects.create(name='Book1', pages=450, publisher=self.publisher1)
++        Book.objects.create(name='Book2', pages=500, publisher=self.publisher2)
++        Book.objects.create(name='Book3', pages=400, publisher=self.publisher3)
++        Book.objects.create(name='Book4', pages=600, publisher=self.publisher4)
++
++    def test_annotation_and_alias_filter_in_subquery(self):
++        long_books_qs = (
++            Book.objects.filter(
++                pages__gt=400,
++            )
++            .annotate(book_annotate=Value(1))
++            .alias(book_alias=Value(1))
++        )
++        publisher_books_qs = (
++            Publisher.objects.filter(
++                book__in=long_books_qs
++            )
++            .values("name")
++        )
++        self.assertCountEqual(
++            publisher_books_qs,
++            [
++                {'name': 'Apress'},
++                {'name': 'Sams'},
++                {'name': 'Morgan Kaufmann'}
++            ]
++        )
++
++if __name__ == '__main__':
++    from django.test.runner import DiscoverRunner
++    test_runner = DiscoverRunner(verbosity=2)
++    failures = test_runner.run_tests([AnnotationAliasTestCase])
++    exit(bool(failures))
+diff --git a/tests/annotations/test_settings.py b/tests/annotations/test_settings.py
+new file mode 100644
+index 0000000000..f77f4492f1
+--- /dev/null
++++ b/tests/annotations/test_settings.py
+@@ -0,0 +1,15 @@
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++    'tests.annotations',
++]
++
++SECRET_KEY = 'fake-key'
++USE_TZ = False
+diff --git a/tests/annotations/tests.py b/tests/annotations/tests.py
+index 8de2bf1998..192816c0c4 100644
+--- a/tests/annotations/tests.py
++++ b/tests/annotations/tests.py
+@@ -1382,3 +1382,27 @@ class AliasTests(TestCase):
+         )
+         with self.assertRaisesMessage(ValueError, msg):
+             Book.objects.alias(**{crafted_alias: Value(1)})
++
++    def test_annotation_and_alias_filter_in_subquery(self):
++        long_books_qs = (
++            Book.objects.filter(
++                pages__gt=400,
++            )
++            .annotate(book_annotate=Value(1))
++            .alias(book_alias=Value(1))
++        )
++        publisher_books_qs = (
++            Publisher.objects.filter(
++                book__in=long_books_qs
++            )
++            .values("name")
++        )
++        self.assertCountEqual(
++            publisher_books_qs,
++            [
++                {'name': 'Apress'},
++                {'name': 'Sams'},
++                {'name': 'Prentice Hall'},
++                {'name': 'Morgan Kaufmann'}
++            ]
++        )
+\ No newline at end of file

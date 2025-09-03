@@ -1,0 +1,308 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index b8efb9f881..394fba2ecf 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -216,14 +216,19 @@ def get_child_arguments():
+     executable is reported to not have the .exe extension which can cause bugs
+     on reloading.
+     """
+-    import django.__main__
+-    django_main_path = Path(django.__main__.__file__)
++    import __main__
+     py_script = Path(sys.argv[0])
+ 
+     args = [sys.executable] + ['-W%s' % o for o in sys.warnoptions]
+-    if py_script == django_main_path:
+-        # The server was started with `python -m django runserver`.
+-        args += ['-m', 'django']
++    
++    # Check if Python was started with -m flag
++    # According to the Python documentation, __main__.__spec__ is not None
++    # if and only if Python was launched with -m or the name of a directory/zipfile
++    main_spec = getattr(__main__, '__spec__', None)
++    if main_spec is not None and hasattr(main_spec, 'parent') and main_spec.parent:
++        # __main__.__spec__.parent exists and is the package name passed to -m
++        # The server was started with `python -m <package>`.
++        args += ['-m', main_spec.parent]
+         args += sys.argv[1:]
+     elif not py_script.exists():
+         # sys.argv[0] may not exist for several reasons on Windows.
+diff --git a/myapp/__init__.py b/myapp/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/myapp/__main__.py b/myapp/__main__.py
+new file mode 100644
+index 0000000000..8e755ec8ad
+--- /dev/null
++++ b/myapp/__main__.py
+@@ -0,0 +1,14 @@
++"""Test __main__ for myapp package"""
++import sys
++sys.path.insert(0, '/testbed')
++
++import __main__
++print("In myapp.__main__:")
++print("__main__.__spec__:", getattr(__main__, '__spec__', None))
++if hasattr(__main__, '__spec__') and __main__.__spec__:
++    print("__main__.__spec__.parent:", getattr(__main__.__spec__, 'parent', None))
++    print("__main__.__spec__.name:", getattr(__main__.__spec__, 'name', None))
++
++from django.utils.autoreload import get_child_arguments
++args = get_child_arguments()
++print("get_child_arguments():", args)
+diff --git a/test_autoreload.py b/test_autoreload.py
+new file mode 100644
+index 0000000000..e76328928f
+--- /dev/null
++++ b/test_autoreload.py
+@@ -0,0 +1,54 @@
++"""Test script to understand how get_child_arguments works"""
++import sys
++import os
++
++# Add Django to path
++sys.path.insert(0, '/testbed')
++
++# Test current implementation
++from django.utils.autoreload import get_child_arguments
++
++print("Testing current get_child_arguments implementation:")
++print("sys.argv:", sys.argv)
++print("sys.executable:", sys.executable)
++
++# Mock __main__ module to test behavior
++import types
++main_module = types.ModuleType('__main__')
++
++# Test case 1: Simulate python -m django
++print("\nTest case 1: Simulating python -m django")
++sys.modules['__main__'] = main_module
++main_module.__file__ = '/testbed/django/__main__.py'
++main_module.__spec__ = types.SimpleNamespace(parent='django')
++sys.argv = ['django', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++except Exception as e:
++    print("Error:", e)
++
++# Test case 2: Simulate python -m myapp
++print("\nTest case 2: Simulating python -m myapp")
++main_module.__file__ = '/some/path/myapp/__main__.py'
++main_module.__spec__ = types.SimpleNamespace(parent='myapp')
++sys.argv = ['myapp', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++except Exception as e:
++    print("Error:", e)
++
++# Test case 3: Regular script execution
++print("\nTest case 3: Regular script execution")
++main_module.__file__ = '/some/path/script.py'
++main_module.__spec__ = None
++sys.argv = ['/some/path/script.py', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++except Exception as e:
++    print("Error:", e)
+diff --git a/test_autoreload_new.py b/test_autoreload_new.py
+new file mode 100644
+index 0000000000..69d71e0e8b
+--- /dev/null
++++ b/test_autoreload_new.py
+@@ -0,0 +1,91 @@
++"""Test script to understand how get_child_arguments works"""
++import sys
++import os
++
++# Add Django to path
++sys.path.insert(0, '/testbed')
++
++# First let's check what the actual __main__ looks like
++print("Actual __main__ module info:")
++import __main__
++print("__main__.__spec__:", getattr(__main__, '__spec__', 'Not found'))
++if hasattr(__main__, '__spec__') and __main__.__spec__:
++    print("__main__.__spec__.parent:", getattr(__main__.__spec__, 'parent', 'Not found'))
++
++# Test current implementation
++from django.utils.autoreload import get_child_arguments
++
++print("\nTesting get_child_arguments implementation:")
++print("sys.argv:", sys.argv)
++print("sys.executable:", sys.executable)
++
++# Mock __main__ module to test behavior
++import types
++
++# Save original __main__
++orig_main = sys.modules['__main__']
++
++# Test case 1: Simulate python -m django
++print("\nTest case 1: Simulating python -m django")
++main_module = types.ModuleType('__main__')
++sys.modules['__main__'] = main_module
++main_module.__file__ = '/testbed/django/__main__.py'
++main_module.__spec__ = types.SimpleNamespace(parent='django')
++sys.argv = ['django', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++    print("Expected: [sys.executable, '-m', 'django', 'runserver']")
++except Exception as e:
++    print("Error:", e)
++    import traceback
++    traceback.print_exc()
++
++# Test case 2: Simulate python -m myapp
++print("\nTest case 2: Simulating python -m myapp")
++main_module.__file__ = '/some/path/myapp/__main__.py'
++main_module.__spec__ = types.SimpleNamespace(parent='myapp')
++sys.argv = ['myapp', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++    print("Expected: [sys.executable, '-m', 'myapp', 'runserver']")
++except Exception as e:
++    print("Error:", e)
++    import traceback
++    traceback.print_exc()
++
++# Test case 3: Regular script execution (no -m)
++print("\nTest case 3: Regular script execution (no -m)")
++main_module.__file__ = '/testbed/test_autoreload_new.py'
++main_module.__spec__ = None
++sys.argv = ['/testbed/test_autoreload_new.py', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++    print("Expected: [sys.executable, '/testbed/test_autoreload_new.py', 'runserver']")
++except Exception as e:
++    print("Error:", e)
++    import traceback
++    traceback.print_exc()
++
++# Test case 4: Simulate python -m with directory (spec.parent is empty string)
++print("\nTest case 4: Simulating python -m with directory (spec.parent is empty string)")
++main_module.__file__ = '/some/dir/__main__.py'
++main_module.__spec__ = types.SimpleNamespace(parent='')
++sys.argv = ['__main__', 'runserver']
++
++try:
++    args = get_child_arguments()
++    print("Result:", args)
++    print("Expected: [sys.executable, '__main__', 'runserver']")
++except Exception as e:
++    print("Error:", e)
++    import traceback
++    traceback.print_exc()
++
++# Restore original __main__
++sys.modules['__main__'] = orig_main
+diff --git a/test_real_django.py b/test_real_django.py
+new file mode 100644
+index 0000000000..091bb7f964
+--- /dev/null
++++ b/test_real_django.py
+@@ -0,0 +1,15 @@
++"""Test get_child_arguments by inspecting the __main__ module when running with -m"""
++import sys
++
++# Add Django to path
++sys.path.insert(0, '/testbed')
++
++import __main__
++print("__main__.__spec__:", getattr(__main__, '__spec__', None))
++if hasattr(__main__, '__spec__') and __main__.__spec__:
++    print("__main__.__spec__.parent:", getattr(__main__.__spec__, 'parent', None))
++    print("__main__.__spec__.name:", getattr(__main__.__spec__, 'name', None))
++
++from django.utils.autoreload import get_child_arguments
++args = get_child_arguments()
++print("get_child_arguments():", args)
+diff --git a/tests/utils_tests/test_autoreload.py b/tests/utils_tests/test_autoreload.py
+index b9f2db7276..baa578a4d1 100644
+--- a/tests/utils_tests/test_autoreload.py
++++ b/tests/utils_tests/test_autoreload.py
+@@ -160,10 +160,14 @@ class TestChildArguments(SimpleTestCase):
+     @mock.patch('sys.argv', [django.__main__.__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', [])
+     def test_run_as_module(self):
+-        self.assertEqual(
+-            autoreload.get_child_arguments(),
+-            [sys.executable, '-m', 'django', 'runserver']
+-        )
++        # Mock __main__ module to simulate python -m django
++        main_module = types.ModuleType('__main__')
++        main_module.__spec__ = types.SimpleNamespace(parent='django')
++        with mock.patch.dict(sys.modules, {'__main__': main_module}):
++            self.assertEqual(
++                autoreload.get_child_arguments(),
++                [sys.executable, '-m', 'django', 'runserver']
++            )
+ 
+     @mock.patch('sys.argv', [__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', ['error'])
+@@ -173,6 +177,35 @@ class TestChildArguments(SimpleTestCase):
+             [sys.executable, '-Werror', __file__, 'runserver']
+         )
+ 
++    @mock.patch('sys.argv', ['myapp', 'runserver'])
++    @mock.patch('sys.warnoptions', [])
++    def test_run_as_non_django_module(self):
++        """Test running a non-Django module with -m flag."""
++        # Mock __main__ module to simulate python -m myapp
++        main_module = types.ModuleType('__main__')
++        main_module.__spec__ = types.SimpleNamespace(parent='myapp')
++        with mock.patch.dict(sys.modules, {'__main__': main_module}):
++            self.assertEqual(
++                autoreload.get_child_arguments(),
++                [sys.executable, '-m', 'myapp', 'runserver']
++            )
++
++    @mock.patch('sys.warnoptions', [])
++    def test_run_as_regular_script(self):
++        """Test running a regular script without -m flag."""
++        # Mock __main__ module to simulate regular script execution
++        main_module = types.ModuleType('__main__')
++        main_module.__spec__ = None  # No spec when not using -m
++        with tempfile.TemporaryDirectory() as tmpdir:
++            script_path = Path(tmpdir) / 'test_script.py'
++            script_path.touch()
++            with mock.patch('sys.argv', [str(script_path), 'runserver']):
++                with mock.patch.dict(sys.modules, {'__main__': main_module}):
++                    self.assertEqual(
++                        autoreload.get_child_arguments(),
++                        [sys.executable, str(script_path), 'runserver']
++                    )
++
+     @mock.patch('sys.warnoptions', [])
+     def test_exe_fallback(self):
+         with tempfile.TemporaryDirectory() as tmpdir:
+@@ -446,10 +479,14 @@ class RestartWithReloaderTests(SimpleTestCase):
+         main = '/usr/lib/pythonX.Y/site-packages/django/__main__.py'
+         argv = [main, 'runserver']
+         mock_call = self.patch_autoreload(argv)
+-        with mock.patch('django.__main__.__file__', main):
+-            autoreload.restart_with_reloader()
+-            self.assertEqual(mock_call.call_count, 1)
+-            self.assertEqual(mock_call.call_args[0][0], [self.executable, '-Wall', '-m', 'django'] + argv[1:])
++        # Mock __main__ module to simulate python -m django
++        main_module = types.ModuleType('__main__')
++        main_module.__spec__ = types.SimpleNamespace(parent='django')
++        with mock.patch.dict(sys.modules, {'__main__': main_module}):
++            with mock.patch('django.__main__.__file__', main):
++                autoreload.restart_with_reloader()
++                self.assertEqual(mock_call.call_count, 1)
++                self.assertEqual(mock_call.call_args[0][0], [self.executable, '-Wall', '-m', 'django'] + argv[1:])
+ 
+ 
+ class ReloaderTests(SimpleTestCase):

@@ -1,0 +1,42 @@
+diff --git a/django/forms/widgets.py b/django/forms/widgets.py
+index 40ac1d3162..1e89718dfe 100644
+--- a/django/forms/widgets.py
++++ b/django/forms/widgets.py
+@@ -552,12 +552,13 @@ class ChoiceWidget(Widget):
+     checked_attribute = {'checked': True}
+     option_inherits_attrs = True
+ 
+-    def __init__(self, attrs=None, choices=()):
++    def __init__(self, attrs=None, choices=(), is_required=True):
+         super().__init__(attrs)
+         # choices can be any iterable, but we may need to render this widget
+         # multiple times. Thus, collapse it into a list so it can be consumed
+         # more than once.
+         self.choices = list(choices)
++        self.is_required = is_required
+ 
+     def __deepcopy__(self, memo):
+         obj = copy.copy(self)
+@@ -586,7 +587,11 @@ class ChoiceWidget(Widget):
+ 
+         for index, (option_value, option_label) in enumerate(self.choices):
+             if option_value is None:
+-                option_value = ''
++                # Skip the blank option if the field is required (blank=False)
++                if not self.is_required:
++                    option_value = ''
++                else:
++                    continue
+ 
+             subgroup = []
+             if isinstance(option_label, (list, tuple)):
+@@ -759,6 +764,9 @@ class RadioSelect(ChoiceWidget):
+     template_name = 'django/forms/widgets/radio.html'
+     option_template_name = 'django/forms/widgets/radio_option.html'
+ 
++    def __init__(self, attrs=None, choices=(), is_required=True):
++        super().__init__(attrs, choices, is_required=is_required)
++
+ 
+ class CheckboxSelectMultiple(ChoiceWidget):
+     allow_multiple_selected = True

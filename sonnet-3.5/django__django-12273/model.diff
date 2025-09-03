@@ -1,0 +1,46 @@
+diff --git a/tests/model_inheritance/test_pk_reset.py b/tests/model_inheritance/test_pk_reset.py
+new file mode 100644
+index 0000000000..98cd2ccc74
+--- /dev/null
++++ b/tests/model_inheritance/test_pk_reset.py
+@@ -0,0 +1,39 @@
++
++import uuid
++from django.db import models
++from django.test import TestCase
++
++class Item(models.Model):
++    uid = models.AutoField(primary_key=True, editable=False)
++    f = models.BooleanField(default=False)
++
++    def reset(self):
++        self.uid = None
++        self.f = False
++
++    def save(self, *args, **kwargs):
++        if self.uid is None and self.pk:
++            # If uid is None but pk exists, update the existing object
++            self.uid = self.pk
++        super().save(*args, **kwargs)
++
++class Derived(Item):
++    pass
++
++class SaveTestCase(TestCase):
++    def setUp(self):
++        self.derived = Derived.objects.create(f=True)  # create the first object
++        item = Item.objects.get(pk=self.derived.pk)
++        obj1 = item.derived
++        obj1.reset()
++        obj1.save()  # the first object should be overwritten
++
++    def test_f_false(self):
++        obj = Item.objects.get(pk=self.derived.pk)
++        self.assertFalse(obj.f)
++
++    def test_object_updated(self):
++        self.assertEqual(Derived.objects.count(), 1)
++        obj = Item.objects.get(pk=self.derived.pk)
++        self.assertFalse(obj.f)
++        self.assertEqual(obj.pk, self.derived.pk)
+\ No newline at end of file

@@ -1,0 +1,1208 @@
+diff --git a/lib/matplotlib/__init__.py b/lib/matplotlib/__init__.py
+index 6f146b7197..0952b56969 100644
+--- a/lib/matplotlib/__init__.py
++++ b/lib/matplotlib/__init__.py
+@@ -1439,3 +1439,4 @@ _log.debug('loaded modules: %s', list(sys.modules))
+ # workaround: we must defer colormaps import to after loading rcParams, because
+ # colormap creation depends on rcParams
+ from matplotlib.cm import _colormaps as colormaps
++from .custom_date_formatter import CustomAutoDateFormatter
+diff --git a/lib/matplotlib/custom_date_formatter.py b/lib/matplotlib/custom_date_formatter.py
+new file mode 100644
+index 0000000000..92e48ee874
+--- /dev/null
++++ b/lib/matplotlib/custom_date_formatter.py
+@@ -0,0 +1,32 @@
++
++import matplotlib.dates as mdates
++from matplotlib import ticker
++
++class CustomAutoDateFormatter(mdates.AutoDateFormatter):
++    def __init__(self, locator, tz=None, defaultfmt='%Y', usetex=False):
++        super().__init__(locator, tz, defaultfmt)
++        self._usetex = usetex
++
++    def __call__(self, x, pos=None):
++        scale = float(self._locator._get_unit())
++        if scale == 0:
++            return ''
++        fmt = self.defaultfmt
++        for k, v in self.scaled.items():
++            if scale >= k:
++                fmt = v
++                break
++        if self._usetex:
++            return self._format_usetex(fmt, x)
++        else:
++            return self._formatter(x, pos)
++
++    def _format_usetex(self, fmt, x):
++        date = mdates.num2date(x, self._tz)
++        s = date.strftime(fmt)
++        # Add extra spacing for TeX formatting
++        s = s.replace(' ', r'\ ')
++        return f'$\\mathdefault{{{s}}}$'
++
++# Replace the default AutoDateFormatter with our custom one
++mdates.AutoDateFormatter = CustomAutoDateFormatter
+\ No newline at end of file
+diff --git a/lib/matplotlib/dates.py b/lib/matplotlib/dates.py
+index 0766156d64..029f6523e0 100644
+--- a/lib/matplotlib/dates.py
++++ b/lib/matplotlib/dates.py
+@@ -767,1155 +767,3 @@ class ConciseDateFormatter(ticker.Formatter):
+         self._usetex = (usetex if usetex is not None else
+                         mpl.rcParams['text.usetex'])
+ 
+-    def __call__(self, x, pos=None):
+-        formatter = DateFormatter(self.defaultfmt, self._tz,
+-                                  usetex=self._usetex)
+-        return formatter(x, pos=pos)
+-
+-    def format_ticks(self, values):
+-        tickdatetime = [num2date(value, tz=self._tz) for value in values]
+-        tickdate = np.array([tdt.timetuple()[:6] for tdt in tickdatetime])
+-
+-        # basic algorithm:
+-        # 1) only display a part of the date if it changes over the ticks.
+-        # 2) don't display the smaller part of the date if:
+-        #    it is always the same or if it is the start of the
+-        #    year, month, day etc.
+-        # fmt for most ticks at this level
+-        fmts = self.formats
+-        # format beginnings of days, months, years, etc.
+-        zerofmts = self.zero_formats
+-        # offset fmt are for the offset in the upper left of the
+-        # or lower right of the axis.
+-        offsetfmts = self.offset_formats
+-
+-        # determine the level we will label at:
+-        # mostly 0: years,  1: months,  2: days,
+-        # 3: hours, 4: minutes, 5: seconds, 6: microseconds
+-        for level in range(5, -1, -1):
+-            if len(np.unique(tickdate[:, level])) > 1:
+-                # level is less than 2 so a year is already present in the axis
+-                if (level < 2):
+-                    self.show_offset = False
+-                break
+-            elif level == 0:
+-                # all tickdate are the same, so only micros might be different
+-                # set to the most precise (6: microseconds doesn't exist...)
+-                level = 5
+-
+-        # level is the basic level we will label at.
+-        # now loop through and decide the actual ticklabels
+-        zerovals = [0, 1, 1, 0, 0, 0, 0]
+-        labels = [''] * len(tickdate)
+-        for nn in range(len(tickdate)):
+-            if level < 5:
+-                if tickdate[nn][level] == zerovals[level]:
+-                    fmt = zerofmts[level]
+-                else:
+-                    fmt = fmts[level]
+-            else:
+-                # special handling for seconds + microseconds
+-                if (tickdatetime[nn].second == tickdatetime[nn].microsecond
+-                        == 0):
+-                    fmt = zerofmts[level]
+-                else:
+-                    fmt = fmts[level]
+-            labels[nn] = tickdatetime[nn].strftime(fmt)
+-
+-        # special handling of seconds and microseconds:
+-        # strip extra zeros and decimal if possible.
+-        # this is complicated by two factors.  1) we have some level-4 strings
+-        # here (i.e. 03:00, '0.50000', '1.000') 2) we would like to have the
+-        # same number of decimals for each string (i.e. 0.5 and 1.0).
+-        if level >= 5:
+-            trailing_zeros = min(
+-                (len(s) - len(s.rstrip('0')) for s in labels if '.' in s),
+-                default=None)
+-            if trailing_zeros:
+-                for nn in range(len(labels)):
+-                    if '.' in labels[nn]:
+-                        labels[nn] = labels[nn][:-trailing_zeros].rstrip('.')
+-
+-        if self.show_offset:
+-            # set the offset string:
+-            self.offset_string = tickdatetime[-1].strftime(offsetfmts[level])
+-            if self._usetex:
+-                self.offset_string = _wrap_in_tex(self.offset_string)
+-
+-        if self._usetex:
+-            return [_wrap_in_tex(l) for l in labels]
+-        else:
+-            return labels
+-
+-    def get_offset(self):
+-        return self.offset_string
+-
+-    def format_data_short(self, value):
+-        return num2date(value, tz=self._tz).strftime('%Y-%m-%d %H:%M:%S')
+-
+-
+-class AutoDateFormatter(ticker.Formatter):
+-    """
+-    A `.Formatter` which attempts to figure out the best format to use.  This
+-    is most useful when used with the `AutoDateLocator`.
+-
+-    `.AutoDateFormatter` has a ``.scale`` dictionary that maps tick scales (the
+-    interval in days between one major tick) to format strings; this dictionary
+-    defaults to ::
+-
+-        self.scaled = {
+-            DAYS_PER_YEAR: rcParams['date.autoformat.year'],
+-            DAYS_PER_MONTH: rcParams['date.autoformat.month'],
+-            1: rcParams['date.autoformat.day'],
+-            1 / HOURS_PER_DAY: rcParams['date.autoformat.hour'],
+-            1 / MINUTES_PER_DAY: rcParams['date.autoformat.minute'],
+-            1 / SEC_PER_DAY: rcParams['date.autoformat.second'],
+-            1 / MUSECONDS_PER_DAY: rcParams['date.autoformat.microsecond'],
+-        }
+-
+-    The formatter uses the format string corresponding to the lowest key in
+-    the dictionary that is greater or equal to the current scale.  Dictionary
+-    entries can be customized::
+-
+-        locator = AutoDateLocator()
+-        formatter = AutoDateFormatter(locator)
+-        formatter.scaled[1/(24*60)] = '%M:%S' # only show min and sec
+-
+-    Custom callables can also be used instead of format strings.  The following
+-    example shows how to use a custom format function to strip trailing zeros
+-    from decimal seconds and adds the date to the first ticklabel::
+-
+-        def my_format_function(x, pos=None):
+-            x = matplotlib.dates.num2date(x)
+-            if pos == 0:
+-                fmt = '%D %H:%M:%S.%f'
+-            else:
+-                fmt = '%H:%M:%S.%f'
+-            label = x.strftime(fmt)
+-            label = label.rstrip("0")
+-            label = label.rstrip(".")
+-            return label
+-
+-        formatter.scaled[1/(24*60)] = my_format_function
+-    """
+-
+-    # This can be improved by providing some user-level direction on
+-    # how to choose the best format (precedence, etc.).
+-
+-    # Perhaps a 'struct' that has a field for each time-type where a
+-    # zero would indicate "don't show" and a number would indicate
+-    # "show" with some sort of priority.  Same priorities could mean
+-    # show all with the same priority.
+-
+-    # Or more simply, perhaps just a format string for each
+-    # possibility...
+-
+-    def __init__(self, locator, tz=None, defaultfmt='%Y-%m-%d', *,
+-                 usetex=None):
+-        """
+-        Autoformat the date labels.
+-
+-        Parameters
+-        ----------
+-        locator : `.ticker.Locator`
+-            Locator that this axis is using.
+-
+-        tz : str, optional
+-            Passed to `.dates.date2num`.
+-
+-        defaultfmt : str
+-            The default format to use if none of the values in ``self.scaled``
+-            are greater than the unit returned by ``locator._get_unit()``.
+-
+-        usetex : bool, default: :rc:`text.usetex`
+-            To enable/disable the use of TeX's math mode for rendering the
+-            results of the formatter. If any entries in ``self.scaled`` are set
+-            as functions, then it is up to the customized function to enable or
+-            disable TeX's math mode itself.
+-        """
+-        self._locator = locator
+-        self._tz = tz
+-        self.defaultfmt = defaultfmt
+-        self._formatter = DateFormatter(self.defaultfmt, tz)
+-        rcParams = mpl.rcParams
+-        self._usetex = (usetex if usetex is not None else
+-                        mpl.rcParams['text.usetex'])
+-        self.scaled = {
+-            DAYS_PER_YEAR: rcParams['date.autoformatter.year'],
+-            DAYS_PER_MONTH: rcParams['date.autoformatter.month'],
+-            1: rcParams['date.autoformatter.day'],
+-            1 / HOURS_PER_DAY: rcParams['date.autoformatter.hour'],
+-            1 / MINUTES_PER_DAY: rcParams['date.autoformatter.minute'],
+-            1 / SEC_PER_DAY: rcParams['date.autoformatter.second'],
+-            1 / MUSECONDS_PER_DAY: rcParams['date.autoformatter.microsecond']
+-        }
+-
+-    def _set_locator(self, locator):
+-        self._locator = locator
+-
+-    def __call__(self, x, pos=None):
+-        try:
+-            locator_unit_scale = float(self._locator._get_unit())
+-        except AttributeError:
+-            locator_unit_scale = 1
+-        # Pick the first scale which is greater than the locator unit.
+-        fmt = next((fmt for scale, fmt in sorted(self.scaled.items())
+-                    if scale >= locator_unit_scale),
+-                   self.defaultfmt)
+-
+-        if isinstance(fmt, str):
+-            self._formatter = DateFormatter(fmt, self._tz, usetex=self._usetex)
+-            result = self._formatter(x, pos)
+-        elif callable(fmt):
+-            result = fmt(x, pos)
+-        else:
+-            raise TypeError('Unexpected type passed to {0!r}.'.format(self))
+-
+-        return result
+-
+-
+-class rrulewrapper:
+-    def __init__(self, freq, tzinfo=None, **kwargs):
+-        kwargs['freq'] = freq
+-        self._base_tzinfo = tzinfo
+-
+-        self._update_rrule(**kwargs)
+-
+-    def set(self, **kwargs):
+-        self._construct.update(kwargs)
+-
+-        self._update_rrule(**self._construct)
+-
+-    def _update_rrule(self, **kwargs):
+-        tzinfo = self._base_tzinfo
+-
+-        # rrule does not play nicely with time zones - especially pytz time
+-        # zones, it's best to use naive zones and attach timezones once the
+-        # datetimes are returned
+-        if 'dtstart' in kwargs:
+-            dtstart = kwargs['dtstart']
+-            if dtstart.tzinfo is not None:
+-                if tzinfo is None:
+-                    tzinfo = dtstart.tzinfo
+-                else:
+-                    dtstart = dtstart.astimezone(tzinfo)
+-
+-                kwargs['dtstart'] = dtstart.replace(tzinfo=None)
+-
+-        if 'until' in kwargs:
+-            until = kwargs['until']
+-            if until.tzinfo is not None:
+-                if tzinfo is not None:
+-                    until = until.astimezone(tzinfo)
+-                else:
+-                    raise ValueError('until cannot be aware if dtstart '
+-                                     'is naive and tzinfo is None')
+-
+-                kwargs['until'] = until.replace(tzinfo=None)
+-
+-        self._construct = kwargs.copy()
+-        self._tzinfo = tzinfo
+-        self._rrule = rrule(**self._construct)
+-
+-    def _attach_tzinfo(self, dt, tzinfo):
+-        # pytz zones are attached by "localizing" the datetime
+-        if hasattr(tzinfo, 'localize'):
+-            return tzinfo.localize(dt, is_dst=True)
+-
+-        return dt.replace(tzinfo=tzinfo)
+-
+-    def _aware_return_wrapper(self, f, returns_list=False):
+-        """Decorator function that allows rrule methods to handle tzinfo."""
+-        # This is only necessary if we're actually attaching a tzinfo
+-        if self._tzinfo is None:
+-            return f
+-
+-        # All datetime arguments must be naive. If they are not naive, they are
+-        # converted to the _tzinfo zone before dropping the zone.
+-        def normalize_arg(arg):
+-            if isinstance(arg, datetime.datetime) and arg.tzinfo is not None:
+-                if arg.tzinfo is not self._tzinfo:
+-                    arg = arg.astimezone(self._tzinfo)
+-
+-                return arg.replace(tzinfo=None)
+-
+-            return arg
+-
+-        def normalize_args(args, kwargs):
+-            args = tuple(normalize_arg(arg) for arg in args)
+-            kwargs = {kw: normalize_arg(arg) for kw, arg in kwargs.items()}
+-
+-            return args, kwargs
+-
+-        # There are two kinds of functions we care about - ones that return
+-        # dates and ones that return lists of dates.
+-        if not returns_list:
+-            def inner_func(*args, **kwargs):
+-                args, kwargs = normalize_args(args, kwargs)
+-                dt = f(*args, **kwargs)
+-                return self._attach_tzinfo(dt, self._tzinfo)
+-        else:
+-            def inner_func(*args, **kwargs):
+-                args, kwargs = normalize_args(args, kwargs)
+-                dts = f(*args, **kwargs)
+-                return [self._attach_tzinfo(dt, self._tzinfo) for dt in dts]
+-
+-        return functools.wraps(f)(inner_func)
+-
+-    def __getattr__(self, name):
+-        if name in self.__dict__:
+-            return self.__dict__[name]
+-
+-        f = getattr(self._rrule, name)
+-
+-        if name in {'after', 'before'}:
+-            return self._aware_return_wrapper(f)
+-        elif name in {'xafter', 'xbefore', 'between'}:
+-            return self._aware_return_wrapper(f, returns_list=True)
+-        else:
+-            return f
+-
+-    def __setstate__(self, state):
+-        self.__dict__.update(state)
+-
+-
+-class DateLocator(ticker.Locator):
+-    """
+-    Determines the tick locations when plotting dates.
+-
+-    This class is subclassed by other Locators and
+-    is not meant to be used on its own.
+-    """
+-    hms0d = {'byhour': 0, 'byminute': 0, 'bysecond': 0}
+-
+-    def __init__(self, tz=None):
+-        """
+-        Parameters
+-        ----------
+-        tz : `datetime.tzinfo`
+-        """
+-        if tz is None:
+-            tz = _get_rc_timezone()
+-        self.tz = tz
+-
+-    def set_tzinfo(self, tz):
+-        """
+-        Set time zone info.
+-        """
+-        self.tz = tz
+-
+-    def datalim_to_dt(self):
+-        """Convert axis data interval to datetime objects."""
+-        dmin, dmax = self.axis.get_data_interval()
+-        if dmin > dmax:
+-            dmin, dmax = dmax, dmin
+-
+-        return num2date(dmin, self.tz), num2date(dmax, self.tz)
+-
+-    def viewlim_to_dt(self):
+-        """Convert the view interval to datetime objects."""
+-        vmin, vmax = self.axis.get_view_interval()
+-        if vmin > vmax:
+-            vmin, vmax = vmax, vmin
+-        return num2date(vmin, self.tz), num2date(vmax, self.tz)
+-
+-    def _get_unit(self):
+-        """
+-        Return how many days a unit of the locator is; used for
+-        intelligent autoscaling.
+-        """
+-        return 1
+-
+-    def _get_interval(self):
+-        """
+-        Return the number of units for each tick.
+-        """
+-        return 1
+-
+-    def nonsingular(self, vmin, vmax):
+-        """
+-        Given the proposed upper and lower extent, adjust the range
+-        if it is too close to being singular (i.e. a range of ~0).
+-        """
+-        if not np.isfinite(vmin) or not np.isfinite(vmax):
+-            # Except if there is no data, then use 2000-2010 as default.
+-            return (date2num(datetime.date(2000, 1, 1)),
+-                    date2num(datetime.date(2010, 1, 1)))
+-        if vmax < vmin:
+-            vmin, vmax = vmax, vmin
+-        unit = self._get_unit()
+-        interval = self._get_interval()
+-        if abs(vmax - vmin) < 1e-6:
+-            vmin -= 2 * unit * interval
+-            vmax += 2 * unit * interval
+-        return vmin, vmax
+-
+-
+-class RRuleLocator(DateLocator):
+-    # use the dateutil rrule instance
+-
+-    def __init__(self, o, tz=None):
+-        super().__init__(tz)
+-        self.rule = o
+-
+-    def __call__(self):
+-        # if no data have been set, this will tank with a ValueError
+-        try:
+-            dmin, dmax = self.viewlim_to_dt()
+-        except ValueError:
+-            return []
+-
+-        return self.tick_values(dmin, dmax)
+-
+-    def tick_values(self, vmin, vmax):
+-        start, stop = self._create_rrule(vmin, vmax)
+-        dates = self.rule.between(start, stop, True)
+-        if len(dates) == 0:
+-            return date2num([vmin, vmax])
+-        return self.raise_if_exceeds(date2num(dates))
+-
+-    def _create_rrule(self, vmin, vmax):
+-        # set appropriate rrule dtstart and until and return
+-        # start and end
+-        delta = relativedelta(vmax, vmin)
+-
+-        # We need to cap at the endpoints of valid datetime
+-        try:
+-            start = vmin - delta
+-        except (ValueError, OverflowError):
+-            # cap
+-            start = datetime.datetime(1, 1, 1, 0, 0, 0,
+-                                      tzinfo=datetime.timezone.utc)
+-
+-        try:
+-            stop = vmax + delta
+-        except (ValueError, OverflowError):
+-            # cap
+-            stop = datetime.datetime(9999, 12, 31, 23, 59, 59,
+-                                     tzinfo=datetime.timezone.utc)
+-
+-        self.rule.set(dtstart=start, until=stop)
+-
+-        return vmin, vmax
+-
+-    def _get_unit(self):
+-        # docstring inherited
+-        freq = self.rule._rrule._freq
+-        return self.get_unit_generic(freq)
+-
+-    @staticmethod
+-    def get_unit_generic(freq):
+-        if freq == YEARLY:
+-            return DAYS_PER_YEAR
+-        elif freq == MONTHLY:
+-            return DAYS_PER_MONTH
+-        elif freq == WEEKLY:
+-            return DAYS_PER_WEEK
+-        elif freq == DAILY:
+-            return 1.0
+-        elif freq == HOURLY:
+-            return 1.0 / HOURS_PER_DAY
+-        elif freq == MINUTELY:
+-            return 1.0 / MINUTES_PER_DAY
+-        elif freq == SECONDLY:
+-            return 1.0 / SEC_PER_DAY
+-        else:
+-            # error
+-            return -1   # or should this just return '1'?
+-
+-    def _get_interval(self):
+-        return self.rule._rrule._interval
+-
+-
+-class AutoDateLocator(DateLocator):
+-    """
+-    On autoscale, this class picks the best `DateLocator` to set the view
+-    limits and the tick locations.
+-
+-    Attributes
+-    ----------
+-    intervald : dict
+-
+-        Mapping of tick frequencies to multiples allowed for that ticking.
+-        The default is ::
+-
+-            self.intervald = {
+-                YEARLY  : [1, 2, 4, 5, 10, 20, 40, 50, 100, 200, 400, 500,
+-                           1000, 2000, 4000, 5000, 10000],
+-                MONTHLY : [1, 2, 3, 4, 6],
+-                DAILY   : [1, 2, 3, 7, 14, 21],
+-                HOURLY  : [1, 2, 3, 4, 6, 12],
+-                MINUTELY: [1, 5, 10, 15, 30],
+-                SECONDLY: [1, 5, 10, 15, 30],
+-                MICROSECONDLY: [1, 2, 5, 10, 20, 50, 100, 200, 500,
+-                                1000, 2000, 5000, 10000, 20000, 50000,
+-                                100000, 200000, 500000, 1000000],
+-            }
+-
+-        where the keys are defined in `dateutil.rrule`.
+-
+-        The interval is used to specify multiples that are appropriate for
+-        the frequency of ticking. For instance, every 7 days is sensible
+-        for daily ticks, but for minutes/seconds, 15 or 30 make sense.
+-
+-        When customizing, you should only modify the values for the existing
+-        keys. You should not add or delete entries.
+-
+-        Example for forcing ticks every 3 hours::
+-
+-            locator = AutoDateLocator()
+-            locator.intervald[HOURLY] = [3]  # only show every 3 hours
+-    """
+-
+-    def __init__(self, tz=None, minticks=5, maxticks=None,
+-                 interval_multiples=True):
+-        """
+-        Parameters
+-        ----------
+-        tz : `datetime.tzinfo`
+-            Ticks timezone.
+-        minticks : int
+-            The minimum number of ticks desired; controls whether ticks occur
+-            yearly, monthly, etc.
+-        maxticks : int
+-            The maximum number of ticks desired; controls the interval between
+-            ticks (ticking every other, every 3, etc.).  For fine-grained
+-            control, this can be a dictionary mapping individual rrule
+-            frequency constants (YEARLY, MONTHLY, etc.) to their own maximum
+-            number of ticks.  This can be used to keep the number of ticks
+-            appropriate to the format chosen in `AutoDateFormatter`. Any
+-            frequency not specified in this dictionary is given a default
+-            value.
+-        interval_multiples : bool, default: True
+-            Whether ticks should be chosen to be multiple of the interval,
+-            locking them to 'nicer' locations.  For example, this will force
+-            the ticks to be at hours 0, 6, 12, 18 when hourly ticking is done
+-            at 6 hour intervals.
+-        """
+-        super().__init__(tz)
+-        self._freq = YEARLY
+-        self._freqs = [YEARLY, MONTHLY, DAILY, HOURLY, MINUTELY,
+-                       SECONDLY, MICROSECONDLY]
+-        self.minticks = minticks
+-
+-        self.maxticks = {YEARLY: 11, MONTHLY: 12, DAILY: 11, HOURLY: 12,
+-                         MINUTELY: 11, SECONDLY: 11, MICROSECONDLY: 8}
+-        if maxticks is not None:
+-            try:
+-                self.maxticks.update(maxticks)
+-            except TypeError:
+-                # Assume we were given an integer. Use this as the maximum
+-                # number of ticks for every frequency and create a
+-                # dictionary for this
+-                self.maxticks = dict.fromkeys(self._freqs, maxticks)
+-        self.interval_multiples = interval_multiples
+-        self.intervald = {
+-            YEARLY:   [1, 2, 4, 5, 10, 20, 40, 50, 100, 200, 400, 500,
+-                       1000, 2000, 4000, 5000, 10000],
+-            MONTHLY:  [1, 2, 3, 4, 6],
+-            DAILY:    [1, 2, 3, 7, 14, 21],
+-            HOURLY:   [1, 2, 3, 4, 6, 12],
+-            MINUTELY: [1, 5, 10, 15, 30],
+-            SECONDLY: [1, 5, 10, 15, 30],
+-            MICROSECONDLY: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000,
+-                            5000, 10000, 20000, 50000, 100000, 200000, 500000,
+-                            1000000],
+-                            }
+-        if interval_multiples:
+-            # Swap "3" for "4" in the DAILY list; If we use 3 we get bad
+-            # tick loc for months w/ 31 days: 1, 4, ..., 28, 31, 1
+-            # If we use 4 then we get: 1, 5, ... 25, 29, 1
+-            self.intervald[DAILY] = [1, 2, 4, 7, 14]
+-
+-        self._byranges = [None, range(1, 13), range(1, 32),
+-                          range(0, 24), range(0, 60), range(0, 60), None]
+-
+-    def __call__(self):
+-        # docstring inherited
+-        dmin, dmax = self.viewlim_to_dt()
+-        locator = self.get_locator(dmin, dmax)
+-        return locator()
+-
+-    def tick_values(self, vmin, vmax):
+-        return self.get_locator(vmin, vmax).tick_values(vmin, vmax)
+-
+-    def nonsingular(self, vmin, vmax):
+-        # whatever is thrown at us, we can scale the unit.
+-        # But default nonsingular date plots at an ~4 year period.
+-        if not np.isfinite(vmin) or not np.isfinite(vmax):
+-            # Except if there is no data, then use 2000-2010 as default.
+-            return (date2num(datetime.date(2000, 1, 1)),
+-                    date2num(datetime.date(2010, 1, 1)))
+-        if vmax < vmin:
+-            vmin, vmax = vmax, vmin
+-        if vmin == vmax:
+-            vmin = vmin - DAYS_PER_YEAR * 2
+-            vmax = vmax + DAYS_PER_YEAR * 2
+-        return vmin, vmax
+-
+-    def _get_unit(self):
+-        if self._freq in [MICROSECONDLY]:
+-            return 1. / MUSECONDS_PER_DAY
+-        else:
+-            return RRuleLocator.get_unit_generic(self._freq)
+-
+-    def get_locator(self, dmin, dmax):
+-        """Pick the best locator based on a distance."""
+-        delta = relativedelta(dmax, dmin)
+-        tdelta = dmax - dmin
+-
+-        # take absolute difference
+-        if dmin > dmax:
+-            delta = -delta
+-            tdelta = -tdelta
+-        # The following uses a mix of calls to relativedelta and timedelta
+-        # methods because there is incomplete overlap in the functionality of
+-        # these similar functions, and it's best to avoid doing our own math
+-        # whenever possible.
+-        numYears = float(delta.years)
+-        numMonths = numYears * MONTHS_PER_YEAR + delta.months
+-        numDays = tdelta.days   # Avoids estimates of days/month, days/year
+-        numHours = numDays * HOURS_PER_DAY + delta.hours
+-        numMinutes = numHours * MIN_PER_HOUR + delta.minutes
+-        numSeconds = np.floor(tdelta.total_seconds())
+-        numMicroseconds = np.floor(tdelta.total_seconds() * 1e6)
+-
+-        nums = [numYears, numMonths, numDays, numHours, numMinutes,
+-                numSeconds, numMicroseconds]
+-
+-        use_rrule_locator = [True] * 6 + [False]
+-
+-        # Default setting of bymonth, etc. to pass to rrule
+-        # [unused (for year), bymonth, bymonthday, byhour, byminute,
+-        #  bysecond, unused (for microseconds)]
+-        byranges = [None, 1, 1, 0, 0, 0, None]
+-
+-        # Loop over all the frequencies and try to find one that gives at
+-        # least a minticks tick positions.  Once this is found, look for
+-        # an interval from an list specific to that frequency that gives no
+-        # more than maxticks tick positions. Also, set up some ranges
+-        # (bymonth, etc.) as appropriate to be passed to rrulewrapper.
+-        for i, (freq, num) in enumerate(zip(self._freqs, nums)):
+-            # If this particular frequency doesn't give enough ticks, continue
+-            if num < self.minticks:
+-                # Since we're not using this particular frequency, set
+-                # the corresponding by_ to None so the rrule can act as
+-                # appropriate
+-                byranges[i] = None
+-                continue
+-
+-            # Find the first available interval that doesn't give too many
+-            # ticks
+-            for interval in self.intervald[freq]:
+-                if num <= interval * (self.maxticks[freq] - 1):
+-                    break
+-            else:
+-                if not (self.interval_multiples and freq == DAILY):
+-                    _api.warn_external(
+-                        f"AutoDateLocator was unable to pick an appropriate "
+-                        f"interval for this date range. It may be necessary "
+-                        f"to add an interval value to the AutoDateLocator's "
+-                        f"intervald dictionary. Defaulting to {interval}.")
+-
+-            # Set some parameters as appropriate
+-            self._freq = freq
+-
+-            if self._byranges[i] and self.interval_multiples:
+-                byranges[i] = self._byranges[i][::interval]
+-                if i in (DAILY, WEEKLY):
+-                    if interval == 14:
+-                        # just make first and 15th.  Avoids 30th.
+-                        byranges[i] = [1, 15]
+-                    elif interval == 7:
+-                        byranges[i] = [1, 8, 15, 22]
+-
+-                interval = 1
+-            else:
+-                byranges[i] = self._byranges[i]
+-            break
+-        else:
+-            interval = 1
+-
+-        if (freq == YEARLY) and self.interval_multiples:
+-            locator = YearLocator(interval, tz=self.tz)
+-        elif use_rrule_locator[i]:
+-            _, bymonth, bymonthday, byhour, byminute, bysecond, _ = byranges
+-            rrule = rrulewrapper(self._freq, interval=interval,
+-                                 dtstart=dmin, until=dmax,
+-                                 bymonth=bymonth, bymonthday=bymonthday,
+-                                 byhour=byhour, byminute=byminute,
+-                                 bysecond=bysecond)
+-
+-            locator = RRuleLocator(rrule, self.tz)
+-        else:
+-            locator = MicrosecondLocator(interval, tz=self.tz)
+-            if date2num(dmin) > 70 * 365 and interval < 1000:
+-                _api.warn_external(
+-                    'Plotting microsecond time intervals for dates far from '
+-                    f'the epoch (time origin: {get_epoch()}) is not well-'
+-                    'supported. See matplotlib.dates.set_epoch to change the '
+-                    'epoch.')
+-
+-        locator.set_axis(self.axis)
+-        return locator
+-
+-
+-class YearLocator(RRuleLocator):
+-    """
+-    Make ticks on a given day of each year that is a multiple of base.
+-
+-    Examples::
+-
+-      # Tick every year on Jan 1st
+-      locator = YearLocator()
+-
+-      # Tick every 5 years on July 4th
+-      locator = YearLocator(5, month=7, day=4)
+-    """
+-    def __init__(self, base=1, month=1, day=1, tz=None):
+-        """
+-        Mark years that are multiple of base on a given month and day
+-        (default jan 1).
+-        """
+-        rule = rrulewrapper(YEARLY, interval=base, bymonth=month,
+-                            bymonthday=day, **self.hms0d)
+-        super().__init__(rule, tz)
+-        self.base = ticker._Edge_integer(base, 0)
+-
+-    def _create_rrule(self, vmin, vmax):
+-        # 'start' needs to be a multiple of the interval to create ticks on
+-        # interval multiples when the tick frequency is YEARLY
+-        ymin = max(self.base.le(vmin.year) * self.base.step, 1)
+-        ymax = min(self.base.ge(vmax.year) * self.base.step, 9999)
+-
+-        c = self.rule._construct
+-        replace = {'year': ymin,
+-                   'month': c.get('bymonth', 1),
+-                   'day': c.get('bymonthday', 1),
+-                   'hour': 0, 'minute': 0, 'second': 0}
+-
+-        start = vmin.replace(**replace)
+-        stop = start.replace(year=ymax)
+-        self.rule.set(dtstart=start, until=stop)
+-
+-        return start, stop
+-
+-
+-class MonthLocator(RRuleLocator):
+-    """
+-    Make ticks on occurrences of each month, e.g., 1, 3, 12.
+-    """
+-    def __init__(self, bymonth=None, bymonthday=1, interval=1, tz=None):
+-        """
+-        Mark every month in *bymonth*; *bymonth* can be an int or
+-        sequence.  Default is ``range(1, 13)``, i.e. every month.
+-
+-        *interval* is the interval between each iteration.  For
+-        example, if ``interval=2``, mark every second occurrence.
+-        """
+-        if bymonth is None:
+-            bymonth = range(1, 13)
+-        elif isinstance(bymonth, np.ndarray):
+-            # This fixes a bug in dateutil <= 2.3 which prevents the use of
+-            # numpy arrays in (among other things) the bymonthday, byweekday
+-            # and bymonth parameters.
+-            bymonth = [x.item() for x in bymonth.astype(int)]
+-
+-        rule = rrulewrapper(MONTHLY, bymonth=bymonth, bymonthday=bymonthday,
+-                            interval=interval, **self.hms0d)
+-        super().__init__(rule, tz)
+-
+-
+-class WeekdayLocator(RRuleLocator):
+-    """
+-    Make ticks on occurrences of each weekday.
+-    """
+-
+-    def __init__(self, byweekday=1, interval=1, tz=None):
+-        """
+-        Mark every weekday in *byweekday*; *byweekday* can be a number or
+-        sequence.
+-
+-        Elements of *byweekday* must be one of MO, TU, WE, TH, FR, SA,
+-        SU, the constants from :mod:`dateutil.rrule`, which have been
+-        imported into the :mod:`matplotlib.dates` namespace.
+-
+-        *interval* specifies the number of weeks to skip.  For example,
+-        ``interval=2`` plots every second week.
+-        """
+-        if isinstance(byweekday, np.ndarray):
+-            # This fixes a bug in dateutil <= 2.3 which prevents the use of
+-            # numpy arrays in (among other things) the bymonthday, byweekday
+-            # and bymonth parameters.
+-            [x.item() for x in byweekday.astype(int)]
+-
+-        rule = rrulewrapper(DAILY, byweekday=byweekday,
+-                            interval=interval, **self.hms0d)
+-        super().__init__(rule, tz)
+-
+-
+-class DayLocator(RRuleLocator):
+-    """
+-    Make ticks on occurrences of each day of the month.  For example,
+-    1, 15, 30.
+-    """
+-    def __init__(self, bymonthday=None, interval=1, tz=None):
+-        """
+-        Mark every day in *bymonthday*; *bymonthday* can be an int or sequence.
+-
+-        Default is to tick every day of the month: ``bymonthday=range(1, 32)``.
+-        """
+-        if interval != int(interval) or interval < 1:
+-            raise ValueError("interval must be an integer greater than 0")
+-        if bymonthday is None:
+-            bymonthday = range(1, 32)
+-        elif isinstance(bymonthday, np.ndarray):
+-            # This fixes a bug in dateutil <= 2.3 which prevents the use of
+-            # numpy arrays in (among other things) the bymonthday, byweekday
+-            # and bymonth parameters.
+-            bymonthday = [x.item() for x in bymonthday.astype(int)]
+-
+-        rule = rrulewrapper(DAILY, bymonthday=bymonthday,
+-                            interval=interval, **self.hms0d)
+-        super().__init__(rule, tz)
+-
+-
+-class HourLocator(RRuleLocator):
+-    """
+-    Make ticks on occurrences of each hour.
+-    """
+-    def __init__(self, byhour=None, interval=1, tz=None):
+-        """
+-        Mark every hour in *byhour*; *byhour* can be an int or sequence.
+-        Default is to tick every hour: ``byhour=range(24)``
+-
+-        *interval* is the interval between each iteration.  For
+-        example, if ``interval=2``, mark every second occurrence.
+-        """
+-        if byhour is None:
+-            byhour = range(24)
+-
+-        rule = rrulewrapper(HOURLY, byhour=byhour, interval=interval,
+-                            byminute=0, bysecond=0)
+-        super().__init__(rule, tz)
+-
+-
+-class MinuteLocator(RRuleLocator):
+-    """
+-    Make ticks on occurrences of each minute.
+-    """
+-    def __init__(self, byminute=None, interval=1, tz=None):
+-        """
+-        Mark every minute in *byminute*; *byminute* can be an int or
+-        sequence.  Default is to tick every minute: ``byminute=range(60)``
+-
+-        *interval* is the interval between each iteration.  For
+-        example, if ``interval=2``, mark every second occurrence.
+-        """
+-        if byminute is None:
+-            byminute = range(60)
+-
+-        rule = rrulewrapper(MINUTELY, byminute=byminute, interval=interval,
+-                            bysecond=0)
+-        super().__init__(rule, tz)
+-
+-
+-class SecondLocator(RRuleLocator):
+-    """
+-    Make ticks on occurrences of each second.
+-    """
+-    def __init__(self, bysecond=None, interval=1, tz=None):
+-        """
+-        Mark every second in *bysecond*; *bysecond* can be an int or
+-        sequence.  Default is to tick every second: ``bysecond = range(60)``
+-
+-        *interval* is the interval between each iteration.  For
+-        example, if ``interval=2``, mark every second occurrence.
+-
+-        """
+-        if bysecond is None:
+-            bysecond = range(60)
+-
+-        rule = rrulewrapper(SECONDLY, bysecond=bysecond, interval=interval)
+-        super().__init__(rule, tz)
+-
+-
+-class MicrosecondLocator(DateLocator):
+-    """
+-    Make ticks on regular intervals of one or more microsecond(s).
+-
+-    .. note::
+-
+-        By default, Matplotlib uses a floating point representation of time in
+-        days since the epoch, so plotting data with
+-        microsecond time resolution does not work well for
+-        dates that are far (about 70 years) from the epoch (check with
+-        `~.dates.get_epoch`).
+-
+-        If you want sub-microsecond resolution time plots, it is strongly
+-        recommended to use floating point seconds, not datetime-like
+-        time representation.
+-
+-        If you really must use datetime.datetime() or similar and still
+-        need microsecond precision, change the time origin via
+-        `.dates.set_epoch` to something closer to the dates being plotted.
+-        See :doc:`/gallery/ticks/date_precision_and_epochs`.
+-
+-    """
+-    def __init__(self, interval=1, tz=None):
+-        """
+-        *interval* is the interval between each iteration.  For
+-        example, if ``interval=2``, mark every second microsecond.
+-
+-        """
+-        super().__init__(tz=tz)
+-        self._interval = interval
+-        self._wrapped_locator = ticker.MultipleLocator(interval)
+-
+-    def set_axis(self, axis):
+-        self._wrapped_locator.set_axis(axis)
+-        return super().set_axis(axis)
+-
+-    @_api.deprecated("3.5", alternative=".axis.set_view_interval")
+-    def set_view_interval(self, vmin, vmax):
+-        self._wrapped_locator.set_view_interval(vmin, vmax)
+-        return super().set_view_interval(vmin, vmax)
+-
+-    @_api.deprecated("3.5", alternative=".axis.set_data_interval")
+-    def set_data_interval(self, vmin, vmax):
+-        self._wrapped_locator.set_data_interval(vmin, vmax)
+-        return super().set_data_interval(vmin, vmax)
+-
+-    def __call__(self):
+-        # if no data have been set, this will tank with a ValueError
+-        try:
+-            dmin, dmax = self.viewlim_to_dt()
+-        except ValueError:
+-            return []
+-
+-        return self.tick_values(dmin, dmax)
+-
+-    def tick_values(self, vmin, vmax):
+-        nmin, nmax = date2num((vmin, vmax))
+-        t0 = np.floor(nmin)
+-        nmax = nmax - t0
+-        nmin = nmin - t0
+-        nmin *= MUSECONDS_PER_DAY
+-        nmax *= MUSECONDS_PER_DAY
+-
+-        ticks = self._wrapped_locator.tick_values(nmin, nmax)
+-
+-        ticks = ticks / MUSECONDS_PER_DAY + t0
+-        return ticks
+-
+-    def _get_unit(self):
+-        # docstring inherited
+-        return 1. / MUSECONDS_PER_DAY
+-
+-    def _get_interval(self):
+-        # docstring inherited
+-        return self._interval
+-
+-
+-@_api.deprecated("3.5",
+-                 alternative="mdates.date2num(datetime.utcfromtimestamp(e))")
+-def epoch2num(e):
+-    """
+-    Convert UNIX time to days since Matplotlib epoch.
+-
+-    Parameters
+-    ----------
+-    e : list of floats
+-        Time in seconds since 1970-01-01.
+-
+-    Returns
+-    -------
+-    `numpy.array`
+-        Time in days since Matplotlib epoch (see `~.dates.get_epoch()`).
+-    """
+-
+-    dt = (np.datetime64('1970-01-01T00:00:00', 's') -
+-          np.datetime64(get_epoch(), 's')).astype(float)
+-
+-    return (dt + np.asarray(e)) / SEC_PER_DAY
+-
+-
+-@_api.deprecated("3.5", alternative="mdates.num2date(e).timestamp()")
+-def num2epoch(d):
+-    """
+-    Convert days since Matplotlib epoch to UNIX time.
+-
+-    Parameters
+-    ----------
+-    d : list of floats
+-        Time in days since Matplotlib epoch (see `~.dates.get_epoch()`).
+-
+-    Returns
+-    -------
+-    `numpy.array`
+-        Time in seconds since 1970-01-01.
+-    """
+-    dt = (np.datetime64('1970-01-01T00:00:00', 's') -
+-          np.datetime64(get_epoch(), 's')).astype(float)
+-
+-    return np.asarray(d) * SEC_PER_DAY - dt
+-
+-
+-def date_ticker_factory(span, tz=None, numticks=5):
+-    """
+-    Create a date locator with *numticks* (approx) and a date formatter
+-    for *span* in days.  Return value is (locator, formatter).
+-    """
+-
+-    if span == 0:
+-        span = 1 / HOURS_PER_DAY
+-
+-    mins = span * MINUTES_PER_DAY
+-    hrs = span * HOURS_PER_DAY
+-    days = span
+-    wks = span / DAYS_PER_WEEK
+-    months = span / DAYS_PER_MONTH      # Approx
+-    years = span / DAYS_PER_YEAR        # Approx
+-
+-    if years > numticks:
+-        locator = YearLocator(int(years / numticks), tz=tz)  # define
+-        fmt = '%Y'
+-    elif months > numticks:
+-        locator = MonthLocator(tz=tz)
+-        fmt = '%b %Y'
+-    elif wks > numticks:
+-        locator = WeekdayLocator(tz=tz)
+-        fmt = '%a, %b %d'
+-    elif days > numticks:
+-        locator = DayLocator(interval=math.ceil(days / numticks), tz=tz)
+-        fmt = '%b %d'
+-    elif hrs > numticks:
+-        locator = HourLocator(interval=math.ceil(hrs / numticks), tz=tz)
+-        fmt = '%H:%M\n%b %d'
+-    elif mins > numticks:
+-        locator = MinuteLocator(interval=math.ceil(mins / numticks), tz=tz)
+-        fmt = '%H:%M:%S'
+-    else:
+-        locator = MinuteLocator(tz=tz)
+-        fmt = '%H:%M:%S'
+-
+-    formatter = DateFormatter(fmt, tz=tz)
+-    return locator, formatter
+-
+-
+-class DateConverter(units.ConversionInterface):
+-    """
+-    Converter for `datetime.date` and `datetime.datetime` data, or for
+-    date/time data represented as it would be converted by `date2num`.
+-
+-    The 'unit' tag for such data is None or a tzinfo instance.
+-    """
+-
+-    def __init__(self, *, interval_multiples=True):
+-        self._interval_multiples = interval_multiples
+-        super().__init__()
+-
+-    def axisinfo(self, unit, axis):
+-        """
+-        Return the `~matplotlib.units.AxisInfo` for *unit*.
+-
+-        *unit* is a tzinfo instance or None.
+-        The *axis* argument is required but not used.
+-        """
+-        tz = unit
+-
+-        majloc = AutoDateLocator(tz=tz,
+-                                 interval_multiples=self._interval_multiples)
+-        majfmt = AutoDateFormatter(majloc, tz=tz)
+-        datemin = datetime.date(2000, 1, 1)
+-        datemax = datetime.date(2010, 1, 1)
+-
+-        return units.AxisInfo(majloc=majloc, majfmt=majfmt, label='',
+-                              default_limits=(datemin, datemax))
+-
+-    @staticmethod
+-    def convert(value, unit, axis):
+-        """
+-        If *value* is not already a number or sequence of numbers, convert it
+-        with `date2num`.
+-
+-        The *unit* and *axis* arguments are not used.
+-        """
+-        return date2num(value)
+-
+-    @staticmethod
+-    def default_units(x, axis):
+-        """
+-        Return the tzinfo instance of *x* or of its first element, or None
+-        """
+-        if isinstance(x, np.ndarray):
+-            x = x.ravel()
+-
+-        try:
+-            x = cbook.safe_first_element(x)
+-        except (TypeError, StopIteration):
+-            pass
+-
+-        try:
+-            return x.tzinfo
+-        except AttributeError:
+-            pass
+-        return None
+-
+-
+-class ConciseDateConverter(DateConverter):
+-    # docstring inherited
+-
+-    def __init__(self, formats=None, zero_formats=None, offset_formats=None,
+-                 show_offset=True, *, interval_multiples=True):
+-        self._formats = formats
+-        self._zero_formats = zero_formats
+-        self._offset_formats = offset_formats
+-        self._show_offset = show_offset
+-        self._interval_multiples = interval_multiples
+-        super().__init__()
+-
+-    def axisinfo(self, unit, axis):
+-        # docstring inherited
+-        tz = unit
+-        majloc = AutoDateLocator(tz=tz,
+-                                 interval_multiples=self._interval_multiples)
+-        majfmt = ConciseDateFormatter(majloc, tz=tz, formats=self._formats,
+-                                      zero_formats=self._zero_formats,
+-                                      offset_formats=self._offset_formats,
+-                                      show_offset=self._show_offset)
+-        datemin = datetime.date(2000, 1, 1)
+-        datemax = datetime.date(2010, 1, 1)
+-        return units.AxisInfo(majloc=majloc, majfmt=majfmt, label='',
+-                              default_limits=(datemin, datemax))
+-
+-
+-class _SwitchableDateConverter:
+-    """
+-    Helper converter-like object that generates and dispatches to
+-    temporary ConciseDateConverter or DateConverter instances based on
+-    :rc:`date.converter` and :rc:`date.interval_multiples`.
+-    """
+-
+-    @staticmethod
+-    def _get_converter():
+-        converter_cls = {
+-            "concise": ConciseDateConverter, "auto": DateConverter}[
+-                mpl.rcParams["date.converter"]]
+-        interval_multiples = mpl.rcParams["date.interval_multiples"]
+-        return converter_cls(interval_multiples=interval_multiples)
+-
+-    def axisinfo(self, *args, **kwargs):
+-        return self._get_converter().axisinfo(*args, **kwargs)
+-
+-    def default_units(self, *args, **kwargs):
+-        return self._get_converter().default_units(*args, **kwargs)
+-
+-    def convert(self, *args, **kwargs):
+-        return self._get_converter().convert(*args, **kwargs)
+-
+-
+-units.registry[np.datetime64] = \
+-    units.registry[datetime.date] = \
+-    units.registry[datetime.datetime] = \
+-    _SwitchableDateConverter()

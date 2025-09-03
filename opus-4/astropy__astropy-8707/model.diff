@@ -1,0 +1,170 @@
+diff --git a/astropy/io/fits/card.py b/astropy/io/fits/card.py
+index 8c1ac5d738..7f0e73b763 100644
+--- a/astropy/io/fits/card.py
++++ b/astropy/io/fits/card.py
+@@ -535,7 +535,10 @@ class Card(_Verify):
+         if not self._verified:
+             # The card image has not been parsed yet; compare directly with the
+             # string representation of a blank card
+-            return self._image == BLANK_CARD
++            if isinstance(self._image, bytes):
++                return self._image == BLANK_CARD.encode('ascii')
++            else:
++                return self._image == BLANK_CARD
+ 
+         # If the keyword, value, and comment are all empty (for self.value
+         # explicitly check that it is a string value, since a blank value is
+@@ -1277,9 +1280,15 @@ def _pad(input):
+         if strlen == 0:
+             return input
+         else:
+-            return input + ' ' * (Card.length - strlen)
++            if isinstance(input, bytes):
++                return input + b' ' * (Card.length - strlen)
++            else:
++                return input + ' ' * (Card.length - strlen)
+ 
+     # minimum length is 80
+     else:
+         strlen = _len % Card.length
+-        return input + ' ' * (Card.length - strlen)
++        if isinstance(input, bytes):
++            return input + b' ' * (Card.length - strlen)
++        else:
++            return input + ' ' * (Card.length - strlen)
+diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
+index ad07e6d52d..34194f021a 100644
+--- a/astropy/io/fits/header.py
++++ b/astropy/io/fits/header.py
+@@ -334,10 +334,10 @@ class Header:
+ 
+         Parameters
+         ----------
+-        data : str
+-           String containing the entire header.
++        data : str or bytes
++           String or bytes containing the entire header.
+ 
+-        sep : str, optional
++        sep : str or bytes, optional
+             The string separating cards from each other, such as a newline.  By
+             default there is no card separator (as is the case in a raw FITS
+             file).
+@@ -350,12 +350,30 @@ class Header:
+ 
+         cards = []
+ 
++        # Handle bytes input by converting constants to bytes
++        if isinstance(data, bytes):
++            if isinstance(sep, str):
++                sep = sep.encode('ascii')
++            continue_marker = b'CONTINUE'
++            end_marker = b'END'
++            end_card = END_CARD.encode('ascii')
++            join_char = b''
++        else:
++            continue_marker = 'CONTINUE'
++            end_marker = 'END'
++            end_card = END_CARD
++            join_char = ''
++
+         # If the card separator contains characters that may validly appear in
+         # a card, the only way to unambiguously distinguish between cards is to
+         # require that they be Card.length long.  However, if the separator
+         # contains non-valid characters (namely \n) the cards may be split
+         # immediately at the separator
+-        require_full_cardlength = set(sep).issubset(VALID_HEADER_CHARS)
++        if isinstance(sep, bytes):
++            valid_chars_bytes = set(c.encode('ascii')[0] for c in VALID_HEADER_CHARS)
++            require_full_cardlength = set(sep).issubset(valid_chars_bytes)
++        else:
++            require_full_cardlength = set(sep).issubset(VALID_HEADER_CHARS)
+ 
+         # Split the header into individual cards
+         idx = 0
+@@ -374,17 +392,21 @@ class Header:
+             idx = end_idx + len(sep)
+ 
+             if image:
+-                if next_image[:8] == 'CONTINUE':
++                if next_image[:8] == continue_marker:
+                     image.append(next_image)
+                     continue
+-                cards.append(Card.fromstring(''.join(image)))
++                cards.append(Card.fromstring(join_char.join(image)))
+ 
+             if require_full_cardlength:
+-                if next_image == END_CARD:
++                if next_image == end_card:
+                     image = []
+                     break
+             else:
+-                if next_image.split(sep)[0].rstrip() == 'END':
++                if isinstance(next_image, bytes):
++                    split_result = next_image.split(sep)[0].rstrip()
++                else:
++                    split_result = next_image.split(sep)[0].rstrip()
++                if split_result == end_marker:
+                     image = []
+                     break
+ 
+@@ -392,7 +414,7 @@ class Header:
+ 
+         # Add the last image that was found before the end, if any
+         if image:
+-            cards.append(Card.fromstring(''.join(image)))
++            cards.append(Card.fromstring(join_char.join(image)))
+ 
+         return cls._fromcards(cards)
+ 
+diff --git a/test_fromstring_bytes.py b/test_fromstring_bytes.py
+new file mode 100644
+index 0000000000..b11ae369b6
+--- /dev/null
++++ b/test_fromstring_bytes.py
+@@ -0,0 +1,45 @@
++#!/usr/bin/env python
++"""Test script to verify the issue with Header.fromstring and Card.fromstring not accepting bytes"""
++
++import sys
++from astropy.io.fits import Header, Card
++
++# Test data - a simple FITS header as bytes
++header_bytes = b"SIMPLE  =                    T / conforms to FITS standard                      BITPIX  =                    8 / array data type                                NAXIS   =                    0 / number of array dimensions                     END                                                                             "
++
++# Test Header.fromstring with bytes
++print("Testing Header.fromstring with bytes...")
++try:
++    h = Header.fromstring(header_bytes)
++    print("SUCCESS: Header.fromstring accepted bytes")
++    print(f"Header: {dict(h)}")
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")
++
++# Test with string (should work)
++print("\nTesting Header.fromstring with string...")
++try:
++    h = Header.fromstring(header_bytes.decode('ascii'))
++    print("SUCCESS: Header.fromstring accepted string")
++    print(f"Header: {dict(h)}")
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")
++
++# Test Card.fromstring with bytes
++print("\nTesting Card.fromstring with bytes...")
++card_bytes = b"KEYWORD =                   42 / This is a comment                              "
++try:
++    c = Card.fromstring(card_bytes)
++    print("SUCCESS: Card.fromstring accepted bytes")
++    print(f"Card: keyword={c.keyword}, value={c.value}, comment={c.comment}")
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")
++
++# Test Card.fromstring with string (should work)
++print("\nTesting Card.fromstring with string...")
++try:
++    c = Card.fromstring(card_bytes.decode('ascii'))
++    print("SUCCESS: Card.fromstring accepted string")
++    print(f"Card: keyword={c.keyword}, value={c.value}, comment={c.comment}")
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")

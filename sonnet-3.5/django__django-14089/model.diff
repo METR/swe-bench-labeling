@@ -1,0 +1,46 @@
+diff --git a/django/utils/datastructures.py b/django/utils/datastructures.py
+index 871b016715..044068a3c5 100644
+--- a/django/utils/datastructures.py
++++ b/django/utils/datastructures.py
+@@ -34,6 +34,9 @@ class OrderedSet:
+     def __len__(self):
+         return len(self.dict)
+ 
++    def __reversed__(self):
++        return reversed(self.dict.keys())
++
+ 
+ class MultiValueDictKeyError(KeyError):
+     pass
+diff --git a/tests/utils_tests/test_datastructures.py b/tests/utils_tests/test_datastructures.py
+index 45d172f984..e19c8dd993 100644
+--- a/tests/utils_tests/test_datastructures.py
++++ b/tests/utils_tests/test_datastructures.py
+@@ -55,6 +55,10 @@ class OrderedSetTests(SimpleTestCase):
+         s.add(2)
+         self.assertEqual(len(s), 2)
+ 
++    def test_reversed(self):
++        s = OrderedSet([1, 2, 3, 4])
++        self.assertEqual(list(reversed(s)), [4, 3, 2, 1])
++
+ 
+ class MultiValueDictTests(SimpleTestCase):
+ 
+diff --git a/tests/utils_tests/test_settings.py b/tests/utils_tests/test_settings.py
+new file mode 100644
+index 0000000000..de09bc43ae
+--- /dev/null
++++ b/tests/utils_tests/test_settings.py
+@@ -0,0 +1,11 @@
++SECRET_KEY = 'dummy'
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}

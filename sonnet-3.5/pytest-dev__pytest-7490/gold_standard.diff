@@ -1,0 +1,128 @@
+From 78f2dc08fa998622bb52edd992e04e09918712da Mon Sep 17 00:00:00 2001
+From: Ran Benita <ran@unusedvar.com>
+Date: Mon, 13 Jul 2020 23:17:39 +0300
+Subject: [PATCH 1/2] skipping: slight simplification
+
+---
+ src/_pytest/skipping.py | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py
+index 335e10996a2..24c89eb6dea 100644
+--- a/src/_pytest/skipping.py
++++ b/src/_pytest/skipping.py
+@@ -231,11 +231,9 @@ def evaluate_xfail_marks(item: Item) -> Optional[Xfail]:
+ 
+ @hookimpl(tryfirst=True)
+ def pytest_runtest_setup(item: Item) -> None:
+-    item._store[skipped_by_mark_key] = False
+-
+     skipped = evaluate_skip_marks(item)
++    item._store[skipped_by_mark_key] = skipped is not None
+     if skipped:
+-        item._store[skipped_by_mark_key] = True
+         skip(skipped.reason)
+ 
+     if not item.config.option.runxfail:
+
+From ccad10a82908d7a12cd6024e00be11af413edf1c Mon Sep 17 00:00:00 2001
+From: Ran Benita <ran@unusedvar.com>
+Date: Mon, 13 Jul 2020 21:34:07 +0300
+Subject: [PATCH 2/2] skipping: fix dynamic xfail mark added in runtest not
+ respected
+
+If a test runtest phase (not setup) dynamically adds a pytest.mark.xfail
+mark to the item, it should be respected, but it wasn't. This regressed
+in 3e6fe92b7ea3c120e8024a970bf37a7c6c137714 (not released).
+
+Fix it by just always refreshing the mark if needed. This is mostly what
+was done before but in a more roundabout way.
+---
+ src/_pytest/skipping.py  | 17 ++++++++++-------
+ testing/test_skipping.py | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+), 7 deletions(-)
+
+diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py
+index 24c89eb6dea..e333e78df9b 100644
+--- a/src/_pytest/skipping.py
++++ b/src/_pytest/skipping.py
+@@ -236,10 +236,9 @@ def pytest_runtest_setup(item: Item) -> None:
+     if skipped:
+         skip(skipped.reason)
+ 
+-    if not item.config.option.runxfail:
+-        item._store[xfailed_key] = xfailed = evaluate_xfail_marks(item)
+-        if xfailed and not xfailed.run:
+-            xfail("[NOTRUN] " + xfailed.reason)
++    item._store[xfailed_key] = xfailed = evaluate_xfail_marks(item)
++    if xfailed and not item.config.option.runxfail and not xfailed.run:
++        xfail("[NOTRUN] " + xfailed.reason)
+ 
+ 
+ @hookimpl(hookwrapper=True)
+@@ -248,12 +247,16 @@ def pytest_runtest_call(item: Item) -> Generator[None, None, None]:
+     if xfailed is None:
+         item._store[xfailed_key] = xfailed = evaluate_xfail_marks(item)
+ 
+-    if not item.config.option.runxfail:
+-        if xfailed and not xfailed.run:
+-            xfail("[NOTRUN] " + xfailed.reason)
++    if xfailed and not item.config.option.runxfail and not xfailed.run:
++        xfail("[NOTRUN] " + xfailed.reason)
+ 
+     yield
+ 
++    # The test run may have added an xfail mark dynamically.
++    xfailed = item._store.get(xfailed_key, None)
++    if xfailed is None:
++        item._store[xfailed_key] = xfailed = evaluate_xfail_marks(item)
++
+ 
+ @hookimpl(hookwrapper=True)
+ def pytest_runtest_makereport(item: Item, call: CallInfo[None]):
+diff --git a/testing/test_skipping.py b/testing/test_skipping.py
+index 8fceb37aa71..61de0b3e177 100644
+--- a/testing/test_skipping.py
++++ b/testing/test_skipping.py
+@@ -1,6 +1,7 @@
+ import sys
+ 
+ import pytest
++from _pytest.pytester import Testdir
+ from _pytest.runner import runtestprotocol
+ from _pytest.skipping import evaluate_skip_marks
+ from _pytest.skipping import evaluate_xfail_marks
+@@ -425,6 +426,33 @@ def test_this2(arg):
+         result = testdir.runpytest(p)
+         result.stdout.fnmatch_lines(["*1 xfailed*"])
+ 
++    def test_dynamic_xfail_set_during_runtest_failed(self, testdir: Testdir) -> None:
++        # Issue #7486.
++        p = testdir.makepyfile(
++            """
++            import pytest
++            def test_this(request):
++                request.node.add_marker(pytest.mark.xfail(reason="xfail"))
++                assert 0
++        """
++        )
++        result = testdir.runpytest(p)
++        result.assert_outcomes(xfailed=1)
++
++    def test_dynamic_xfail_set_during_runtest_passed_strict(
++        self, testdir: Testdir
++    ) -> None:
++        # Issue #7486.
++        p = testdir.makepyfile(
++            """
++            import pytest
++            def test_this(request):
++                request.node.add_marker(pytest.mark.xfail(reason="xfail", strict=True))
++        """
++        )
++        result = testdir.runpytest(p)
++        result.assert_outcomes(failed=1)
++
+     @pytest.mark.parametrize(
+         "expected, actual, matchline",
+         [

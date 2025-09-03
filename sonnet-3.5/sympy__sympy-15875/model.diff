@@ -1,0 +1,121 @@
+diff --git a/sympy/core/add.py b/sympy/core/add.py
+index 83a5f2aedc..7ccddb24cc 100644
+--- a/sympy/core/add.py
++++ b/sympy/core/add.py
+@@ -530,40 +530,51 @@ def _eval_is_imaginary(self):
+             return False
+ 
+     def _eval_is_zero(self):
++        print(f"_eval_is_zero called for {self}")
+         if self.is_commutative is False:
+             # issue 10528: there is no way to know if a nc symbol
+             # is zero or not
+-            return
++            print("Non-commutative case")
++            return None
+         nz = []
+         z = 0
+-        im_or_z = False
+-        im = False
++        complex_terms = False
+         for a in self.args:
+-            if a.is_real:
+-                if a.is_zero:
+-                    z += 1
+-                elif a.is_zero is False:
++            print(f"Checking arg: {a}")
++            if a.is_zero:
++                z += 1
++            elif a.is_zero is False:
++                if a.is_real or a.is_imaginary or a.is_complex:
++                    complex_terms = True
+                     nz.append(a)
+                 else:
+-                    return
+-            elif a.is_imaginary:
+-                im = True
+-            elif (S.ImaginaryUnit*a).is_real:
+-                im_or_z = True
++                    print(f"Returning None for arg: {a}")
++                    return None
+             else:
+-                return
++                print(f"Returning None for arg: {a}")
++                return None
+         if z == len(self.args):
++            print("All args are zero")
+             return True
+-        if len(nz) == len(self.args):
++        if complex_terms:
++            print("Complex terms found")
+             return None
+-        b = self.func(*nz)
+-        if b.is_zero:
+-            if not im_or_z and not im:
++        if len(nz) == len(self.args):
++            b = self.func(*nz)
++            print(f"Checking reconstructed expression: {b}")
++            if b.is_zero:
+                 return True
+-            if im and not im_or_z:
++            if b.is_zero is False:
+                 return False
+-        if b.is_zero is False:
+-            return False
++        print("Returning None as default")
++        return None
++
++    @property
++    def is_zero(self):
++        print(f"is_zero property called for {self}")
++        result = self._eval_is_zero()
++        print(f"is_zero result: {result}")
++        return result
+ 
+     def _eval_is_odd(self):
+         l = [f for f in self.args if not (f.is_even is True)]
+diff --git a/test_is_zero.py b/test_is_zero.py
+new file mode 100644
+index 0000000000..4b023d25e9
+--- /dev/null
++++ b/test_is_zero.py
+@@ -0,0 +1,38 @@
++
++from sympy import I, Add, S, simplify
++
++def test_is_zero_complex():
++    e = -2*I + (1 + I)**2
++    print(f"e = {e}")
++    print(f"e.is_zero = {e.is_zero}")
++    assert e.is_zero is None, f"Expected None, got {e.is_zero}"
++    
++    add_e = Add(e, S.Zero)
++    print(f"Add(e, S.Zero) = {add_e}")
++    print(f"Add(e, S.Zero).is_zero = {add_e.is_zero}")
++    assert add_e.is_zero is None, f"Expected None, got {add_e.is_zero}"
++    
++    simplified_e = simplify(e)
++    print(f"simplify(e) = {simplified_e}")
++    print(f"simplify(e).is_zero = {simplified_e.is_zero}")
++    assert simplified_e.is_zero is True, f"Expected True, got {simplified_e.is_zero}"
++
++    # Additional test cases
++    test_cases = [
++        I + 1,
++        2*I - 2*I,
++        3 + 4*I - 3 - 4*I
++    ]
++    
++    for case in test_cases:
++        print(f"\nTesting: {case}")
++        print(f"Type: {type(case)}")
++        print(f"is_zero = {case.is_zero}")
++        print(f"is_complex = {case.is_complex}")
++        print(f"is_real = {case.is_real}")
++        print(f"is_imaginary = {case.is_imaginary}")
++        assert case.is_zero is None, f"Expected None, got {case.is_zero}"
++
++if __name__ == "__main__":
++    test_is_zero_complex()
++    print("All tests passed!")
+\ No newline at end of file

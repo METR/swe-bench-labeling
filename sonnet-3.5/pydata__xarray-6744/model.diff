@@ -1,0 +1,51 @@
+diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
+index aef290f6..7459ddc1 100644
+--- a/xarray/core/rolling.py
++++ b/xarray/core/rolling.py
+@@ -268,12 +268,42 @@ class DataArrayRolling(Rolling["DataArray"]):
+         self.window_labels = self.obj[self.dim[0]]
+ 
+     def __iter__(self) -> Iterator[tuple[RollingKey, DataArray]]:
++        """
++        Iterate over the rolling windows.
++
++        Yields
++        ------
++        label : RollingKey
++            The label of the window. When center is True, this is the label of the center
++            element of the window. When center is False, this is the label of the last
++            element in the window.
++        window : DataArray
++            A DataArray containing the data in the current window.
++
++        Notes
++        -----
++        The iteration accounts for the 'center' parameter, adjusting the window positions
++        and labels accordingly.
++        """
+         if self.ndim > 1:
+             raise ValueError("__iter__ is only supported for 1d-rolling")
+-        stops = np.arange(1, len(self.window_labels) + 1)
+-        starts = stops - int(self.window[0])
+-        starts[: int(self.window[0])] = 0
+-        for (label, start, stop) in zip(self.window_labels, starts, stops):
++        window_size = int(self.window[0])
++        half_window = window_size // 2
++        data_size = len(self.window_labels)
++        
++        if self.center:
++            stops = np.arange(window_size, data_size + half_window + 1)
++            starts = stops - window_size
++            starts = np.maximum(starts, 0)
++            stops = np.minimum(stops, data_size)
++            labels = self.window_labels[half_window:data_size]
++        else:
++            stops = np.arange(1, data_size + 1)
++            starts = stops - window_size
++            starts = np.maximum(starts, 0)
++            labels = self.window_labels
++
++        for (label, start, stop) in zip(labels, starts, stops):
+             window = self.obj.isel({self.dim[0]: slice(start, stop)})
+ 
+             counts = window.count(dim=self.dim[0])

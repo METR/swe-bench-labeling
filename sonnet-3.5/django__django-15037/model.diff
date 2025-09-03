@@ -1,0 +1,20 @@
+diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py
+index f9b4bfb477..f6410835e4 100644
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -124,10 +124,15 @@ class Command(BaseCommand):
+                             "self" if relations[column_name][1] == table_name
+                             else table2model(relations[column_name][1])
+                         )
++                        rel_field = relations[column_name][2]  # Get the referenced field
+                         if rel_to in known_models:
+                             field_type = '%s(%s' % (rel_type, rel_to)
+                         else:
+                             field_type = "%s('%s'" % (rel_type, rel_to)
++                        if rel_field and rel_field != 'id':
++                            field_type += ", to_field='%s'" % rel_field
++                        # Add a comment to explain the foreign key reference
++                        comment_notes.append('Field references %s.%s' % (rel_to, rel_field))
+                     else:
+                         # Calling `get_field_type` to get the field type string and any
+                         # additional parameters and notes.

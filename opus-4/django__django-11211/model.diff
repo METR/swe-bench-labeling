@@ -1,0 +1,114 @@
+diff --git a/django/contrib/contenttypes/fields.py b/django/contrib/contenttypes/fields.py
+index ed98ecb48c..e68d2498ab 100644
+--- a/django/contrib/contenttypes/fields.py
++++ b/django/contrib/contenttypes/fields.py
+@@ -191,6 +191,12 @@ class GenericForeignKey(FieldCacheMixin):
+         for ct_id, fkeys in fk_dict.items():
+             instance = instance_dict[ct_id]
+             ct = self.get_content_type(id=ct_id, using=instance._state.db)
++            # Convert foreign keys to the appropriate type for the model's primary key field
++            model = ct.model_class()
++            if model:
++                pk_field = model._meta.pk
++                # Convert each fkey value using the pk field's to_python method
++                fkeys = [pk_field.to_python(fk) for fk in fkeys]
+             ret_val.extend(ct.get_all_objects_for_this_type(pk__in=fkeys))
+ 
+         # For doing the join in Python, we have to match both the FK val and the
+@@ -202,7 +208,9 @@ class GenericForeignKey(FieldCacheMixin):
+             else:
+                 model = self.get_content_type(id=ct_id,
+                                               using=obj._state.db).model_class()
+-                return (model._meta.pk.get_prep_value(getattr(obj, self.fk_field)),
++                # Use to_python to ensure the fk value is in the correct Python type
++                fk_val = getattr(obj, self.fk_field)
++                return (model._meta.pk.to_python(fk_val),
+                         model)
+ 
+         return (
+diff --git a/test_uuid_prefetch.py b/test_uuid_prefetch.py
+new file mode 100644
+index 0000000000..21dd96ac97
+--- /dev/null
++++ b/test_uuid_prefetch.py
+@@ -0,0 +1,80 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.test.utils import get_runner
++
++if __name__ == "__main__":
++    os.environ['DJANGO_SETTINGS_MODULE'] = 'tests.test_sqlite'
++    django.setup()
++    
++    # Create the test
++    from django.test import TestCase
++    from django.contrib.contenttypes.fields import GenericForeignKey
++    from django.contrib.contenttypes.models import ContentType
++    from django.db import models
++    import uuid
++    
++    class UUIDModel(models.Model):
++        id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
++        name = models.CharField(max_length=100)
++        
++        class Meta:
++            app_label = 'contenttypes'
++    
++    class GFKModel(models.Model):
++        content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
++        object_id = models.CharField(max_length=255)
++        content_object = GenericForeignKey('content_type', 'object_id')
++        
++        class Meta:
++            app_label = 'contenttypes'
++    
++    class TestUUIDPrefetch(TestCase):
++        @classmethod
++        def setUpClass(cls):
++            super().setUpClass()
++            # Create the tables
++            from django.db import connection
++            with connection.schema_editor() as schema_editor:
++                schema_editor.create_model(UUIDModel)
++                schema_editor.create_model(GFKModel)
++        
++        @classmethod
++        def tearDownClass(cls):
++            super().tearDownClass()
++            # Drop the tables
++            from django.db import connection
++            with connection.schema_editor() as schema_editor:
++                schema_editor.delete_model(GFKModel)
++                schema_editor.delete_model(UUIDModel)
++        
++        def test_uuid_prefetch_related(self):
++            # Create a UUID model instance
++            uuid_obj = UUIDModel.objects.create(name="Test UUID Object")
++            self.assertIsInstance(uuid_obj.id, uuid.UUID)
++            
++            # Create a GFK model pointing to the UUID model
++            gfk_obj = GFKModel()
++            gfk_obj.content_object = uuid_obj
++            gfk_obj.save()
++            
++            # Test direct access (should work)
++            gfk_obj_direct = GFKModel.objects.get(pk=gfk_obj.pk)
++            self.assertIsNotNone(gfk_obj_direct.content_object)
++            self.assertEqual(gfk_obj_direct.content_object.name, "Test UUID Object")
++            
++            # Test prefetch_related (this is where the bug occurs)
++            gfk_objs = GFKModel.objects.all().prefetch_related('content_object')
++            for obj in gfk_objs:
++                self.assertIsNotNone(obj.content_object, "content_object should not be None when using prefetch_related")
++                self.assertEqual(obj.content_object.name, "Test UUID Object")
++    
++    # Run the test
++    from django.test.runner import DiscoverRunner
++    test_runner = DiscoverRunner(verbosity=2)
++    failures = test_runner.run_tests(["__main__.TestUUIDPrefetch"])
++    
++    if failures:
++        sys.exit(1)

@@ -1,0 +1,296 @@
+diff --git a/sklearn/compose/_column_transformer.py b/sklearn/compose/_column_transformer.py
+index 4eddd12b1..ab82a8d8a 100644
+--- a/sklearn/compose/_column_transformer.py
++++ b/sklearn/compose/_column_transformer.py
+@@ -303,6 +303,10 @@ class ColumnTransformer(TransformerMixin, _BaseComposition):
+         for trans in transformers:
+             _safe_set_output(trans, transform=transform)
+ 
++        # Handle remainder if it's an estimator
++        if hasattr(self, "remainder") and self.remainder not in {"passthrough", "drop"}:
++            _safe_set_output(self.remainder, transform=transform)
++
+         return self
+ 
+     def get_params(self, deep=True):
+diff --git a/sklearn/compose/tests/test_column_transformer.py b/sklearn/compose/tests/test_column_transformer.py
+index b9c8f5831..ab20e072d 100644
+--- a/sklearn/compose/tests/test_column_transformer.py
++++ b/sklearn/compose/tests/test_column_transformer.py
+@@ -22,6 +22,7 @@ from sklearn.compose import (
+ from sklearn.exceptions import NotFittedError
+ from sklearn.preprocessing import FunctionTransformer
+ from sklearn.preprocessing import StandardScaler, Normalizer, OneHotEncoder
++from sklearn.feature_selection import VarianceThreshold
+ 
+ 
+ class Trans(TransformerMixin, BaseEstimator):
+@@ -2053,6 +2054,52 @@ def test_column_transform_set_output_after_fitting(remainder):
+         assert dtype == expected_dtypes[col]
+ 
+ 
++def test_column_transform_set_output_with_remainder_estimator():
++    """Test that set_output applies to remainder when it's an estimator."""
++    pd = pytest.importorskip("pandas")
++    
++    df = pd.DataFrame({"a": [True, False, True], "b": [1, 2, 3]})
++    
++    # Test with VarianceThreshold as remainder
++    ct = ColumnTransformer(
++        [("bool_selector", VarianceThreshold(), make_column_selector(dtype_include=bool))],
++        remainder=VarianceThreshold(),
++        verbose_feature_names_out=False,
++    )
++    
++    # Fit and transform without set_output - should return numpy array
++    out_numpy = ct.fit_transform(df)
++    assert isinstance(out_numpy, np.ndarray)
++    assert out_numpy.shape == (3, 2)
++    
++    # Set output to pandas
++    ct.set_output(transform="pandas")
++    
++    # Transform should now return DataFrame with correct dtypes
++    out_pandas = ct.transform(df)
++    assert isinstance(out_pandas, pd.DataFrame)
++    assert out_pandas.shape == (3, 2)
++    assert list(out_pandas.columns) == ["a", "b"]
++    # Check that boolean values are preserved (this was the bug)
++    assert out_pandas["a"].dtype == bool
++    assert list(out_pandas["a"]) == [True, False, True]
++    
++    # Test with StandardScaler as remainder
++    ct2 = ColumnTransformer(
++        [("bool", "passthrough", ["a"])],
++        remainder=StandardScaler(),
++        verbose_feature_names_out=False,
++    )
++    ct2.set_output(transform="pandas")
++    
++    result = ct2.fit_transform(df)
++    assert isinstance(result, pd.DataFrame)
++    assert result.shape == (3, 2)
++    # Check that StandardScaler was applied to remainder column
++    assert np.abs(result["b"].mean()) < 1e-10  # Should be close to 0
++    assert np.abs(result["b"].std(ddof=0) - 1.0) < 1e-10  # Should be close to 1
++
++
+ # PandasOutTransformer that does not define get_feature_names_out and always expects
+ # the input to be a DataFrame.
+ class PandasOutTransformer(BaseEstimator):
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..e410fd772
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,93 @@
++import pandas as pd
++import numpy as np
++from sklearn.compose import make_column_selector, make_column_transformer
++from sklearn.feature_selection import VarianceThreshold
++from sklearn.preprocessing import StandardScaler, MinMaxScaler
++from sklearn.impute import SimpleImputer
++
++# Test 1: Basic test with remainder as estimator and pandas output
++print("Test 1: Basic test with remainder as estimator")
++df = pd.DataFrame({"a": [True, False, True], "b": [1, 2, 3]})
++ct = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    remainder=VarianceThreshold(),
++    verbose_feature_names_out=False,
++)
++ct.set_output(transform="pandas")
++out = ct.fit_transform(df)
++print("Output:", out.to_dict())
++print("Success: Boolean values preserved\n")
++
++# Test 2: Test with remainder="passthrough"
++print("Test 2: Test with remainder='passthrough'")
++ct2 = make_column_transformer(
++    (StandardScaler(), ["b"]),
++    remainder="passthrough",
++    verbose_feature_names_out=False,
++)
++ct2.set_output(transform="pandas")
++out2 = ct2.fit_transform(df)
++print("Output columns:", out2.columns.tolist())
++print("Success: Passthrough columns included\n")
++
++# Test 3: Test with remainder="drop" (default)
++print("Test 3: Test with remainder='drop'")
++ct3 = make_column_transformer(
++    (StandardScaler(), ["b"]),
++    remainder="drop",
++    verbose_feature_names_out=False,
++)
++ct3.set_output(transform="pandas")
++out3 = ct3.fit_transform(df)
++print("Output shape:", out3.shape)
++print("Success: Non-selected columns dropped\n")
++
++# Test 4: Test with numpy output (default)
++print("Test 4: Test with numpy output")
++ct4 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    remainder=VarianceThreshold(),
++    verbose_feature_names_out=False,
++)
++# No set_output call - should use default numpy
++out4 = ct4.fit_transform(df)
++print("Output type:", type(out4))
++print("Output shape:", out4.shape)
++print("Success: Numpy output as expected\n")
++
++# Test 5: Test with more complex scenario
++print("Test 5: Complex scenario with multiple transformers and remainder")
++df_complex = pd.DataFrame({
++    "bool_col": [True, False, True, False],
++    "int_col": [1, 2, 3, 4],
++    "float_col": [1.1, 2.2, 3.3, 4.4],
++    "nan_col": [1.0, np.nan, 3.0, np.nan]
++})
++
++ct5 = make_column_transformer(
++    (StandardScaler(), ["int_col"]),
++    (MinMaxScaler(), ["float_col"]),
++    remainder=SimpleImputer(strategy="mean"),
++    verbose_feature_names_out=False,
++)
++ct5.set_output(transform="pandas")
++out5 = ct5.fit_transform(df_complex)
++print("Output columns:", out5.columns.tolist())
++print("Output shape:", out5.shape)
++print("NaN values handled:", not out5.isna().any().any())
++print("Success: Complex scenario works correctly\n")
++
++# Test 6: Test that the fix doesn't affect fitted transformers
++print("Test 6: Test with already fitted transformer")
++ct6 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    remainder=VarianceThreshold(),
++    verbose_feature_names_out=False,
++)
++ct6.fit(df)
++ct6.set_output(transform="pandas")  # Setting output after fitting
++out6 = ct6.transform(df)
++print("Output after setting output post-fit:", out6.to_dict())
++print("Success: Post-fit output setting works\n")
++
++print("All tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..fb7203191
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,24 @@
++import pandas as pd
++from sklearn.compose import make_column_selector, make_column_transformer
++from sklearn.feature_selection import VarianceThreshold
++
++df = pd.DataFrame({"a": [True, False, True], "b": [1, 2, 3]})
++
++print("Test case 1: ColumnTransformer with remainder as estimator")
++out1 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    remainder=VarianceThreshold(),
++    verbose_feature_names_out=False,
++).set_output(transform="pandas").fit_transform(df)
++print(out1)
++print(f"Type of output: {type(out1)}")
++print()
++
++print("Test case 2: ColumnTransformer with explicit transformers for all columns")
++out2 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    (VarianceThreshold(), make_column_selector(dtype_exclude=bool)),
++    verbose_feature_names_out=False,
++).set_output(transform="pandas").fit_transform(df)
++print(out2)
++print(f"Type of output: {type(out2)}")
+diff --git a/test_remainder_estimator_set_output.py b/test_remainder_estimator_set_output.py
+new file mode 100644
+index 000000000..1e3d8b430
+--- /dev/null
++++ b/test_remainder_estimator_set_output.py
+@@ -0,0 +1,81 @@
++import pytest
++import numpy as np
++import pandas as pd
++from sklearn.compose import ColumnTransformer, make_column_selector
++from sklearn.preprocessing import StandardScaler
++from sklearn.feature_selection import VarianceThreshold
++
++
++def test_column_transformer_set_output_with_remainder_estimator():
++    """Test that set_output applies to remainder when it's an estimator."""
++    pd = pytest.importorskip("pandas")
++    
++    df = pd.DataFrame({"a": [True, False, True], "b": [1, 2, 3]})
++    
++    # Test with VarianceThreshold as remainder
++    ct = ColumnTransformer(
++        [("bool_selector", VarianceThreshold(), make_column_selector(dtype_include=bool))],
++        remainder=VarianceThreshold(),
++        verbose_feature_names_out=False,
++    )
++    
++    # Fit and transform without set_output - should return numpy array
++    out_numpy = ct.fit_transform(df)
++    assert isinstance(out_numpy, np.ndarray)
++    assert out_numpy.shape == (3, 2)
++    
++    # Set output to pandas
++    ct.set_output(transform="pandas")
++    
++    # Transform should now return DataFrame
++    out_pandas = ct.transform(df)
++    assert isinstance(out_pandas, pd.DataFrame)
++    assert out_pandas.shape == (3, 2)
++    assert list(out_pandas.columns) == ["a", "b"]
++    # Check that boolean values are preserved
++    assert out_pandas["a"].dtype == bool
++    assert list(out_pandas["a"]) == [True, False, True]
++    
++    # Test with fit_transform after set_output
++    ct2 = ColumnTransformer(
++        [("bool_selector", VarianceThreshold(), make_column_selector(dtype_include=bool))],
++        remainder=StandardScaler(),
++        verbose_feature_names_out=False,
++    )
++    ct2.set_output(transform="pandas")
++    out_pandas2 = ct2.fit_transform(df)
++    assert isinstance(out_pandas2, pd.DataFrame)
++    assert out_pandas2.shape == (3, 2)
++    
++
++def test_column_transformer_set_output_complex_remainder():
++    """Test set_output with different transformer types in remainder."""
++    pd = pytest.importorskip("pandas")
++    
++    df = pd.DataFrame({
++        "bool_col": [True, False, True, False],
++        "int_col": [1, 2, 3, 4],
++        "float_col": [1.1, 2.2, 3.3, 4.4],
++    })
++    
++    # Use StandardScaler as remainder
++    ct = ColumnTransformer(
++        [("bool", "passthrough", ["bool_col"])],
++        remainder=StandardScaler(),
++        verbose_feature_names_out=False,
++    )
++    ct.set_output(transform="pandas")
++    
++    result = ct.fit_transform(df)
++    assert isinstance(result, pd.DataFrame)
++    assert result.shape == (4, 3)
++    assert list(result.columns) == ["bool_col", "int_col", "float_col"]
++    # Check that StandardScaler was applied to remainder columns
++    assert np.abs(result["int_col"].mean()) < 1e-10  # Should be close to 0
++    assert np.abs(result["float_col"].mean()) < 1e-10  # Should be close to 0
++
++
++if __name__ == "__main__":
++    test_column_transformer_set_output_with_remainder_estimator()
++    test_column_transformer_set_output_complex_remainder()
++    print("All tests passed!")

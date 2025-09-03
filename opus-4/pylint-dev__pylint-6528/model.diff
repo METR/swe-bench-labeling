@@ -1,0 +1,213 @@
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 53345a6b1..9c3610be5 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -31,7 +31,7 @@ from pylint.constants import (
+ )
+ from pylint.lint.base_options import _make_linter_options
+ from pylint.lint.caching import load_results, save_results
+-from pylint.lint.expand_modules import expand_modules
++from pylint.lint.expand_modules import expand_modules, _is_in_ignore_list_re
+ from pylint.lint.message_state_handler import _MessageStateHandler
+ from pylint.lint.parallel import check_parallel
+ from pylint.lint.report_functions import (
+@@ -564,8 +564,7 @@ class PyLinter(
+             if not msg.may_be_emitted():
+                 self._msgs_state[msg.msgid] = False
+ 
+-    @staticmethod
+-    def _discover_files(files_or_modules: Sequence[str]) -> Iterator[str]:
++    def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+         """Discover python modules and packages in sub-directory.
+ 
+         Returns iterator of paths to discovered modules and packages.
+@@ -575,19 +574,35 @@ class PyLinter(
+                 os.path.join(something, "__init__.py")
+             ):
+                 skip_subtrees: list[str] = []
+-                for root, _, files in os.walk(something):
++                for root, dirnames, files in os.walk(something):
+                     if any(root.startswith(s) for s in skip_subtrees):
+                         # Skip subtree of already discovered package.
+                         continue
++                    
++                    # Filter out ignored directories before descending into them
++                    dirnames[:] = [
++                        d for d in dirnames
++                        if not (
++                            d in self.config.ignore
++                            or _is_in_ignore_list_re(d, self.config.ignore_patterns)
++                            or _is_in_ignore_list_re(os.path.join(root, d), self.config.ignore_paths)
++                        )
++                    ]
++                    
+                     if "__init__.py" in files:
+                         skip_subtrees.append(root)
+                         yield root
+                     else:
+-                        yield from (
+-                            os.path.join(root, file)
+-                            for file in files
+-                            if file.endswith(".py")
+-                        )
++                        for file in files:
++                            if file.endswith(".py"):
++                                # Check if file should be ignored
++                                if (
++                                    file in self.config.ignore
++                                    or _is_in_ignore_list_re(file, self.config.ignore_patterns)
++                                    or _is_in_ignore_list_re(os.path.join(root, file), self.config.ignore_paths)
++                                ):
++                                    continue
++                                yield os.path.join(root, file)
+             else:
+                 yield something
+ 
+diff --git a/test_ignore_bug/.a/foo.py b/test_ignore_bug/.a/foo.py
+new file mode 100644
+index 000000000..b199df542
+--- /dev/null
++++ b/test_ignore_bug/.a/foo.py
+@@ -0,0 +1 @@
++import re
+diff --git a/test_ignore_bug/bar.py b/test_ignore_bug/bar.py
+new file mode 100644
+index 000000000..b199df542
+--- /dev/null
++++ b/test_ignore_bug/bar.py
+@@ -0,0 +1 @@
++import re
+diff --git a/test_issue_fix.py b/test_issue_fix.py
+new file mode 100644
+index 000000000..301b74043
+--- /dev/null
++++ b/test_issue_fix.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python3
++"""Test the exact scenario from the bug report."""
++
++import os
++import subprocess
++import tempfile
++
++def test_bug_scenario():
++    """Test the exact scenario from the bug report."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create the exact structure from the bug report
++        os.makedirs(os.path.join(tmpdir, ".a"))
++        
++        # Create .a/foo.py
++        with open(os.path.join(tmpdir, ".a", "foo.py"), "w") as f:
++            f.write("import re\n")
++        
++        # Create bar.py
++        with open(os.path.join(tmpdir, "bar.py"), "w") as f:
++            f.write("import re\n")
++            
++        os.chdir(tmpdir)
++        
++        # Run all the commands from the bug report
++        commands = [
++            (["--recursive=y", "."], "Default should NOT ignore .a (actual default is ^\.#)"),
++            (["--recursive=y", "--ignore=.a", "."], "--ignore=.a should ignore .a/foo.py"),
++            (["--recursive=y", "--ignore-paths=.*\\.a.*", "."], "--ignore-paths=.*\\.a.* should ignore .a/foo.py"),
++            (["--recursive=y", "--ignore-patterns=^\\.a", "."], "--ignore-patterns=^\\.a should ignore .a directory"),
++        ]
++        
++        for args, description in commands:
++            print(f"\nTesting: {description}")
++            print(f"Command: pylint {' '.join(args)}")
++            
++            cmd = ["python", "-m", "pylint"] + args
++            result = subprocess.run(cmd, capture_output=True, text=True)
++            output = result.stdout + result.stderr
++            
++            if "--ignore" in " ".join(args) or "--ignore-paths" in " ".join(args) or "--ignore-patterns" in " ".join(args):
++                # When ignoring, .a/foo.py should NOT appear
++                if ".a/foo.py" in output:
++                    print(f"FAIL: .a/foo.py should be ignored but was found in output")
++                    print(f"Output:\n{output}")
++                    return False
++                else:
++                    print("PASS: .a/foo.py correctly ignored")
++            else:
++                # Default case - with default pattern ^\.#, .a should be checked
++                if ".a/foo.py" not in output:
++                    print(f"FAIL: .a/foo.py should be checked but was not found in output")
++                    print(f"Output:\n{output}")
++                    return False
++                else:
++                    print("PASS: .a/foo.py correctly checked")
++            
++            # bar.py should always be checked
++            if "bar.py" not in output:
++                print(f"FAIL: bar.py should always be checked but was not found")
++                print(f"Output:\n{output}")
++                return False
++    
++    print("\nAll tests passed!")
++    return True
++
++if __name__ == "__main__":
++    test_bug_scenario()
+diff --git a/test_recursive_ignore.py b/test_recursive_ignore.py
+new file mode 100644
+index 000000000..8964767fb
+--- /dev/null
++++ b/test_recursive_ignore.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python3
++"""Test that pylint respects ignore settings in recursive mode."""
++
++import os
++import subprocess
++import tempfile
++import shutil
++
++def run_pylint(args):
++    """Run pylint and return the output."""
++    cmd = ["python", "-m", "pylint"] + args
++    result = subprocess.run(cmd, capture_output=True, text=True)
++    return result.stdout + result.stderr
++
++def test_recursive_ignore():
++    """Test that ignore options work with --recursive=y."""
++    
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create test files
++        os.makedirs(os.path.join(tmpdir, ".hidden"))
++        os.makedirs(os.path.join(tmpdir, "visible"))
++        
++        # Create Python files
++        with open(os.path.join(tmpdir, ".hidden", "test1.py"), "w") as f:
++            f.write("import re  # Should be ignored\n")
++        
++        with open(os.path.join(tmpdir, "visible", "test2.py"), "w") as f:
++            f.write("import re  # Should be checked\n")
++            
++        os.chdir(tmpdir)
++        
++        # Test 1: --ignore with directory name
++        print("Test 1: --ignore=.hidden")
++        output = run_pylint(["--recursive=y", "--ignore=.hidden", "."])
++        assert ".hidden/test1.py" not in output, f"Hidden file should be ignored\nOutput: {output}"
++        assert "visible/test2.py" in output, f"Visible file should be checked\nOutput: {output}"
++        
++        # Test 2: --ignore-patterns with regex
++        print("Test 2: --ignore-patterns=^\\.")
++        output = run_pylint(["--recursive=y", "--ignore-patterns=^\\.", "."])
++        assert ".hidden/test1.py" not in output, f"Hidden file should be ignored by pattern\nOutput: {output}"
++        assert "visible/test2.py" in output, f"Visible file should be checked\nOutput: {output}"
++        
++        # Test 3: --ignore-paths with full path regex
++        print("Test 3: --ignore-paths=.*\\.hidden.*")
++        output = run_pylint(["--recursive=y", "--ignore-paths=.*\\.hidden.*", "."])
++        assert ".hidden/test1.py" not in output, f"Hidden file should be ignored by path\nOutput: {output}"
++        assert "visible/test2.py" in output, f"Visible file should be checked\nOutput: {output}"
++        
++        print("\nAll tests passed!")
++
++if __name__ == "__main__":
++    test_recursive_ignore()

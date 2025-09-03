@@ -1,0 +1,85 @@
+diff --git a/sympy/sets/fancysets.py b/sympy/sets/fancysets.py
+index 80189c344c..b5a5c06956 100644
+--- a/sympy/sets/fancysets.py
++++ b/sympy/sets/fancysets.py
+@@ -335,6 +335,30 @@ class ImageSet(Set):
+ 
+     sympy.sets.sets.imageset
+     """
++
++    def _intersect(self, other):
++        from sympy import S, Lambda, FiniteSet
++        if other == S.Reals:
++            real_values = []
++            for x in self.base_set:
++                y = self.lamda(x)
++                if y.is_real and y == x:
++                    real_values.append(y)
++            return FiniteSet(*real_values)
++        else:
++            return None  # Use default implementation
++
++    def _contains(self, other):
++        from sympy import S
++        if other in S.Reals:
++            return any(self.lamda(x) == other and self.lamda(x).is_real and self.lamda(x) == x for x in self.base_set)
++        return any(self.lamda(x) == other for x in self.base_set)
++
++    def intersect(self, other):
++        from sympy import S
++        if other == S.Reals:
++            return self._intersect(other)
++        return Set.intersect(self, other)
+     def __new__(cls, flambda, *sets):
+         if not isinstance(flambda, Lambda):
+             raise ValueError('First argument must be a Lambda')
+diff --git a/test_imageset_reals_intersection.py b/test_imageset_reals_intersection.py
+new file mode 100644
+index 0000000000..25e851f46e
+--- /dev/null
++++ b/test_imageset_reals_intersection.py
+@@ -0,0 +1,44 @@
++from sympy import S, Lambda, Symbol, imageset, Intersection, pprint
++
++def test_imageset_reals_intersection():
++    n = Symbol('n')
++    S1 = imageset(Lambda(n, n + (n - 1)*(n + 1)*S.ImaginaryUnit), S.Integers)
++    print("S1:")
++    pprint(S1)
++    
++    print("\nCalculating intersection...")
++    intersection = S1.intersect(S.Reals)
++    print("Intersection calculated.")
++    print("\nS1 intersect Reals:")
++    pprint(intersection)
++    
++    print("\nChecking if 2 is in S1...")
++    in_s1 = 2 in S1
++    print("Is 2 in S1?", in_s1)
++    
++    print("\nChecking if 2 is in S1 intersect Reals...")
++    in_intersection = 2 in intersection
++    print("Is 2 in S1 intersect Reals?", in_intersection)
++    
++    print("\nAssertions:")
++    print("2 not in S1:", 2 not in S1)
++    print("2 not in intersection:", 2 not in intersection)
++    print("intersection == {-1, 1}:", intersection == {-1, 1})
++
++    print("\nAdditional test cases:")
++    print("1 in intersection:", 1 in intersection)
++    print("-1 in intersection:", -1 in intersection)
++    print("0 not in intersection:", 0 not in intersection)
++    print("I not in intersection:", S.ImaginaryUnit not in intersection)
++
++    print("\nTesting with a different imageset...")
++    S2 = imageset(Lambda(n, 2*n), S.Integers)
++    s2_intersection = S2.intersect(S.Reals)
++    print("S2 intersect Reals == S2:", s2_intersection == S2)
++
++    print("\nTesting with an imageset that has no real values...")
++    S3 = imageset(Lambda(n, S.ImaginaryUnit*n), S.Integers)
++    s3_intersection = S3.intersect(S.Reals)
++    print("S3 intersect Reals == EmptySet:", s3_intersection == S.EmptySet)
++
++test_imageset_reals_intersection()

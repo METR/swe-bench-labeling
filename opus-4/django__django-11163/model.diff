@@ -1,0 +1,199 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index d157c291ef..5edbbd376f 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -83,7 +83,7 @@ def model_to_dict(instance, fields=None, exclude=None):
+     for f in chain(opts.concrete_fields, opts.private_fields, opts.many_to_many):
+         if not getattr(f, 'editable', False):
+             continue
+-        if fields and f.name not in fields:
++        if fields is not None and f.name not in fields:
+             continue
+         if exclude and f.name in exclude:
+             continue
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..83908bdb28
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-key'
++)
++
++django.setup()
++
++from django.forms.models import model_to_dict
++from django.contrib.auth.models import User
++
++# Test edge cases
++user = User(username='testuser', email='test@example.com')
++
++# Empty fields with exclude
++result = model_to_dict(user, fields=[], exclude=['username'])
++print(f"fields=[], exclude=['username']: {result}")
++assert result == {}
++
++# Fields with some nonexistent field names
++result = model_to_dict(user, fields=['username', 'nonexistent_field'])
++print(f"fields=['username', 'nonexistent_field']: {result}")
++assert result == {'username': 'testuser'}
++
++# Exclude takes precedence over fields
++result = model_to_dict(user, fields=['username', 'email'], exclude=['email'])
++print(f"fields=['username', 'email'], exclude=['email']: {result}")
++assert result == {'username': 'testuser'}
++
++print("\nAll edge cases passed!")
+diff --git a/test_model_to_dict.py b/test_model_to_dict.py
+new file mode 100644
+index 0000000000..5c56b806af
+--- /dev/null
++++ b/test_model_to_dict.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-key'
++)
++
++django.setup()
++
++from django.db import models
++from django.forms.models import model_to_dict
++from django.contrib.auth.models import User
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField(default=0)
++    
++    class Meta:
++        app_label = 'test'
++
++# Test the current behavior
++print("Testing model_to_dict behavior:")
++print("-" * 50)
++
++# Create a user instance to test with
++user = User(username='testuser', email='test@example.com', first_name='Test', last_name='User')
++
++# Test 1: Default behavior (fields=None)
++result1 = model_to_dict(user)
++print(f"1. model_to_dict(user) [fields=None]:")
++print(f"   Keys: {sorted(result1.keys())}")
++print()
++
++# Test 2: Empty list behavior (should return empty dict according to the issue)
++result2 = model_to_dict(user, fields=[])
++print(f"2. model_to_dict(user, fields=[]) [empty list]:")
++print(f"   Result: {result2}")
++print(f"   Expected: {{}}")
++print(f"   Is empty dict? {result2 == {}}")
++print()
++
++# Test 3: Specific fields
++result3 = model_to_dict(user, fields=['username', 'email'])
++print(f"3. model_to_dict(user, fields=['username', 'email']):")
++print(f"   Result: {result3}")
++print()
++
++# Test 4: Check how the condition evaluates
++fields = []
++print(f"4. Condition evaluation with fields=[]:")
++print(f"   bool(fields) = {bool(fields)}")
++print(f"   fields is not None = {fields is not None}")
+diff --git a/test_model_to_dict_empty_fields.py b/test_model_to_dict_empty_fields.py
+new file mode 100644
+index 0000000000..246c782970
+--- /dev/null
++++ b/test_model_to_dict_empty_fields.py
+@@ -0,0 +1,54 @@
++"""Test for model_to_dict with empty fields list."""
++import os
++import sys
++import django
++from django.test import TestCase
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-key'
++)
++
++django.setup()
++
++from django.forms.models import model_to_dict
++from django.contrib.auth.models import User
++
++class TestModelToDict(TestCase):
++    def test_empty_fields_list_returns_empty_dict(self):
++        """Test that model_to_dict returns an empty dict when fields=[]"""
++        user = User(username='testuser', email='test@example.com')
++        result = model_to_dict(user, fields=[])
++        self.assertEqual(result, {})
++        
++    def test_none_fields_returns_all_fields(self):
++        """Test that model_to_dict returns all fields when fields=None"""
++        user = User(username='testuser', email='test@example.com')
++        result = model_to_dict(user)
++        # Should have all editable fields
++        self.assertIn('username', result)
++        self.assertIn('email', result)
++        
++    def test_specific_fields_returns_only_those(self):
++        """Test that model_to_dict returns only specified fields"""
++        user = User(username='testuser', email='test@example.com', first_name='Test')
++        result = model_to_dict(user, fields=['username', 'email'])
++        self.assertEqual(set(result.keys()), {'username', 'email'})
++        self.assertEqual(result['username'], 'testuser')
++        self.assertEqual(result['email'], 'test@example.com')
++
++if __name__ == '__main__':
++    import unittest
++    unittest.main()

@@ -1,0 +1,20 @@
+diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py
+index 335e10996..db6eae06f 100644
+--- a/src/_pytest/skipping.py
++++ b/src/_pytest/skipping.py
+@@ -199,7 +199,14 @@ class Xfail:
+ 
+ def evaluate_xfail_marks(item: Item) -> Optional[Xfail]:
+     """Evaluate xfail marks on item, returning Xfail if triggered."""
+-    for mark in item.iter_markers(name="xfail"):
++    xfail_marks = list(item.iter_markers(name="xfail"))
++    
++    # Check for dynamically added xfail markers
++    if hasattr(item, 'own_markers'):
++        dynamic_marks = [mark for mark in item.own_markers if mark.name == 'xfail']
++        xfail_marks.extend(dynamic_marks)
++    
++    for mark in xfail_marks:
+         run = mark.kwargs.get("run", True)
+         strict = mark.kwargs.get("strict", item.config.getini("xfail_strict"))
+         raises = mark.kwargs.get("raises", None)

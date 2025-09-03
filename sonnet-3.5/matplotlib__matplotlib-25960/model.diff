@@ -1,0 +1,21 @@
+diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
+index dab2bc4a5a..4df4bdf4b1 100644
+--- a/lib/matplotlib/figure.py
++++ b/lib/matplotlib/figure.py
+@@ -1572,10 +1572,13 @@ default: %(va)s
+             rcParams when necessary.
+ 
+         width_ratios : array-like of length *ncols*, optional
+-            Defines the relative widths of the columns. Each column gets a
+-            relative width of ``width_ratios[i] / sum(width_ratios)``.
+-            If not given, all columns will have the same width.
++        gs = GridSpec(nrows=nrows, ncols=ncols, figure=self,
++                      width_ratios=width_ratios,
++                      height_ratios=height_ratios)
+ 
++        # Apply wspace and hspace if provided
++        if wspace is not None or hspace is not None:
++            gs.update(wspace=wspace, hspace=hspace)
+         height_ratios : array-like of length *nrows*, optional
+             Defines the relative heights of the rows. Each row gets a
+             relative height of ``height_ratios[i] / sum(height_ratios)``.

@@ -1,0 +1,240 @@
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+index ad6a5a8ca..3170e4000 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+@@ -426,11 +426,15 @@ class BaseHistGradientBoosting(BaseEstimator, ABC):
+ 
+         Scores are computed on validation data or on training data.
+         """
++        if hasattr(self, 'classes_'):
++            y_small_train = self.classes_[y_small_train.astype(int)]
+         self.train_score_.append(
+             self.scorer_(self, X_binned_small_train, y_small_train)
+         )
+ 
+         if self._use_validation_data:
++            if hasattr(self, 'classes_'):
++                y_val = self.classes_[y_val.astype(int)]
+             self.validation_score_.append(
+                 self.scorer_(self, X_binned_val, y_val)
+             )
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..748fea1ee
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,50 @@
++import numpy as np
++from sklearn.experimental import enable_hist_gradient_boosting
++from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
++from sklearn.metrics import accuracy_score
++
++print("Testing HistGradientBoostingClassifier with early stopping and string labels...")
++
++# Test 1: Binary classification with string labels
++X = np.random.randn(200, 10)
++y_string = np.array(['class_a'] * 100 + ['class_b'] * 100, dtype=object)
++
++# Test with early stopping and validation fraction
++gbrt1 = HistGradientBoostingClassifier(n_iter_no_change=10, validation_fraction=0.2, random_state=42)
++gbrt1.fit(X, y_string)
++pred1 = gbrt1.predict(X)
++acc1 = accuracy_score(y_string, pred1)
++print(f"Test 1 (binary string labels with validation): accuracy = {acc1:.3f}")
++
++# Test 2: Multi-class classification with string labels
++y_multiclass = np.array(['cat'] * 50 + ['dog'] * 50 + ['bird'] * 50 + ['fish'] * 50, dtype=object)
++gbrt2 = HistGradientBoostingClassifier(n_iter_no_change=10, validation_fraction=0.2, random_state=42)
++gbrt2.fit(X, y_multiclass)
++pred2 = gbrt2.predict(X)
++acc2 = accuracy_score(y_multiclass, pred2)
++print(f"Test 2 (multiclass string labels with validation): accuracy = {acc2:.3f}")
++
++# Test 3: With early stopping but no validation (uses training set)
++gbrt3 = HistGradientBoostingClassifier(n_iter_no_change=10, validation_fraction=None, random_state=42)
++gbrt3.fit(X, y_string)
++pred3 = gbrt3.predict(X)
++acc3 = accuracy_score(y_string, pred3)
++print(f"Test 3 (string labels without validation): accuracy = {acc3:.3f}")
++
++# Test 4: Ensure regression is not affected
++print("\nTesting HistGradientBoostingRegressor...")
++y_reg = np.random.randn(200)
++gbrt_reg = HistGradientBoostingRegressor(n_iter_no_change=10, validation_fraction=0.2, random_state=42)
++gbrt_reg.fit(X, y_reg)
++print("Test 4 (regression): passed - no error")
++
++# Test 5: Test with custom scoring function
++from sklearn.metrics import f1_score, make_scorer
++f1_scorer = make_scorer(f1_score, pos_label='class_b')
++gbrt5 = HistGradientBoostingClassifier(n_iter_no_change=10, scoring=f1_scorer, validation_fraction=0.2, random_state=42)
++gbrt5.fit(X, y_string)
++pred5 = gbrt5.predict(X)
++f1 = f1_score(y_string, pred5, pos_label='class_b')
++print(f"Test 5 (custom scorer with string labels): F1 score = {f1:.3f}")
++
++print("\nAll tests passed successfully!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..98c3c5977
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,22 @@
++import numpy as np
++from sklearn.experimental import enable_hist_gradient_boosting
++from sklearn.ensemble import HistGradientBoostingClassifier
++
++# Test the issue
++X = np.random.randn(100, 10)
++y = np.array(['x'] * 50 + ['y'] * 50, dtype=object)
++gbrt = HistGradientBoostingClassifier(n_iter_no_change=10)
++try:
++    gbrt.fit(X, y)
++    print("Test passed - no error")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++
++# Test with numerical labels (this should work)
++y_numeric = np.array([0] * 50 + [1] * 50)
++gbrt2 = HistGradientBoostingClassifier(n_iter_no_change=10)
++try:
++    gbrt2.fit(X, y_numeric)
++    print("Numeric labels test passed - no error")
++except Exception as e:
++    print(f"Numeric labels error: {type(e).__name__}: {e}")
+diff --git a/test_string_labels_early_stopping.py b/test_string_labels_early_stopping.py
+new file mode 100644
+index 000000000..acfcff9b8
+--- /dev/null
++++ b/test_string_labels_early_stopping.py
+@@ -0,0 +1,88 @@
++"""Test case for issue: HistGradientBoostingClassifier does not work with string 
++target when early stopping turned on"""
++
++import numpy as np
++import pytest
++from sklearn.experimental import enable_hist_gradient_boosting
++from sklearn.ensemble import HistGradientBoostingClassifier
++
++
++def test_string_labels_with_early_stopping():
++    """Test that HistGradientBoostingClassifier works with string labels and early stopping."""
++    X = np.random.RandomState(42).randn(100, 10)
++    
++    # Binary classification with string labels
++    y_binary = np.array(['class_a'] * 50 + ['class_b'] * 50, dtype=object)
++    
++    # Test with validation fraction (most common case)
++    clf = HistGradientBoostingClassifier(
++        n_iter_no_change=10, 
++        validation_fraction=0.2, 
++        random_state=42,
++        max_iter=50
++    )
++    clf.fit(X, y_binary)
++    predictions = clf.predict(X)
++    
++    # Check that predictions are strings
++    assert predictions.dtype == object
++    assert set(predictions) <= {'class_a', 'class_b'}
++    
++    # Test without validation fraction (uses training set)
++    clf2 = HistGradientBoostingClassifier(
++        n_iter_no_change=10, 
++        validation_fraction=None, 
++        random_state=42,
++        max_iter=50
++    )
++    clf2.fit(X, y_binary)
++    predictions2 = clf2.predict(X)
++    
++    assert predictions2.dtype == object
++    assert set(predictions2) <= {'class_a', 'class_b'}
++    
++    # Multiclass classification with string labels
++    y_multiclass = np.array(['cat'] * 25 + ['dog'] * 25 + ['bird'] * 25 + ['fish'] * 25, dtype=object)
++    
++    clf3 = HistGradientBoostingClassifier(
++        n_iter_no_change=10, 
++        validation_fraction=0.2, 
++        random_state=42,
++        max_iter=50
++    )
++    clf3.fit(X, y_multiclass)
++    predictions3 = clf3.predict(X)
++    
++    assert predictions3.dtype == object
++    assert set(predictions3) <= {'cat', 'dog', 'bird', 'fish'}
++
++
++def test_string_labels_with_custom_scorer():
++    """Test string labels work with custom scorers in early stopping."""
++    from sklearn.metrics import f1_score, make_scorer
++    
++    X = np.random.RandomState(42).randn(100, 10)
++    y = np.array(['positive'] * 60 + ['negative'] * 40, dtype=object)
++    
++    f1_scorer = make_scorer(f1_score, pos_label='positive')
++    
++    clf = HistGradientBoostingClassifier(
++        n_iter_no_change=10,
++        scoring=f1_scorer,
++        validation_fraction=0.2,
++        random_state=42,
++        max_iter=50
++    )
++    
++    # This should work without errors
++    clf.fit(X, y)
++    predictions = clf.predict(X)
++    
++    assert predictions.dtype == object
++    assert set(predictions) <= {'positive', 'negative'}
++
++
++if __name__ == "__main__":
++    test_string_labels_with_early_stopping()
++    test_string_labels_with_custom_scorer()
++    print("All tests passed!")
+diff --git a/test_warm_start_string_labels.py b/test_warm_start_string_labels.py
+new file mode 100644
+index 000000000..eba4873f6
+--- /dev/null
++++ b/test_warm_start_string_labels.py
+@@ -0,0 +1,36 @@
++import numpy as np
++from sklearn.experimental import enable_hist_gradient_boosting
++from sklearn.ensemble import HistGradientBoostingClassifier
++
++print("Testing warm start with string labels and early stopping...")
++
++X = np.random.RandomState(42).randn(100, 10)
++y = np.array(['class_a'] * 50 + ['class_b'] * 50, dtype=object)
++
++# Test warm start with early stopping
++clf = HistGradientBoostingClassifier(
++    n_iter_no_change=5,
++    validation_fraction=0.2,
++    warm_start=True,
++    max_iter=10,
++    random_state=42
++)
++
++# First fit
++clf.fit(X, y)
++n_iter_1 = clf.n_iter_
++print(f"First fit: {n_iter_1} iterations")
++
++# Continue training with warm start
++clf.set_params(max_iter=20)
++clf.fit(X, y)
++n_iter_2 = clf.n_iter_
++print(f"Second fit: {n_iter_2} iterations")
++
++assert n_iter_2 >= n_iter_1, "Warm start should preserve or increase iterations"
++
++predictions = clf.predict(X)
++assert predictions.dtype == object
++assert set(predictions) <= {'class_a', 'class_b'}
++
++print("Warm start test passed!")

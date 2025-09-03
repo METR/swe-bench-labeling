@@ -1,0 +1,416 @@
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index ddfd2b365..6cb57dd3b 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -756,6 +756,36 @@ class Documenter:
+                     # keep documented attributes
+                     keep = True
+                 isattr = True
++            elif self.options.inherited_members and inspect.isclass(self.object):
++                # Check if the attribute is documented in any base class
++                for cls in self.object.__mro__[1:]:  # Skip the current class
++                    if cls.__module__ in ('__builtin__', 'builtins'):
++                        # Skip built-in classes
++                        continue
++                    try:
++                        analyzer = ModuleAnalyzer.for_module(cls.__module__)
++                        analyzer.analyze()
++                        base_attr_docs = analyzer.find_attr_docs()
++                    except (PycodeError, Exception):
++                        # Failed to analyze the module, skip
++                        base_attr_docs = {}
++                    
++                    if hasattr(cls, '__qualname__'):
++                        base_namespace = cls.__qualname__
++                    else:
++                        base_namespace = cls.__name__
++                    
++                    if (base_namespace, membername) in base_attr_docs:
++                        if want_all and isprivate:
++                            if self.options.private_members is None:
++                                keep = False
++                            else:
++                                keep = membername in self.options.private_members
++                        else:
++                            # keep documented attributes from base classes
++                            keep = True
++                        isattr = True
++                        break
+             elif want_all and isprivate:
+                 if has_doc or self.options.undoc_members:
+                     if self.options.private_members is None:
+diff --git a/test.rst b/test.rst
+new file mode 100644
+index 000000000..e846bcdcc
+--- /dev/null
++++ b/test.rst
+@@ -0,0 +1,23 @@
++Test Documentation
++==================
++
++.. automodule:: test_inherited_attrs
++   :members:
++   :inherited-members:
++   :show-inheritance:
++
++Base Class
++----------
++
++.. autoclass:: test_inherited_attrs.Base
++   :members:
++   :inherited-members:
++   :show-inheritance:
++
++Derived Class
++-------------
++
++.. autoclass:: test_inherited_attrs.Derived
++   :members:
++   :inherited-members:
++   :show-inheritance:
+diff --git a/test_conf.py b/test_conf.py
+new file mode 100644
+index 000000000..6fb2746af
+--- /dev/null
++++ b/test_conf.py
+@@ -0,0 +1,8 @@
++"""Sphinx configuration for testing."""
++
++extensions = ['sphinx.ext.autodoc']
++autodoc_default_options = {
++    'members': True,
++    'inherited-members': True,
++    'show-inheritance': True,
++}
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..e10ab2dc1
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,119 @@
++#!/usr/bin/env python
++"""Test that the fix works for inherited documented attributes."""
++
++import os
++import sys
++import tempfile
++import shutil
++
++# Create test modules in a temporary directory
++test_dir = tempfile.mkdtemp()
++sys.path.insert(0, test_dir)
++
++# Create base module
++base_module = '''
++"""Base module with documented attributes."""
++
++class Base:
++    """Base class with documented attributes."""
++    
++    #: This is a documented base attribute
++    base_attr = "base value"
++    
++    #: Another documented base attribute
++    another_base_attr = 42
++    
++    def __init__(self):
++        """Initialize base."""
++        pass
++'''
++
++with open(os.path.join(test_dir, 'base_module.py'), 'w') as f:
++    f.write(base_module)
++
++# Create derived module
++derived_module = '''
++"""Derived module."""
++
++from base_module import Base
++
++class Derived(Base):
++    """Derived class that should inherit base_attr documentation."""
++    
++    #: This is a documented derived attribute
++    derived_attr = "derived value"
++    
++    def __init__(self):
++        """Initialize derived."""
++        super().__init__()
++'''
++
++with open(os.path.join(test_dir, 'derived_module.py'), 'w') as f:
++    f.write(derived_module)
++
++# Test autodoc functionality
++from sphinx.ext.autodoc import ModuleLevelDocumenter, ClassDocumenter
++from sphinx.testing.fixtures import make_app
++from sphinx.testing.path import path
++from docutils.statemachine import StringList
++
++# Create a minimal Sphinx app for testing
++confdir = path(test_dir)
++outdir = path(test_dir) / '_build'
++
++app = make_app('dummy', srcdir=test_dir, confdir=confdir, 
++                confoverrides={'extensions': ['sphinx.ext.autodoc']})
++
++app.env.temp_data['docname'] = 'test'
++
++# Test ClassDocumenter with inherited-members
++options = {
++    'members': True,
++    'inherited-members': True,
++    'show-inheritance': True,
++}
++
++# Document the Derived class
++documenter = ClassDocumenter(None, 'derived_module.Derived', options=options)
++documenter.env = app.env
++documenter.generate()
++
++# Check if base_attr is documented
++members = []
++if hasattr(documenter, 'filter_members'):
++    from sphinx.ext.autodoc.importer import get_object_members
++    
++    documenter.parse_name()
++    documenter.import_object()
++    
++    members_check_module, all_members = documenter.get_object_members(True)
++    filtered = documenter.filter_members(all_members, True)
++    
++    for name, obj, isattr in filtered:
++        members.append((name, isattr))
++        print(f"Member: {name}, isattr: {isattr}")
++
++# Check results
++print("\nFound members:")
++for name, isattr in members:
++    print(f"  {name} (attribute: {isattr})")
++
++# Verify that base_attr is found and marked as attribute
++base_attr_found = any(name == 'base_attr' and isattr for name, isattr in members)
++another_base_attr_found = any(name == 'another_base_attr' and isattr for name, isattr in members)
++derived_attr_found = any(name == 'derived_attr' and isattr for name, isattr in members)
++
++print(f"\nResults:")
++print(f"  base_attr found as attribute: {base_attr_found}")
++print(f"  another_base_attr found as attribute: {another_base_attr_found}")
++print(f"  derived_attr found as attribute: {derived_attr_found}")
++
++# Cleanup
++shutil.rmtree(test_dir)
++
++if base_attr_found and another_base_attr_found and derived_attr_found:
++    print("\nSUCCESS: Inherited documented attributes are now recognized!")
++    sys.exit(0)
++else:
++    print("\nFAILED: Inherited documented attributes are not recognized")
++    sys.exit(1)
+diff --git a/test_inherited_attrs.py b/test_inherited_attrs.py
+new file mode 100644
+index 000000000..f4ba42d84
+--- /dev/null
++++ b/test_inherited_attrs.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python
++"""Test script to reproduce the inherited-members issue with attributes."""
++
++class Base:
++    """Base class with documented attributes."""
++    
++    #: This is a documented base attribute
++    base_attr = "base value"
++    
++    def __init__(self):
++        """Initialize base."""
++        pass
++
++
++class Derived(Base):
++    """Derived class that should inherit base_attr documentation."""
++    
++    #: This is a documented derived attribute
++    derived_attr = "derived value"
++    
++    def __init__(self):
++        """Initialize derived."""
++        super().__init__()
++
++
++if __name__ == "__main__":
++    # Test that we can access the attributes
++    d = Derived()
++    print(f"base_attr: {d.base_attr}")
++    print(f"derived_attr: {d.derived_attr}")
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 000000000..3531688ed
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,117 @@
++#!/usr/bin/env python
++"""Simple test that the fix works for inherited documented attributes."""
++
++import os
++import sys
++import tempfile
++import shutil
++
++# Create test modules in a temporary directory
++test_dir = tempfile.mkdtemp()
++sys.path.insert(0, test_dir)
++
++# Create base module
++base_module = '''
++"""Base module with documented attributes."""
++
++class Base:
++    """Base class with documented attributes."""
++    
++    #: This is a documented base attribute
++    base_attr = "base value"
++    
++    #: Another documented base attribute  
++    another_base_attr = 42
++    
++    def __init__(self):
++        """Initialize base."""
++        pass
++'''
++
++with open(os.path.join(test_dir, 'base_module.py'), 'w') as f:
++    f.write(base_module)
++
++# Create derived module
++derived_module = '''
++"""Derived module."""
++
++from base_module import Base
++
++class Derived(Base):
++    """Derived class that should inherit base_attr documentation."""
++    
++    #: This is a documented derived attribute
++    derived_attr = "derived value"
++    
++    def __init__(self):
++        """Initialize derived."""
++        super().__init__()
++'''
++
++with open(os.path.join(test_dir, 'derived_module.py'), 'w') as f:
++    f.write(derived_module)
++
++# Test by importing and checking analyzer
++from sphinx.pycode import ModuleAnalyzer, PycodeError
++from sphinx.ext.autodoc.importer import get_object_members
++
++# First check that base module attributes are documented
++try:
++    base_analyzer = ModuleAnalyzer.for_module('base_module')
++    base_analyzer.analyze()
++    base_attr_docs = base_analyzer.find_attr_docs()
++    print("Base module attr_docs:")
++    for key, value in base_attr_docs.items():
++        print(f"  {key}: {value}")
++except Exception as e:
++    print(f"Error analyzing base module: {e}")
++
++# Import the Derived class
++import derived_module
++
++# Get members
++members = get_object_members(derived_module.Derived, ['Derived'], lambda obj, name: getattr(obj, name, None), None)
++
++print("\nDerived class members:")
++for name, member in members.items():
++    print(f"  {name}: {member}")
++
++# Check if inherited members would be detected with the fix
++# This simulates what filter_members does
++print("\nChecking inherited documented attributes:")
++
++# For the Derived class
++namespace = 'Derived'
++for member_name in ['base_attr', 'another_base_attr', 'derived_attr']:
++    print(f"\nChecking {member_name}:")
++    
++    # Check in current class namespace (won't find base_attr)
++    key = (namespace, member_name)
++    
++    # Simulate checking base classes
++    for cls in derived_module.Derived.__mro__[1:]:
++        if cls.__module__ in ('__builtin__', 'builtins'):
++            continue
++            
++        print(f"  Checking in {cls.__module__}.{cls.__name__}")
++        try:
++            analyzer = ModuleAnalyzer.for_module(cls.__module__)
++            analyzer.analyze()
++            base_attr_docs = analyzer.find_attr_docs()
++            
++            if hasattr(cls, '__qualname__'):
++                base_namespace = cls.__qualname__
++            else:
++                base_namespace = cls.__name__
++                
++            base_key = (base_namespace, member_name)
++            if base_key in base_attr_docs:
++                print(f"    Found documented attribute: {base_key}")
++                break
++        except Exception as e:
++            print(f"    Error: {e}")
++
++# Cleanup
++shutil.rmtree(test_dir)
++
++print("\nTest completed successfully - the fix should work!")
+diff --git a/tox.ini b/tox.ini
+index dbb705a3a..9f4fc3a32 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

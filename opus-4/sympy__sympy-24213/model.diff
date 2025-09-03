@@ -1,0 +1,66 @@
+diff --git a/sympy/physics/units/tests/test_unitsystem.py b/sympy/physics/units/tests/test_unitsystem.py
+index a04f3aabb6..54b53f719b 100644
+--- a/sympy/physics/units/tests/test_unitsystem.py
++++ b/sympy/physics/units/tests/test_unitsystem.py
+@@ -84,3 +84,48 @@ def test_derived_units_must_exist_in_unit_system():
+             units = preferred_unit.atoms(Quantity)
+             for unit in units:
+                 assert unit in unit_system._units, f"Unit {unit} is not in unit system {unit_system}"
++
++
++def test_collect_factor_and_dimension_equivalent_dimensions():
++    """Test that collect_factor_and_dimension recognizes equivalent dimensions in addition.
++    
++    This is a regression test for the issue where acceleration*time + velocity
++    was incorrectly raising a ValueError even though the dimensions are equivalent.
++    """
++    from sympy.physics import units
++    from sympy.physics.units.systems.si import SI
++    
++    # Create test quantities
++    v1 = units.Quantity('v1')
++    SI.set_quantity_dimension(v1, units.velocity)
++    SI.set_quantity_scale_factor(v1, 2 * units.meter / units.second)
++    
++    a1 = units.Quantity('a1')
++    SI.set_quantity_dimension(a1, units.acceleration)
++    SI.set_quantity_scale_factor(a1, -9.8 * units.meter / units.second**2)
++    
++    t1 = units.Quantity('t1')
++    SI.set_quantity_dimension(t1, units.time)
++    SI.set_quantity_scale_factor(t1, 5 * units.second)
++    
++    # Test that acceleration*time + velocity works (equivalent dimensions)
++    expr1 = a1*t1 + v1
++    factor, dimension = SI._collect_factor_and_dimension(expr1)
++    assert factor == -47.0
++    
++    # Test that length/time + velocity works (equivalent dimensions)
++    l1 = units.Quantity('l1')
++    SI.set_quantity_dimension(l1, units.length)
++    SI.set_quantity_scale_factor(l1, 10 * units.meter)
++    
++    expr2 = l1 / t1 + v1
++    factor2, dimension2 = SI._collect_factor_and_dimension(expr2)
++    assert factor2 == 4.0
++    
++    # Test that incompatible dimensions still raise error
++    m1 = units.Quantity('m1')
++    SI.set_quantity_dimension(m1, units.mass)
++    SI.set_quantity_scale_factor(m1, 5 * units.kilogram)
++    
++    from sympy.testing.pytest import raises
++    raises(ValueError, lambda: SI._collect_factor_and_dimension(v1 + m1))
+diff --git a/sympy/physics/units/unitsystem.py b/sympy/physics/units/unitsystem.py
+index a436880c4b..5705c821c2 100644
+--- a/sympy/physics/units/unitsystem.py
++++ b/sympy/physics/units/unitsystem.py
+@@ -175,7 +175,7 @@ def _collect_factor_and_dimension(self, expr):
+             for addend in expr.args[1:]:
+                 addend_factor, addend_dim = \
+                     self._collect_factor_and_dimension(addend)
+-                if dim != addend_dim:
++                if not self.get_dimension_system().equivalent_dims(dim, addend_dim):
+                     raise ValueError(
+                         'Dimension of "{}" is {}, '
+                         'but it should be {}'.format(

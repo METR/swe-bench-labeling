@@ -1,0 +1,94 @@
+diff --git a/lib/matplotlib/offsetbox.py b/lib/matplotlib/offsetbox.py
+index efa34dd078..68bd08b511 100644
+--- a/lib/matplotlib/offsetbox.py
++++ b/lib/matplotlib/offsetbox.py
+@@ -361,6 +361,9 @@ class OffsetBox(martist.Artist):
+         return mtransforms.Bbox.from_bounds(px - xd, py - yd, w, h)
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         """
+         Update the location of children if necessary and draw them
+         to the given *renderer*.
+@@ -546,6 +549,12 @@ class PaddedBox(OffsetBox):
+                 [(0, 0)])
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+         w, h, xdescent, ydescent, offsets = self.get_extent_offsets(renderer)
+         px, py = self.get_offset(w, h, xdescent, ydescent, renderer)
+@@ -659,6 +668,9 @@ class DrawingArea(OffsetBox):
+             a.set_figure(fig)
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+ 
+         dpi_cor = renderer.points_to_pixels(1.)
+@@ -798,6 +810,9 @@ class TextArea(OffsetBox):
+         return w, h, xd, yd
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+         self._text.draw(renderer)
+         _bbox_artist(self, renderer, fill=False, props=dict(pad=0.))
+@@ -880,6 +895,9 @@ class AuxTransformBox(OffsetBox):
+         return ub.width, ub.height, 0., 0.
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+         for c in self._children:
+             c.draw(renderer)
+@@ -1056,6 +1074,9 @@ class AnchoredOffsetbox(OffsetBox):
+             self.patch.set_mutation_scale(fontsize)
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+         if not self.get_visible():
+             return
+@@ -1202,6 +1223,12 @@ class OffsetImage(OffsetBox):
+         return w, h, 0, 0
+ 
+     def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+         self.image.draw(renderer)
+         # bbox_artist(self, renderer, fill=False, props=dict(pad=0.))
+@@ -1446,7 +1473,12 @@ or callable, default: value of *xycoords*
+             patchA = self.arrowprops.get("patchA", self.patch)
+             self.arrow_patch.set_patchA(patchA)
+ 
+-    def draw(self, renderer):
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
++        if self.get_gid() is not None:
++            renderer.start_rasterizing()
++            renderer.set_gid(self.get_gid())
+         # docstring inherited
+         if renderer is not None:
+             self._renderer = renderer

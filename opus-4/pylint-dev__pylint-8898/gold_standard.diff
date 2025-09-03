@@ -1,0 +1,446 @@
+From 8be7a33ef06df64bd2c485efdca62ed527316348 Mon Sep 17 00:00:00 2001
+From: lihu <lihu.ben-ezri-ravin@portalinstruments.com>
+Date: Thu, 28 Jul 2022 16:06:58 -0400
+Subject: [PATCH 01/11] Add protection for #7229
+
+Do not split on commas if they are between braces, since that indicates
+a quantifier. Also added a protection for slow implementations since
+existing workarounds may result in long strings of chained regular
+expressions.
+---
+ tests/config/test_config.py | 40 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/tests/config/test_config.py b/tests/config/test_config.py
+index 47891aee25..14a0f32cdc 100644
+--- a/tests/config/test_config.py
++++ b/tests/config/test_config.py
+@@ -5,6 +5,8 @@
+ from __future__ import annotations
+ 
+ import os
++import re
++import timeit
+ from pathlib import Path
+ 
+ import pytest
+@@ -111,6 +113,44 @@ def test_unknown_py_version(capsys: CaptureFixture) -> None:
+     assert "the-newest has an invalid format, should be a version string." in output.err
+ 
+ 
++CSV_REGEX_COMMA_CASES = [
++    ("foo", ["foo"]),
++    ("foo,bar", ["foo", "bar"]),
++    ("foo, bar", ["foo", "bar"]),
++    ("foo, bar{1,3}", ["foo", "bar{1,3}"]),
++]
++
++
++@pytest.mark.parametrize("in_string,expected", CSV_REGEX_COMMA_CASES)
++def test_csv_regex_comma_in_quantifier(in_string, expected) -> None:
++    """Check that we correctly parse a comma-separated regex when there are one
++    or more commas within quantifier expressions.
++    """
++
++    def _template_run(in_string):
++        r = Run(
++            [str(EMPTY_MODULE), rf"--bad-names-rgx={in_string}"],
++            exit=False,
++        )
++        return r.linter.config.bad_names_rgxs
++
++    assert _template_run(in_string) == [re.compile(regex) for regex in expected]
++
++    # Catch trivially nonlinear performance
++    small_input_time = timeit.timeit(
++        "_template_run(in_string*100)",
++        globals=locals(),
++        number=10,
++    )
++    large_input_time = timeit.timeit(
++        "_template_run(in_string*1000)",
++        globals=locals(),
++        number=10,
++    )
++    fudge_factor = 3
++    assert large_input_time < small_input_time * 10 * fudge_factor
++
++
+ def test_short_verbose(capsys: CaptureFixture) -> None:
+     """Check that we correctly handle the -v flag."""
+     Run([str(EMPTY_MODULE), "-v"], exit=False)
+
+From 40889e3b4086f455744e6ab993df12490b2179b3 Mon Sep 17 00:00:00 2001
+From: lihu <lihu.ben-ezri-ravin@portalinstruments.com>
+Date: Thu, 28 Jul 2022 17:59:45 -0400
+Subject: [PATCH 02/11] Do not split regex lists in quantifier ranges
+
+Fixes #7229
+---
+ pylint/config/argument.py |  2 +-
+ pylint/utils/__init__.py  |  2 ++
+ pylint/utils/utils.py     | 26 +++++++++++++++++++++++++-
+ 3 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/pylint/config/argument.py b/pylint/config/argument.py
+index 3c29515176..8c6b8a2cb3 100644
+--- a/pylint/config/argument.py
++++ b/pylint/config/argument.py
+@@ -102,7 +102,7 @@ def _py_version_transformer(value: str) -> tuple[int, ...]:
+ def _regexp_csv_transfomer(value: str) -> Sequence[Pattern[str]]:
+     """Transforms a comma separated list of regular expressions."""
+     patterns: list[Pattern[str]] = []
+-    for pattern in _csv_transformer(value):
++    for pattern in pylint_utils._check_regexp_csv(value):
+         patterns.append(re.compile(pattern))
+     return patterns
+ 
+diff --git a/pylint/utils/__init__.py b/pylint/utils/__init__.py
+index bc5011db95..9265d0d13e 100644
+--- a/pylint/utils/__init__.py
++++ b/pylint/utils/__init__.py
+@@ -14,6 +14,7 @@
+     HAS_ISORT_5,
+     IsortDriver,
+     _check_csv,
++    _check_regexp_csv,
+     _format_option_value,
+     _splitstrip,
+     _unquote,
+@@ -34,6 +35,7 @@
+     "HAS_ISORT_5",
+     "IsortDriver",
+     "_check_csv",
++    "_check_regexp_csv",
+     "_format_option_value",
+     "_splitstrip",
+     "_unquote",
+diff --git a/pylint/utils/utils.py b/pylint/utils/utils.py
+index 6a4277642b..e33ba81253 100644
+--- a/pylint/utils/utils.py
++++ b/pylint/utils/utils.py
+@@ -21,7 +21,8 @@
+ import textwrap
+ import tokenize
+ import warnings
+-from collections.abc import Sequence
++from collections import deque
++from collections.abc import Iterable, Sequence
+ from io import BufferedReader, BytesIO
+ from typing import (
+     TYPE_CHECKING,
+@@ -328,6 +329,29 @@ def _check_csv(value: list[str] | tuple[str] | str) -> Sequence[str]:
+     return _splitstrip(value)
+ 
+ 
++def _check_regexp_csv(value: list[str] | tuple[str] | str) -> Iterable[str]:
++    if isinstance(value, (list, tuple)):
++        yield from value
++    else:
++        # None is a sentinel value here
++        regexps: deque[deque[str] | None] = deque([None])
++        open_braces = False
++        for char in value:
++            if char == "{":
++                open_braces = True
++            elif char == "}" and open_braces:
++                open_braces = False
++
++            if char == "," and not open_braces:
++                regexps.append(None)
++            elif regexps[-1] is None:
++                regexps.pop()
++                regexps.append(deque([char]))
++            else:
++                regexps[-1].append(char)
++        yield from ("".join(regexp).strip() for regexp in regexps if regexp is not None)
++
++
+ def _comment(string: str) -> str:
+     """Return string as a comment."""
+     lines = [line.strip() for line in string.splitlines()]
+
+From 3347cf5ae8dcf939a19b52771dedff0b36b50738 Mon Sep 17 00:00:00 2001
+From: lihu <lihu.ben-ezri-ravin@portalinstruments.com>
+Date: Thu, 28 Jul 2022 18:12:49 -0400
+Subject: [PATCH 03/11] Add news fragment
+
+---
+ doc/whatsnew/fragments/7229.bugfix | 5 +++++
+ 1 file changed, 5 insertions(+)
+ create mode 100644 doc/whatsnew/fragments/7229.bugfix
+
+diff --git a/doc/whatsnew/fragments/7229.bugfix b/doc/whatsnew/fragments/7229.bugfix
+new file mode 100644
+index 0000000000..33c7b578ed
+--- /dev/null
++++ b/doc/whatsnew/fragments/7229.bugfix
+@@ -0,0 +1,5 @@
++When parsing comma-separated lists of regular expressions in the config, ignore
++commas that are inside braces since those indicate quantiers, not dilineation
++between expressions.
++
++Closes #7229
+
+From b48c339bfba0415dec70d757e424f3f338becf61 Mon Sep 17 00:00:00 2001
+From: Lihu Ben-Ezri-Ravin <lihu.ben-ezri-ravin@portalinstruments.com>
+Date: Fri, 29 Jul 2022 12:53:52 -0400
+Subject: [PATCH 04/11] Remove performance test
+
+Overkill, slows down unit tests
+
+Co-authored-by: Pierre Sassoulas <pierre.sassoulas@gmail.com>
+---
+ tests/config/test_config.py | 13 -------------
+ 1 file changed, 13 deletions(-)
+
+diff --git a/tests/config/test_config.py b/tests/config/test_config.py
+index 14a0f32cdc..5296d67810 100644
+--- a/tests/config/test_config.py
++++ b/tests/config/test_config.py
+@@ -136,19 +136,6 @@ def _template_run(in_string):
+ 
+     assert _template_run(in_string) == [re.compile(regex) for regex in expected]
+ 
+-    # Catch trivially nonlinear performance
+-    small_input_time = timeit.timeit(
+-        "_template_run(in_string*100)",
+-        globals=locals(),
+-        number=10,
+-    )
+-    large_input_time = timeit.timeit(
+-        "_template_run(in_string*1000)",
+-        globals=locals(),
+-        number=10,
+-    )
+-    fudge_factor = 3
+-    assert large_input_time < small_input_time * 10 * fudge_factor
+ 
+ 
+ def test_short_verbose(capsys: CaptureFixture) -> None:
+
+From cdc55b8d277c389154840ff6e27fccdd1d16b1e0 Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sat, 29 Jul 2023 17:52:44 -0400
+Subject: [PATCH 05/11] Apply review comments
+
+---
+ doc/whatsnew/fragments/7229.bugfix | 2 +-
+ tests/config/test_config.py        | 2 --
+ 2 files changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/doc/whatsnew/fragments/7229.bugfix b/doc/whatsnew/fragments/7229.bugfix
+index 33c7b578ed..c39e130192 100644
+--- a/doc/whatsnew/fragments/7229.bugfix
++++ b/doc/whatsnew/fragments/7229.bugfix
+@@ -1,5 +1,5 @@
+ When parsing comma-separated lists of regular expressions in the config, ignore
+-commas that are inside braces since those indicate quantiers, not dilineation
++commas that are inside braces since those indicate quantifiers, not delineation
+ between expressions.
+ 
+ Closes #7229
+diff --git a/tests/config/test_config.py b/tests/config/test_config.py
+index 5296d67810..63ac4388d0 100644
+--- a/tests/config/test_config.py
++++ b/tests/config/test_config.py
+@@ -6,7 +6,6 @@
+ 
+ import os
+ import re
+-import timeit
+ from pathlib import Path
+ 
+ import pytest
+@@ -137,7 +136,6 @@ def _template_run(in_string):
+     assert _template_run(in_string) == [re.compile(regex) for regex in expected]
+ 
+ 
+-
+ def test_short_verbose(capsys: CaptureFixture) -> None:
+     """Check that we correctly handle the -v flag."""
+     Run([str(EMPTY_MODULE), "-v"], exit=False)
+
+From 42d4e66a3f7ba8c3e23bd5d3efb9c827b7eb7f3b Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sat, 29 Jul 2023 19:27:30 -0400
+Subject: [PATCH 06/11] (fixup) Add python 3.8 compatibility
+
+---
+ tests/config/test_config.py | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/tests/config/test_config.py b/tests/config/test_config.py
+index 8e7393efc4..7aa779a8f8 100644
+--- a/tests/config/test_config.py
++++ b/tests/config/test_config.py
+@@ -8,7 +8,7 @@
+ import re
+ from pathlib import Path
+ from tempfile import TemporaryDirectory
+-from typing import Any, cast
++from typing import Any
+ 
+ import pytest
+ from pytest import CaptureFixture
+@@ -136,7 +136,8 @@ def _template_run(in_string: str) -> list[re.Pattern[Any]]:
+             [str(EMPTY_MODULE), rf"--bad-names-rgx={in_string}"],
+             exit=False,
+         )
+-        return cast(list[re.Pattern[Any]], r.linter.config.bad_names_rgxs)
++        bad_names_rgxs: list[re.Pattern[Any]] = r.linter.config.bad_names_rgxs
++        return bad_names_rgxs
+ 
+     assert _template_run(in_string) == [re.compile(regex) for regex in expected]
+ 
+
+From b4798ae38bf789dec1d265b4b90d80c447e3a549 Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sat, 29 Jul 2023 19:35:54 -0400
+Subject: [PATCH 07/11] Adjust test to be more invalid
+
+---
+ tests/config/test_config.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/tests/config/test_config.py b/tests/config/test_config.py
+index 7aa779a8f8..872b568a61 100644
+--- a/tests/config/test_config.py
++++ b/tests/config/test_config.py
+@@ -164,12 +164,12 @@ def test_csv_regex_error(capsys: CaptureFixture) -> None:
+     """
+     with pytest.raises(SystemExit):
+         Run(
+-            [str(EMPTY_MODULE), r"--bad-names-rgx=(foo{1,3})"],
++            [str(EMPTY_MODULE), r"--bad-names-rgx=(foo{1,}, foo{1,3}})"],
+             exit=False,
+         )
+     output = capsys.readouterr()
+     assert (
+-        r"Error in provided regular expression: (foo{1 beginning at index 0: missing ), unterminated subpattern"
++        r"Error in provided regular expression: (foo{1,} beginning at index 0: missing ), unterminated subpattern"
+         in output.err
+     )
+ 
+
+From fdd914adac3ef78255ded47362b2d7bbf1eafd4b Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sat, 29 Jul 2023 19:40:15 -0400
+Subject: [PATCH 08/11] Adjust news/docs from #8813 to use bad-names-rgx
+
+---
+ doc/data/messages/i/invalid-name/details.rst | 2 +-
+ doc/whatsnew/fragments/2018.user_action      | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/data/messages/i/invalid-name/details.rst b/doc/data/messages/i/invalid-name/details.rst
+index 14cfe6e592..3323bddf44 100644
+--- a/doc/data/messages/i/invalid-name/details.rst
++++ b/doc/data/messages/i/invalid-name/details.rst
+@@ -99,7 +99,7 @@ Before pylint 3.0, most predefined patterns also enforced a minimum length
+ of three characters. If this behavior is desired in versions 3.0 and following,
+ it can be had by providing custom regular expressions as described next. (Or,
+ if the ``disallowed-name`` check is sufficient instead of ``invalid-name``,
+-providing the single option ``bad-names-rgxs="^..?$"`` will suffice to fail 1-2
++providing the single option ``bad-names-rgx="^..?$"`` will suffice to fail 1-2
+ character names.
+ 
+ Custom regular expressions
+diff --git a/doc/whatsnew/fragments/2018.user_action b/doc/whatsnew/fragments/2018.user_action
+index 5e33c8388c..420fe5bccf 100644
+--- a/doc/whatsnew/fragments/2018.user_action
++++ b/doc/whatsnew/fragments/2018.user_action
+@@ -5,7 +5,7 @@ and name length, and users regularly reported this to be surprising.)
+ If checking for a minimum length is still desired, it can be regained in two ways:
+ 
+ - If you are content with a ``disallowed-name`` message (instead of ``invalid-name``),
+-then simply add the option ``bad-names-rgxs="^..?$"``, which will fail 1-2
++then simply add the option ``bad-names-rgx="^..?$"``, which will fail 1-2
+ character-long names. (Ensure you enable ``disallowed-name``.)
+ 
+ - If you would prefer an ``invalid-name`` message to be emitted, or would prefer
+
+From a62a6fc3ba0cd9afc426f7684a16214d5e8251b7 Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sun, 30 Jul 2023 10:17:18 -0400
+Subject: [PATCH 09/11] Add docstring
+
+---
+ pylint/utils/utils.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/pylint/utils/utils.py b/pylint/utils/utils.py
+index 4f9e054f8f..9b27e503e4 100644
+--- a/pylint/utils/utils.py
++++ b/pylint/utils/utils.py
+@@ -255,6 +255,8 @@ def _check_csv(value: list[str] | tuple[str] | str) -> Sequence[str]:
+ 
+ 
+ def _check_regexp_csv(value: list[str] | tuple[str] | str) -> Iterable[str]:
++    r"""Split a comma-separated list of regexes, taking care to avoid splitting
++    a regex employing a comma as quantifier, as in `\d{1,2}`."""
+     if isinstance(value, (list, tuple)):
+         yield from value
+     else:
+
+From 73599e4c755e08d40a1440607b54d0df601175ae Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sun, 30 Jul 2023 10:22:46 -0400
+Subject: [PATCH 10/11] 'regexes' -> 'regexps'
+
+---
+ pylint/utils/utils.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pylint/utils/utils.py b/pylint/utils/utils.py
+index 9b27e503e4..8f16d2f1f4 100644
+--- a/pylint/utils/utils.py
++++ b/pylint/utils/utils.py
+@@ -255,7 +255,7 @@ def _check_csv(value: list[str] | tuple[str] | str) -> Sequence[str]:
+ 
+ 
+ def _check_regexp_csv(value: list[str] | tuple[str] | str) -> Iterable[str]:
+-    r"""Split a comma-separated list of regexes, taking care to avoid splitting
++    r"""Split a comma-separated list of regexps, taking care to avoid splitting
+     a regex employing a comma as quantifier, as in `\d{1,2}`."""
+     if isinstance(value, (list, tuple)):
+         yield from value
+
+From 4de6f9d7ffeb69ec88e9a0f352ccaf3911f600dc Mon Sep 17 00:00:00 2001
+From: Jacob Walls <jacobtylerwalls@gmail.com>
+Date: Sun, 30 Jul 2023 10:29:20 -0400
+Subject: [PATCH 11/11] Revert "Adjust news/docs from #8813 to use
+ bad-names-rgx"
+
+This reverts commit fdd914adac3ef78255ded47362b2d7bbf1eafd4b.
+---
+ doc/data/messages/i/invalid-name/details.rst | 2 +-
+ doc/whatsnew/fragments/2018.user_action      | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/data/messages/i/invalid-name/details.rst b/doc/data/messages/i/invalid-name/details.rst
+index 3323bddf44..14cfe6e592 100644
+--- a/doc/data/messages/i/invalid-name/details.rst
++++ b/doc/data/messages/i/invalid-name/details.rst
+@@ -99,7 +99,7 @@ Before pylint 3.0, most predefined patterns also enforced a minimum length
+ of three characters. If this behavior is desired in versions 3.0 and following,
+ it can be had by providing custom regular expressions as described next. (Or,
+ if the ``disallowed-name`` check is sufficient instead of ``invalid-name``,
+-providing the single option ``bad-names-rgx="^..?$"`` will suffice to fail 1-2
++providing the single option ``bad-names-rgxs="^..?$"`` will suffice to fail 1-2
+ character names.
+ 
+ Custom regular expressions
+diff --git a/doc/whatsnew/fragments/2018.user_action b/doc/whatsnew/fragments/2018.user_action
+index 420fe5bccf..5e33c8388c 100644
+--- a/doc/whatsnew/fragments/2018.user_action
++++ b/doc/whatsnew/fragments/2018.user_action
+@@ -5,7 +5,7 @@ and name length, and users regularly reported this to be surprising.)
+ If checking for a minimum length is still desired, it can be regained in two ways:
+ 
+ - If you are content with a ``disallowed-name`` message (instead of ``invalid-name``),
+-then simply add the option ``bad-names-rgx="^..?$"``, which will fail 1-2
++then simply add the option ``bad-names-rgxs="^..?$"``, which will fail 1-2
+ character-long names. (Ensure you enable ``disallowed-name``.)
+ 
+ - If you would prefer an ``invalid-name`` message to be emitted, or would prefer

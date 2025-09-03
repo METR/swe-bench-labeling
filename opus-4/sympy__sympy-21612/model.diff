@@ -1,0 +1,312 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 0000000000..9372bcab8c
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,86 @@
++import sys
++sys.path.insert(0, '.')
++
++from sympy import Symbol, Mul, Pow, Add
++from sympy.printing import srepr
++
++# Create symbols
++a, b, c = Symbol('a'), Symbol('b'), Symbol('c')
++
++# The issue states the parser produces: ((a**3 + b)/c)/1/(c**2)
++# Let's understand what this expression actually means
++
++# First, let's parse it step by step
++print("Understanding the issue expression: ((a**3 + b)/c)/1/(c**2)")
++print()
++
++# Step 1: (a**3 + b)/c
++step1 = (a**3 + b)/c
++print("Step 1: (a**3 + b)/c =", step1)
++
++# Step 2: ((a**3 + b)/c)/1
++step2 = step1/1
++print("Step 2: ((a**3 + b)/c)/1 =", step2)
++
++# Step 3: ((a**3 + b)/c)/1/(c**2)
++step3 = step2/(c**2)
++print("Step 3: ((a**3 + b)/c)/1/(c**2) =", step3)
++print()
++
++# Now let's check what convert_frac would actually produce
++print("What convert_frac produces:")
++
++# Inner numerator: \frac{a^3+b}{c}
++inner_num_top = Add(Pow(a, 3), b, evaluate=False)
++inner_num_bot = c
++inner_num = Mul(inner_num_top, Pow(inner_num_bot, -1, evaluate=False), evaluate=False)
++print("Inner numerator:", inner_num)
++
++# Inner denominator: \frac{1}{c^2}
++inner_den_top = 1
++inner_den_bot = Pow(c, 2, evaluate=False)
++inner_den = Mul(inner_den_top, Pow(inner_den_bot, -1, evaluate=False), evaluate=False)
++print("Inner denominator:", inner_den)
++
++# Outer fraction
++inverse_denom = Pow(inner_den, -1, evaluate=False)
++final = Mul(inner_num, inverse_denom, evaluate=False)
++print("Final result:", final)
++print()
++
++# Check the structure
++print("Structure analysis:")
++print("Final args:", final.args)
++print("Final srepr:", srepr(final))
++print()
++
++# Now, the key question: Is there a way that this could be printed as 
++# ((a**3 + b)/c)/1/(c**2)?
++# Let's check if the printing could be ambiguous
++
++# Test different ways of constructing similar expressions
++print("Testing different constructions:")
++
++# Method 1: What we think the parser produces
++expr1 = final
++print("Method 1 (parser):", expr1)
++
++# Method 2: Direct construction of what the issue claims
++expr2 = ((a**3 + b)/c)/1/(c**2)
++print("Method 2 (issue claim):", expr2)
++
++# Method 3: Expected result
++expr3 = ((a**3 + b)/c)/(1/(c**2))
++print("Method 3 (expected):", expr3)
++
++print()
++print("Are they equal?")
++print("expr1 == expr2:", expr1 == expr2)
++print("expr1 == expr3:", expr1 == expr3)
++print("expr2 == expr3:", expr2 == expr3)
++
++print()
++print("Simplified forms:")
++print("expr1.simplify():", expr1.simplify())
++print("expr2.simplify():", expr2.simplify())
++print("expr3.simplify():", expr3.simplify())
+diff --git a/test_exact_issue.py b/test_exact_issue.py
+new file mode 100644
+index 0000000000..99bd1ed024
+--- /dev/null
++++ b/test_exact_issue.py
+@@ -0,0 +1,52 @@
++import sympy
++from sympy import Symbol, Mul, Pow, Add
++
++# Mock the parse_latex function behavior
++def mock_parse_latex(latex_str):
++    """Simulate what parse_latex does for the given test case"""
++    a = Symbol('a')
++    b = Symbol('b')
++    c = Symbol('c')
++    
++    # For the LaTeX: \frac{\frac{a^3+b}{c}}{\frac{1}{c^2}}
++    # Step 1: Parse inner numerator \frac{a^3+b}{c}
++    inner_num_top = Add(Pow(a, 3), b)
++    inner_num_bot = c
++    inner_numerator = Mul(inner_num_top, Pow(inner_num_bot, -1, evaluate=False), evaluate=False)
++    
++    # Step 2: Parse inner denominator \frac{1}{c^2}
++    inner_den_top = 1
++    inner_den_bot = Pow(c, 2)
++    inner_denominator = Mul(inner_den_top, Pow(inner_den_bot, -1, evaluate=False), evaluate=False)
++    
++    # Step 3: Create the outer fraction
++    result = Mul(inner_numerator, Pow(inner_denominator, -1, evaluate=False), evaluate=False)
++    
++    return result
++
++# Test the exact case from the issue
++result = mock_parse_latex(r"\frac{\frac{a^3+b}{c}}{\frac{1}{c^2}}")
++
++# The issue says parse_latex returns: ((a**3 + b)/c)/1/(c**2)
++# Let's see what our mock returns
++print("Mock parse result:", result)
++print("Type:", type(result))
++
++# Now let's check what ((a**3 + b)/c)/1/(c**2) actually is
++a, b, c = sympy.symbols('a b c')
++wrong_expr = ((a**3 + b)/c)/1/(c**2)
++print("\nWrong expression from issue:", wrong_expr)
++
++# And what we expect
++expected = ((a**3 + b)/c)/(1/(c**2))
++print("Expected expression:", expected)
++
++# Are they the same?
++print("\nMock result == wrong expr?", result == wrong_expr)
++print("Mock result == expected?", result == expected)
++
++# Let's check the exact string representation
++print("\nString representations:")
++print("Mock result str():", str(result))
++print("Wrong expr str():", str(wrong_expr))
++print("Expected str():", str(expected))
+diff --git a/test_frac_issue.py b/test_frac_issue.py
+new file mode 100644
+index 0000000000..325520e089
+--- /dev/null
++++ b/test_frac_issue.py
+@@ -0,0 +1,19 @@
++from sympy.parsing.latex import parse_latex
++from sympy import sympify
++
++# Test the problematic expression
++latex_expr = r"\frac{\frac{a^3+b}{c}}{\frac{1}{c^2}}"
++parsed = parse_latex(latex_expr)
++print(f"Parsed expression: {parsed}")
++
++# What we expect
++expected = sympify("((a**3 + b)/c)/(1/(c**2))")
++print(f"Expected expression: {expected}")
++
++# Simplify both to see if they're equivalent
++print(f"Parsed simplified: {parsed.simplify()}")
++print(f"Expected simplified: {expected.simplify()}")
++
++# Check if they're equal
++print(f"Are they equal? {parsed == expected}")
++print(f"Are they equal after simplification? {parsed.simplify() == expected.simplify()}")
+diff --git a/test_interactive.py b/test_interactive.py
+new file mode 100644
+index 0000000000..85ced30671
+--- /dev/null
++++ b/test_interactive.py
+@@ -0,0 +1,36 @@
++import sympy
++from sympy import Symbol, Mul, Pow, Add
++import sys
++
++a = Symbol('a')
++b = Symbol('b')
++c = Symbol('c')
++
++# Build what the parser creates
++inner_num = Mul(Add(Pow(a, 3), b), Pow(c, -1, evaluate=False), evaluate=False)
++inner_den = Mul(1, Pow(Pow(c, 2), -1, evaluate=False), evaluate=False)
++result = Mul(inner_num, Pow(inner_den, -1, evaluate=False), evaluate=False)
++
++# Test different display methods
++print("Using print():", result)
++print("\nUsing sys.displayhook (like interactive):")
++sys.displayhook(result)
++
++# Let's also check the expression from different construction methods
++print("\n\nDifferent constructions:")
++
++# Method 1: Direct division
++expr1 = inner_num / inner_den
++print("inner_num / inner_den:", expr1)
++
++# Method 2: Using Mul and Pow (what parser does)
++expr2 = Mul(inner_num, Pow(inner_den, -1, evaluate=False), evaluate=False)
++print("Mul(inner_num, Pow(inner_den, -1)):", expr2)
++
++# Are they the same?
++print("\nAre they equal?", expr1 == expr2)
++
++# Check their string representations
++print("\nString representations:")
++print("expr1:", str(expr1))
++print("expr2:", str(expr2))
+diff --git a/test_nested_frac.py b/test_nested_frac.py
+new file mode 100644
+index 0000000000..88dfc52907
+--- /dev/null
++++ b/test_nested_frac.py
+@@ -0,0 +1,89 @@
++#!/usr/bin/env python
++import sys
++import os
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from sympy import Symbol, Mul, Pow, Add
++from sympy.printing.str import StrPrinter
++
++# Helper functions from test_latex.py
++def _Mul(a, b):
++    return Mul(a, b, evaluate=False)
++
++def _Pow(a, b):
++    return Pow(a, b, evaluate=False)
++
++# Test if antlr4 is available
++try:
++    from sympy.parsing.latex import parse_latex
++    antlr4_available = True
++except ImportError:
++    antlr4_available = False
++    print("antlr4 not available, simulating parse_latex behavior")
++
++# Mock the behavior of parse_latex for the test case
++def mock_parse_latex_nested_frac():
++    """Simulate parse_latex for \\frac{\\frac{a^3+b}{c}}{\\frac{1}{c^2}}"""
++    a = Symbol('a')
++    b = Symbol('b')
++    c = Symbol('c')
++    
++    # Inner numerator: \frac{a^3+b}{c}
++    inner_num = _Mul(Add(Pow(a, 3), b), _Pow(c, -1))
++    
++    # Inner denominator: \frac{1}{c^2}
++    inner_den = _Mul(1, _Pow(Pow(c, 2), -1))
++    
++    # Outer fraction
++    result = _Mul(inner_num, _Pow(inner_den, -1))
++    
++    return result
++
++# The test
++a, b, c = Symbol('a'), Symbol('b'), Symbol('c')
++
++# Expected expression: ((a**3 + b)/c)/(1/(c**2))
++expected = ((a**3 + b)/c)/(1/(c**2))
++
++# What the current parser produces (simulated)
++parsed = mock_parse_latex_nested_frac()
++
++print("Testing nested fraction parsing...")
++print(f"LaTeX: \\frac{{\\frac{{a^3+b}}{{c}}}}{{\\frac{{1}}{{c^2}}}}")
++print(f"Expected: {expected}")
++print(f"Expected (simplified): {expected.simplify()}")
++print(f"Parsed: {parsed}")
++
++# The issue claims the parser produces: ((a**3 + b)/c)/1/(c**2)
++# Let's check what that would be
++wrong_expr = ((a**3 + b)/c)/1/(c**2)
++print(f"\nWhat issue claims parser produces: {wrong_expr}")
++print(f"That simplifies to: {wrong_expr.simplify()}")
++
++# Check if parsed equals expected
++print(f"\nParsed == Expected? {parsed == expected}")
++print(f"Parsed.simplify() == Expected.simplify()? {parsed.simplify() == expected.simplify()}")
++print(f"Parsed == Wrong? {parsed == wrong_expr}")
++
++# Let's check the string representation issue
++print(f"\nString representations:")
++print(f"str(parsed): {str(parsed)}")
++print(f"repr(parsed): {repr(parsed)}")
++
++# Custom printer test
++printer = StrPrinter()
++print(f"StrPrinter: {printer.doprint(parsed)}")
++
++# Check the args
++print(f"\nParsed args: {parsed.args}")
++print(f"Wrong args: {wrong_expr.args}")
++
++# Test with actual parse_latex if available
++if antlr4_available:
++    print("\n\nTesting with actual parse_latex:")
++    actual_parsed = parse_latex(r"\frac{\frac{a^3+b}{c}}{\frac{1}{c^2}}")
++    print(f"Actual parsed: {actual_parsed}")
++    print(f"Actual == Expected? {actual_parsed == expected}")
++    print(f"Actual == Mocked? {actual_parsed == parsed}")
++else:
++    print("\n\nCannot test with actual parse_latex (antlr4 not available)")

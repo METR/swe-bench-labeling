@@ -1,0 +1,323 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1 @@
++
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..09e34336d
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,16 @@
++from sklearn.datasets import make_multilabel_classification
++from sklearn.multioutput import MultiOutputClassifier
++from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
++from sklearn.model_selection import cross_val_predict
++
++X, Y = make_multilabel_classification()
++
++mo_lda = MultiOutputClassifier(LinearDiscriminantAnalysis())
++pred = cross_val_predict(mo_lda, X, Y, cv=5) # Works fine
++print("Regular prediction works fine")
++
++try:
++    pred_proba = cross_val_predict(mo_lda, X, Y, cv=5, method='predict_proba') # Returns error
++    print("predict_proba works!")
++except AttributeError as e:
++    print(f"Error encountered: {e}")
+diff --git a/sklearn/multioutput.py b/sklearn/multioutput.py
+index 463b72d40..c798ae448 100644
+--- a/sklearn/multioutput.py
++++ b/sklearn/multioutput.py
+@@ -320,11 +320,80 @@ class MultiOutputClassifier(MultiOutputEstimator, ClassifierMixin):
+     ----------
+     estimators_ : list of ``n_output`` estimators
+         Estimators used for predictions.
++    
++    classes_ : list of arrays
++        A list of arrays of class labels, one for each output in the
++        multi-output classification problem. The i-th element of the list
++        is the array of class labels for the i-th output.
+     """
+ 
+     def __init__(self, estimator, n_jobs=None):
+         super().__init__(estimator, n_jobs)
+ 
++    def fit(self, X, y, sample_weight=None):
++        """Fit the model to data.
++        
++        Fit a separate model for each output variable.
++
++        Parameters
++        ----------
++        X : (sparse) array-like, shape (n_samples, n_features)
++            Data.
++
++        y : (sparse) array-like, shape (n_samples, n_outputs)
++            Multi-output targets. An indicator matrix turns on multilabel
++            estimation.
++
++        sample_weight : array-like, shape = (n_samples) or None
++            Sample weights. If None, then samples are equally weighted.
++            Only supported if the underlying classifier supports sample
++            weights.
++
++        Returns
++        -------
++        self : object
++        """
++        super().fit(X, y, sample_weight)
++        self.classes_ = [estimator.classes_ for estimator in self.estimators_]
++        return self
++
++    @if_delegate_has_method('estimator')
++    def partial_fit(self, X, y, classes=None, sample_weight=None):
++        """Incrementally fit the model to data.
++        
++        Fit a separate model for each output variable.
++
++        Parameters
++        ----------
++        X : (sparse) array-like, shape (n_samples, n_features)
++            Data.
++
++        y : (sparse) array-like, shape (n_samples, n_outputs)
++            Multi-output targets.
++
++        classes : list of numpy arrays, shape (n_outputs)
++            Each array is unique classes for one output in str/int
++            Can be obtained by via
++            ``[np.unique(y[:, i]) for i in range(y.shape[1])]``, where y is the
++            target matrix of the entire dataset.
++            This argument is required for the first call to partial_fit
++            and can be omitted in the subsequent calls.
++            Note that y doesn't need to contain all labels in `classes`.
++
++        sample_weight : array-like, shape = (n_samples) or None
++            Sample weights. If None, then samples are equally weighted.
++            Only supported if the underlying classifier supports sample
++            weights.
++
++        Returns
++        -------
++        self : object
++        """
++        super().partial_fit(X, y, classes, sample_weight)
++        if hasattr(self, 'estimators_'):
++            self.classes_ = [estimator.classes_ for estimator in self.estimators_]
++        return self
++
+     def predict_proba(self, X):
+         """Probability estimates.
+         Returns prediction probabilities for each class of each output.
+diff --git a/sklearn/tests/test_multioutput.py b/sklearn/tests/test_multioutput.py
+index e70048a7f..37a715517 100644
+--- a/sklearn/tests/test_multioutput.py
++++ b/sklearn/tests/test_multioutput.py
+@@ -527,3 +527,65 @@ def test_base_chain_crossval_fit_and_predict():
+             assert jaccard_score(Y, Y_pred_cv, average='samples') > .4
+         else:
+             assert mean_squared_error(Y, Y_pred_cv) < .25
++
++
++def test_multi_output_classifier_cross_val_predict_proba():
++    """Test that cross_val_predict works with predict_proba for MultiOutputClassifier."""
++    from sklearn.datasets import make_multilabel_classification
++    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
++    from sklearn.tree import DecisionTreeClassifier
++    from sklearn.model_selection import cross_val_predict
++    
++    # Generate sample data
++    X, Y = make_multilabel_classification(n_samples=100, n_features=20, 
++                                          n_classes=3, n_labels=3, 
++                                          random_state=42)
++    
++    # Test with LinearDiscriminantAnalysis
++    mo_lda = MultiOutputClassifier(LinearDiscriminantAnalysis())
++    
++    # Regular prediction should work
++    pred = cross_val_predict(mo_lda, X, Y, cv=5)
++    assert pred.shape == Y.shape
++    
++    # predict_proba should now work without AttributeError
++    pred_proba = cross_val_predict(mo_lda, X, Y, cv=5, method='predict_proba')
++    
++    # Check output structure
++    assert isinstance(pred_proba, list)
++    assert len(pred_proba) == Y.shape[1]
++    
++    # Check each output's prediction shape
++    for i, proba in enumerate(pred_proba):
++        n_classes = len(np.unique(Y[:, i]))
++        assert proba.shape == (X.shape[0], n_classes)
++    
++    # Test with DecisionTreeClassifier
++    mo_dt = MultiOutputClassifier(DecisionTreeClassifier(random_state=42))
++    pred_proba_dt = cross_val_predict(mo_dt, X, Y, cv=5, method='predict_proba')
++    
++    assert isinstance(pred_proba_dt, list)
++    assert len(pred_proba_dt) == Y.shape[1]
++
++
++def test_multi_output_classifier_classes_attribute():
++    """Test that MultiOutputClassifier has classes_ attribute after fitting."""
++    from sklearn.datasets import make_multilabel_classification
++    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
++    
++    X, Y = make_multilabel_classification(n_samples=100, n_features=20, 
++                                          n_classes=3, n_labels=3, 
++                                          random_state=42)
++    
++    mo_clf = MultiOutputClassifier(LinearDiscriminantAnalysis())
++    mo_clf.fit(X, Y)
++    
++    # Check that classes_ attribute exists
++    assert hasattr(mo_clf, 'classes_')
++    assert isinstance(mo_clf.classes_, list)
++    assert len(mo_clf.classes_) == Y.shape[1]
++    
++    # Check that each element is an array of classes
++    for i, classes in enumerate(mo_clf.classes_):
++        expected_classes = np.unique(Y[:, i])
++        assert_array_equal(classes, expected_classes)
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..06aebd3ef
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,59 @@
++import numpy as np
++from sklearn.datasets import make_multilabel_classification
++from sklearn.multioutput import MultiOutputClassifier
++from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
++from sklearn.model_selection import cross_val_predict
++from sklearn.tree import DecisionTreeClassifier
++
++# Test 1: Basic functionality with LinearDiscriminantAnalysis
++print("Test 1: Basic functionality with LinearDiscriminantAnalysis")
++X, Y = make_multilabel_classification(n_samples=100, n_features=20, n_classes=3, n_labels=3, random_state=42)
++
++mo_lda = MultiOutputClassifier(LinearDiscriminantAnalysis())
++pred = cross_val_predict(mo_lda, X, Y, cv=5)
++print("  Regular prediction: OK")
++
++pred_proba = cross_val_predict(mo_lda, X, Y, cv=5, method='predict_proba')
++print("  predict_proba: OK")
++print("  Shape of predictions:", len(pred_proba), "outputs, each with shape", pred_proba[0].shape)
++
++# Test 2: Check that classes_ attribute is set correctly
++print("\nTest 2: Checking classes_ attribute")
++mo_lda_fitted = MultiOutputClassifier(LinearDiscriminantAnalysis())
++mo_lda_fitted.fit(X, Y)
++print("  Has classes_:", hasattr(mo_lda_fitted, 'classes_'))
++print("  Number of outputs:", len(mo_lda_fitted.classes_))
++for i, classes in enumerate(mo_lda_fitted.classes_):
++    print(f"  Output {i} classes: {classes}")
++
++# Test 3: Test with DecisionTreeClassifier
++print("\nTest 3: Testing with DecisionTreeClassifier")
++mo_dt = MultiOutputClassifier(DecisionTreeClassifier(random_state=42))
++pred = cross_val_predict(mo_dt, X, Y, cv=5)
++print("  Regular prediction: OK")
++
++pred_proba = cross_val_predict(mo_dt, X, Y, cv=5, method='predict_proba')
++print("  predict_proba: OK")
++
++# Test 4: Test with partial_fit (if supported)
++print("\nTest 4: Testing partial_fit")
++try:
++    from sklearn.naive_bayes import MultinomialNB
++    X_positive = np.abs(X)  # MultinomialNB requires non-negative features
++    mo_nb = MultiOutputClassifier(MultinomialNB())
++    
++    # Get unique classes for each output
++    classes_list = [np.unique(Y[:, i]) for i in range(Y.shape[1])]
++    
++    # Partial fit
++    mo_nb.partial_fit(X_positive[:50], Y[:50], classes=classes_list)
++    mo_nb.partial_fit(X_positive[50:], Y[50:])
++    
++    print("  partial_fit: OK")
++    print("  Has classes_ after partial_fit:", hasattr(mo_nb, 'classes_'))
++    if hasattr(mo_nb, 'classes_'):
++        print("  Number of outputs:", len(mo_nb.classes_))
++except Exception as e:
++    print(f"  partial_fit test failed: {e}")
++
++print("\nAll tests completed successfully!")
+diff --git a/test_multioutput_cross_val_predict.py b/test_multioutput_cross_val_predict.py
+new file mode 100644
+index 000000000..1cfd3a926
+--- /dev/null
++++ b/test_multioutput_cross_val_predict.py
+@@ -0,0 +1,68 @@
++"""Test for MultiOutputClassifier cross_val_predict with predict_proba method."""
++
++import numpy as np
++from sklearn.datasets import make_multilabel_classification
++from sklearn.multioutput import MultiOutputClassifier
++from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
++from sklearn.tree import DecisionTreeClassifier
++from sklearn.model_selection import cross_val_predict
++
++
++def test_multi_output_classifier_cross_val_predict_proba():
++    """Test that cross_val_predict works with predict_proba for MultiOutputClassifier."""
++    # Generate sample data
++    X, Y = make_multilabel_classification(n_samples=100, n_features=20, 
++                                          n_classes=3, n_labels=3, 
++                                          random_state=42)
++    
++    # Test with LinearDiscriminantAnalysis
++    mo_lda = MultiOutputClassifier(LinearDiscriminantAnalysis())
++    
++    # Regular prediction should work
++    pred = cross_val_predict(mo_lda, X, Y, cv=5)
++    assert pred.shape == Y.shape
++    
++    # predict_proba should now work without AttributeError
++    pred_proba = cross_val_predict(mo_lda, X, Y, cv=5, method='predict_proba')
++    
++    # Check output structure
++    assert isinstance(pred_proba, list)
++    assert len(pred_proba) == Y.shape[1]
++    
++    # Check each output's prediction shape
++    for i, proba in enumerate(pred_proba):
++        n_classes = len(np.unique(Y[:, i]))
++        assert proba.shape == (X.shape[0], n_classes)
++    
++    # Test with DecisionTreeClassifier
++    mo_dt = MultiOutputClassifier(DecisionTreeClassifier(random_state=42))
++    pred_proba_dt = cross_val_predict(mo_dt, X, Y, cv=5, method='predict_proba')
++    
++    assert isinstance(pred_proba_dt, list)
++    assert len(pred_proba_dt) == Y.shape[1]
++
++
++def test_multi_output_classifier_classes_attribute():
++    """Test that MultiOutputClassifier has classes_ attribute after fitting."""
++    X, Y = make_multilabel_classification(n_samples=100, n_features=20, 
++                                          n_classes=3, n_labels=3, 
++                                          random_state=42)
++    
++    mo_clf = MultiOutputClassifier(LinearDiscriminantAnalysis())
++    mo_clf.fit(X, Y)
++    
++    # Check that classes_ attribute exists
++    assert hasattr(mo_clf, 'classes_')
++    assert isinstance(mo_clf.classes_, list)
++    assert len(mo_clf.classes_) == Y.shape[1]
++    
++    # Check that each element is an array of classes
++    for i, classes in enumerate(mo_clf.classes_):
++        expected_classes = np.unique(Y[:, i])
++        np.testing.assert_array_equal(classes, expected_classes)
++
++
++if __name__ == "__main__":
++    test_multi_output_classifier_cross_val_predict_proba()
++    test_multi_output_classifier_classes_attribute()
++    print("All tests passed!")

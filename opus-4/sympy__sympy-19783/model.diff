@@ -1,0 +1,167 @@
+diff --git a/debug_mul.py b/debug_mul.py
+new file mode 100644
+index 0000000000..765862e3d2
+--- /dev/null
++++ b/debug_mul.py
+@@ -0,0 +1,27 @@
++from sympy.physics.quantum.dagger import Dagger
++from sympy.physics.quantum.operator import Operator, IdentityOperator
++from sympy import Mul
++
++# Create operator A
++A = Operator('A')
++Identity = IdentityOperator()
++
++# Create Dagger(A)
++B = Dagger(A)
++
++# Check if rmul is being called
++class TestIdentity(IdentityOperator):
++    def __rmul__(self, other):
++        print(f"TestIdentity.__rmul__ called with {other}")
++        return super().__rmul__(other)
++
++test_id = TestIdentity()
++print(f"B * test_id = {B * test_id}")
++
++# Let's check what the default Mul behavior is
++print(f"\nChecking Mul behavior:")
++print(f"Mul(B, Identity) = {Mul(B, Identity)}")
++print(f"B * Identity = {B * Identity}")
++
++# Check the base classes
++print(f"\nIdentity.__class__.__mro__ = {Identity.__class__.__mro__}")
+diff --git a/sympy/physics/quantum/dagger.py b/sympy/physics/quantum/dagger.py
+index 17da3cfd2c..1446617b37 100644
+--- a/sympy/physics/quantum/dagger.py
++++ b/sympy/physics/quantum/dagger.py
+@@ -84,6 +84,12 @@ def __new__(cls, arg):
+         if obj is not None:
+             return obj
+         return Expr.__new__(cls, arg)
++    
++    def __mul__(self, other):
++        from sympy.physics.quantum.operator import IdentityOperator
++        if isinstance(other, IdentityOperator):
++            return self
++        return Expr.__mul__(self, other)
+ 
+ adjoint.__name__ = "Dagger"
+ adjoint._sympyrepr = lambda a, b: "Dagger(%s)" % b._print(a.args[0])
+diff --git a/sympy/physics/quantum/operator.py b/sympy/physics/quantum/operator.py
+index 306bfee64f..95c6baab73 100644
+--- a/sympy/physics/quantum/operator.py
++++ b/sympy/physics/quantum/operator.py
+@@ -312,6 +312,11 @@ def __mul__(self, other):
+ 
+         return Mul(self, other)
+ 
++    def __rmul__(self, other):
++        # Handle multiplication when IdentityOperator is on the right side
++        # This covers cases like Dagger(A) * I
++        return other
++
+     def _represent_default_basis(self, **options):
+         if not self.N or self.N == oo:
+             raise NotImplementedError('Cannot represent infinite dimensional' +
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..f4cc9373ba
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,28 @@
++from sympy.physics.quantum.dagger import Dagger
++from sympy.physics.quantum.operator import Operator
++from sympy.physics.quantum import IdentityOperator
++
++# Create operator A
++A = Operator('A')
++Identity = IdentityOperator()
++
++# Test regular operator * Identity
++print(f"A * Identity = {A * Identity}")
++print(f"type(A) = {type(A)}")
++print(f"isinstance(A, Operator) = {isinstance(A, Operator)}")
++
++# Create Dagger(A)
++B = Dagger(A)
++
++# Test Dagger(A) * Identity
++print(f"\nDagger(A) * Identity = {B * Identity}")
++print(f"type(B) = {type(B)}")
++print(f"isinstance(B, Operator) = {isinstance(B, Operator)}")
++
++# What we expect
++print(f"\nExpected: {B}")
++
++# Check if __mul__ is being called
++print(f"\nHas A.__mul__? {hasattr(A, '__mul__')}")
++print(f"Has B.__mul__? {hasattr(B, '__mul__')}")
++print(f"Has Identity.__rmul__? {hasattr(Identity, '__rmul__')}")
+diff --git a/test_mul_behavior.py b/test_mul_behavior.py
+new file mode 100644
+index 0000000000..74b2892c83
+--- /dev/null
++++ b/test_mul_behavior.py
+@@ -0,0 +1,25 @@
++from sympy.physics.quantum.dagger import Dagger
++from sympy.physics.quantum.operator import Operator, IdentityOperator
++from sympy import Mul
++
++# Create operator A
++A = Operator('A')
++Identity = IdentityOperator()
++
++# Create Dagger(A)
++B = Dagger(A)
++
++# Check how Identity.__rmul__ is called
++print(f"Identity.__rmul__ = {Identity.__rmul__}")
++
++# Try calling rmul directly
++result = Identity.__rmul__(B)
++print(f"Identity.__rmul__(Dagger(A)) = {result}")
++
++# Check the parent class's rmul
++from sympy import Basic
++print(f"Basic.__rmul__ in MRO: {Basic.__rmul__ in [getattr(cls, '__rmul__', None) for cls in Identity.__class__.__mro__]}")
++
++# Check what happens with Mul
++print(f"\nMul(B, Identity) = {Mul(B, Identity)}")
++print(f"Mul(Identity, B) = {Mul(Identity, B)}")
+diff --git a/test_mul_simplify.py b/test_mul_simplify.py
+new file mode 100644
+index 0000000000..929427fc02
+--- /dev/null
++++ b/test_mul_simplify.py
+@@ -0,0 +1,30 @@
++from sympy.physics.quantum.dagger import Dagger
++from sympy.physics.quantum.operator import Operator, IdentityOperator
++from sympy import Mul, S
++
++# Create operator A
++A = Operator('A')
++Identity = IdentityOperator()
++
++# Create Dagger(A)
++B = Dagger(A)
++
++# Create the multiplication
++mul_expr = B * Identity
++print(f"mul_expr = {mul_expr}")
++print(f"mul_expr.args = {mul_expr.args}")
++print(f"type(mul_expr) = {type(mul_expr)}")
++
++# Check if we can detect IdentityOperator in the args
++has_identity = any(isinstance(arg, IdentityOperator) for arg in mul_expr.args)
++print(f"Has IdentityOperator in args: {has_identity}")
++
++# Let's see if Mul has a simplify method
++print(f"\nHas simplify? {hasattr(mul_expr, 'simplify')}")
++if hasattr(mul_expr, 'simplify'):
++    print(f"mul_expr.simplify() = {mul_expr.simplify()}")
++
++# Let's check doit
++print(f"\nHas doit? {hasattr(mul_expr, 'doit')}")
++if hasattr(mul_expr, 'doit'):
++    print(f"mul_expr.doit() = {mul_expr.doit()}")

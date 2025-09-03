@@ -1,0 +1,25 @@
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index 3c4aa86e36..5c82439890 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -775,6 +775,10 @@ def _flatten(sets):
+                     yield s
+         return ProductSet(*_flatten(self.sets))
+ 
++    def is_subset(self, other):
++        if isinstance(other, ProductSet) and len(self.sets) == len(other.sets):
++            return all(s1.is_subset(s2) for s1, s2 in zip(self.sets, other.sets))
++        return all(element in other for element in self)
+ 
+ 
+     def _contains(self, element):
+@@ -1679,6 +1683,9 @@ def _complement(self, other):
+     def _symmetric_difference(self, other):
+         return other
+ 
++    def equals(self, other):
++        return isinstance(other, EmptySet)
++
+ 
+ class UniversalSet(Set, metaclass=Singleton):
+     """

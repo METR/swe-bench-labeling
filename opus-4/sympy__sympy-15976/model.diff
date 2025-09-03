@@ -1,0 +1,380 @@
+diff --git a/check_tests.py b/check_tests.py
+new file mode 100644
+index 0000000000..9609362319
+--- /dev/null
++++ b/check_tests.py
+@@ -0,0 +1,23 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from sympy import Symbol
++from sympy.printing.mathml import MathMLPresentationPrinter
++
++mpp = MathMLPresentationPrinter()
++
++# Test simple symbol
++mml = mpp._print(Symbol("x"))
++print(f"Symbol('x'): nodeName = {mml.nodeName}")
++
++# Test symbol with superscript
++mml = mpp._print(Symbol("x^2"))
++print(f"Symbol('x^2'): nodeName = {mml.nodeName}")
++
++# Test symbol with subscript
++mml = mpp._print(Symbol("x_2"))
++print(f"Symbol('x_2'): nodeName = {mml.nodeName}")
++
++# Test symbol ending with number
++mml = mpp._print(Symbol("x2"))
++print(f"Symbol('x2'): nodeName = {mml.nodeName}")
+diff --git a/fix_tests.py b/fix_tests.py
+new file mode 100644
+index 0000000000..7de2f4dd2e
+--- /dev/null
++++ b/fix_tests.py
+@@ -0,0 +1,58 @@
++import re
++
++# Read the test file
++with open('./sympy/printing/tests/test_mathml.py', 'r') as f:
++    content = f.read()
++
++# Pattern to find the test assertions that need updating
++# We need to update all patterns where mml.nodeName == 'mi' followed by msub/msup/msubsup
++
++# For x_2 pattern (subscript)
++pattern1 = r'''    mml = mpp._print\(Symbol\("x_2"\)\)
++    assert mml.nodeName == 'mi'
++    assert mml.childNodes\[0\].nodeName == 'msub'
++    assert mml.childNodes\[0\].childNodes\[0\].nodeName == 'mi'
++    assert mml.childNodes\[0\].childNodes\[0\].childNodes\[0\].nodeValue == 'x'
++    assert mml.childNodes\[0\].childNodes\[1\].nodeName == 'mi'
++    assert mml.childNodes\[0\].childNodes\[1\].childNodes\[0\].nodeValue == '2'
++    del mml'''
++
++replacement1 = '''    mml = mpp._print(Symbol("x_2"))
++    assert mml.nodeName == 'msub'
++    assert mml.childNodes[0].nodeName == 'mi'
++    assert mml.childNodes[0].childNodes[0].nodeValue == 'x'
++    assert mml.childNodes[1].nodeName == 'mi'
++    assert mml.childNodes[1].childNodes[0].nodeValue == '2'
++    del mml'''
++
++content = content.replace(pattern1, replacement1)
++
++# For x^3_2 pattern (msubsup)
++pattern2 = r'''    mml = mpp._print\(Symbol\("x\^3_2"\)\)
++    assert mml.nodeName == 'mi'
++    assert mml.childNodes\[0\].nodeName == 'msubsup'
++    assert mml.childNodes\[0\].childNodes\[0\].nodeName == 'mi'
++    assert mml.childNodes\[0\].childNodes\[0\].childNodes\[0\].nodeValue == 'x'
++    assert mml.childNodes\[0\].childNodes\[1\].nodeName == 'mi'
++    assert mml.childNodes\[0\].childNodes\[1\].childNodes\[0\].nodeValue == '2'
++    assert mml.childNodes\[0\].childNodes\[2\].nodeName == 'mi'
++    assert mml.childNodes\[0\].childNodes\[2\].childNodes\[0\].nodeValue == '3'
++    del mml'''
++
++replacement2 = '''    mml = mpp._print(Symbol("x^3_2"))
++    assert mml.nodeName == 'msubsup'
++    assert mml.childNodes[0].nodeName == 'mi'
++    assert mml.childNodes[0].childNodes[0].nodeValue == 'x'
++    assert mml.childNodes[1].nodeName == 'mi'
++    assert mml.childNodes[1].childNodes[0].nodeValue == '2'
++    assert mml.childNodes[2].nodeName == 'mi'
++    assert mml.childNodes[2].childNodes[0].nodeValue == '3'
++    del mml'''
++
++content = content.replace(pattern2, replacement2)
++
++# Write the updated content back
++with open('./sympy/printing/tests/test_mathml.py', 'w') as f:
++    f.write(content)
++
++print("Test file updated successfully!")
+diff --git a/sympy/printing/mathml.py b/sympy/printing/mathml.py
+index 3f8b8d49e0..50fd256682 100644
+--- a/sympy/printing/mathml.py
++++ b/sympy/printing/mathml.py
+@@ -743,11 +743,6 @@ def _print_Sum(self, e):
+         return mrow
+ 
+     def _print_Symbol(self, sym, style='plain'):
+-        x = self.dom.createElement('mi')
+-
+-        if style == 'bold':
+-            x.setAttribute('mathvariant', 'bold')
+-
+         def join(items):
+             if len(items) > 1:
+                 mrow = self.dom.createElement('mrow')
+@@ -779,27 +774,29 @@ def translate(s):
+ 
+         mname = self.dom.createElement('mi')
+         mname.appendChild(self.dom.createTextNode(name))
++        if style == 'bold':
++            mname.setAttribute('mathvariant', 'bold')
++            
+         if len(supers) == 0:
+             if len(subs) == 0:
+-                x.appendChild(self.dom.createTextNode(name))
++                return mname
+             else:
+                 msub = self.dom.createElement('msub')
+                 msub.appendChild(mname)
+                 msub.appendChild(join(subs))
+-                x.appendChild(msub)
++                return msub
+         else:
+             if len(subs) == 0:
+                 msup = self.dom.createElement('msup')
+                 msup.appendChild(mname)
+                 msup.appendChild(join(supers))
+-                x.appendChild(msup)
++                return msup
+             else:
+                 msubsup = self.dom.createElement('msubsup')
+                 msubsup.appendChild(mname)
+                 msubsup.appendChild(join(subs))
+                 msubsup.appendChild(join(supers))
+-                x.appendChild(msubsup)
+-        return x
++                return msubsup
+ 
+     def _print_MatrixSymbol(self, sym):
+         return self._print_Symbol(sym, style=self._settings['mat_symbol_style'])
+diff --git a/sympy/printing/tests/test_mathml.py b/sympy/printing/tests/test_mathml.py
+index 70c23a4078..b4adb3d483 100644
+--- a/sympy/printing/tests/test_mathml.py
++++ b/sympy/printing/tests/test_mathml.py
+@@ -735,21 +735,19 @@ def test_presentation_symbol():
+     del mml
+ 
+     mml = mpp._print(Symbol("x^2"))
+-    assert mml.nodeName == 'mi'
+-    assert mml.childNodes[0].nodeName == 'msup'
+-    assert mml.childNodes[0].childNodes[0].nodeName == 'mi'
+-    assert mml.childNodes[0].childNodes[0].childNodes[0].nodeValue == 'x'
+-    assert mml.childNodes[0].childNodes[1].nodeName == 'mi'
+-    assert mml.childNodes[0].childNodes[1].childNodes[0].nodeValue == '2'
++    assert mml.nodeName == 'msup'
++    assert mml.childNodes[0].nodeName == 'mi'
++    assert mml.childNodes[0].childNodes[0].nodeValue == 'x'
++    assert mml.childNodes[1].nodeName == 'mi'
++    assert mml.childNodes[1].childNodes[0].nodeValue == '2'
+     del mml
+ 
+     mml = mpp._print(Symbol("x__2"))
+-    assert mml.nodeName == 'mi'
+-    assert mml.childNodes[0].nodeName == 'msup'
+-    assert mml.childNodes[0].childNodes[0].nodeName == 'mi'
+-    assert mml.childNodes[0].childNodes[0].childNodes[0].nodeValue == 'x'
+-    assert mml.childNodes[0].childNodes[1].nodeName == 'mi'
+-    assert mml.childNodes[0].childNodes[1].childNodes[0].nodeValue == '2'
++    assert mml.nodeName == 'msup'
++    assert mml.childNodes[0].nodeName == 'mi'
++    assert mml.childNodes[0].childNodes[0].nodeValue == 'x'
++    assert mml.childNodes[1].nodeName == 'mi'
++    assert mml.childNodes[1].childNodes[0].nodeValue == '2'
+     del mml
+ 
+     mml = mpp._print(Symbol("x_2"))
+diff --git a/sympy_test.html b/sympy_test.html
+new file mode 100644
+index 0000000000..d1775b5ee0
+--- /dev/null
++++ b/sympy_test.html
+@@ -0,0 +1,13 @@
++<!DOCTYPE html>
++<html>
++<head>
++    <meta charset="UTF-8">
++    <title>MathML Test</title>
++</head>
++<body>
++    <h1>Test Result</h1>
++    <math xmlns="http://www.w3.org/1998/Math/MathML">
++        <mrow><msup><mrow><mfenced><msub><mi>x</mi><mi>2</mi></msub></mfenced></mrow><mn>3</mn></msup><mo>+</mo><mrow><msub><mi>x</mi><mi>2</mi></msub><mo>&InvisibleTimes;</mo><mi>z</mi></mrow></mrow>
++    </math>
++</body>
++</html>
+diff --git a/test_comparison.html b/test_comparison.html
+new file mode 100644
+index 0000000000..417f3a7b10
+--- /dev/null
++++ b/test_comparison.html
+@@ -0,0 +1,25 @@
++<!DOCTYPE html>
++<html>
++<head>
++    <meta charset="UTF-8">
++    <title>MathML Comparison Test</title>
++</head>
++<body>
++    <h1>MathML Rendering Test</h1>
++    
++    <h2>Original broken rendering (with extra mi wrapper):</h2>
++    <math xmlns="http://www.w3.org/1998/Math/MathML">
++        <mi><msub><mi>x</mi><mi>2</mi></msub></mi>
++    </math>
++    
++    <h2>Fixed rendering (without extra mi wrapper):</h2>
++    <math xmlns="http://www.w3.org/1998/Math/MathML">
++        <msub><mi>x</mi><mi>2</mi></msub>
++    </math>
++    
++    <h2>Alternative: x2 as single symbol:</h2>
++    <math xmlns="http://www.w3.org/1998/Math/MathML">
++        <mi>x2</mi>
++    </math>
++</body>
++</html>
+diff --git a/test_explicit_subscript.py b/test_explicit_subscript.py
+new file mode 100644
+index 0000000000..5a0eb5841f
+--- /dev/null
++++ b/test_explicit_subscript.py
+@@ -0,0 +1,17 @@
++import sympy
++from sympy.printing.mathml import mathml
++
++# Test symbols with explicit subscripts
++x_2 = sympy.Symbol('x_2')
++print("Symbol with explicit subscript x_2:")
++print(mathml(x_2, printer='presentation'))
++
++# Test symbols ending with digits
++x2 = sympy.Symbol('x2')
++print("\nSymbol ending with digit x2:")
++print(mathml(x2, printer='presentation'))
++
++# Both in an expression
++expr = x_2 + x2
++print("\nExpression x_2 + x2:")
++print(mathml(expr, printer='presentation'))
+diff --git a/test_html_output.py b/test_html_output.py
+new file mode 100644
+index 0000000000..402d6152bb
+--- /dev/null
++++ b/test_html_output.py
+@@ -0,0 +1,26 @@
++import sympy
++from sympy.printing.mathml import mathml
++
++x2, z = sympy.symbols('x2 z')
++y = x2*z
++
++html_content = '''<!DOCTYPE html>
++<html>
++<head>
++    <meta charset="UTF-8">
++    <title>MathML Test</title>
++</head>
++<body>
++    <h1>Test with x2 symbol</h1>
++    <math xmlns="http://www.w3.org/1998/Math/MathML">
++        {}
++    </math>
++</body>
++</html>'''.format(mathml(y, printer='presentation'))
++
++with open('test_output.html', 'w') as f:
++    f.write(html_content)
++    
++print("HTML file created as test_output.html")
++print("\nMathML content:")
++print(mathml(y, printer='presentation'))
+diff --git a/test_mathml_issue.py b/test_mathml_issue.py
+new file mode 100644
+index 0000000000..b28f4bf002
+--- /dev/null
++++ b/test_mathml_issue.py
+@@ -0,0 +1,23 @@
++import sympy
++from sympy.printing.mathml import mathml
++from sympy.printing.conventions import split_super_sub
++
++# Test the split_super_sub function
++print("Testing split_super_sub function:")
++print("split_super_sub('x2'):", split_super_sub('x2'))
++print("split_super_sub('x'):", split_super_sub('x'))
++print("split_super_sub('x_2'):", split_super_sub('x_2'))
++
++# Test the actual MathML output
++x2, y, z = sympy.symbols('x2 y z')
++y = x2*z + x2**3
++
++print("\nMathML output for x2*z + x2**3:")
++print(mathml(y, printer='presentation'))
++
++# Test with regular x
++x, y, z = sympy.symbols('x y z')
++y = x*z + x**3
++
++print("\nMathML output for x*z + x**3:")
++print(mathml(y, printer='presentation'))
+diff --git a/test_output.html b/test_output.html
+new file mode 100644
+index 0000000000..9a3f1428d2
+--- /dev/null
++++ b/test_output.html
+@@ -0,0 +1,13 @@
++<!DOCTYPE html>
++<html>
++<head>
++    <meta charset="UTF-8">
++    <title>MathML Test</title>
++</head>
++<body>
++    <h1>Test with x2 symbol</h1>
++    <math xmlns="http://www.w3.org/1998/Math/MathML">
++        <mrow><msub><mi>x</mi><mi>2</mi></msub><mo>&InvisibleTimes;</mo><mi>z</mi></mrow>
++    </math>
++</body>
++</html>
+\ No newline at end of file
+diff --git a/test_presentation_symbol_fixed.py b/test_presentation_symbol_fixed.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_presentation_symbol_fixed.py
+@@ -0,0 +1 @@
++
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..69e68c981e
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,33 @@
++import sympy
++from sympy.printing.mathml import mathml
++
++# Test the exact scenario from the issue
++x2, y, z = sympy.symbols('x2 y z')
++y = x2*z + x2**3
++
++# Create the HTML file as in the issue
++f = open('sympy_test.html', 'w')
++f.write('<!DOCTYPE html>\n')
++f.write('<html>\n')
++f.write('<head>\n')
++f.write('    <meta charset="UTF-8">\n')
++f.write('    <title>MathML Test</title>\n')
++f.write('</head>\n')
++f.write('<body>\n')
++f.write('    <h1>Test Result</h1>\n')
++f.write('    <math xmlns="http://www.w3.org/1998/Math/MathML">\n')
++f.write('        ' + sympy.mathml(y, printer='presentation') + '\n')
++f.write('    </math>\n')
++f.write('</body>\n')
++f.write('</html>\n')
++f.close()
++
++print("Created sympy_test.html")
++print("\nMathML output:")
++print(sympy.mathml(y, printer='presentation'))
++
++# Also test with regular x for comparison
++x, y2, z = sympy.symbols('x y z')
++y2 = x*z + x**3
++print("\nFor comparison, x*z + x**3:")
++print(sympy.mathml(y2, printer='presentation'))

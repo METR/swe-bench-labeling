@@ -1,0 +1,216 @@
+diff --git a/src/_pytest/python.py b/src/_pytest/python.py
+index 306e5f217..c91810d42 100644
+--- a/src/_pytest/python.py
++++ b/src/_pytest/python.py
+@@ -177,9 +177,11 @@ def pytest_collect_file(path, parent):
+     ext = path.ext
+     if ext == ".py":
+         if not parent.session.isinitpath(path):
+-            if not path_matches_patterns(
+-                path, parent.config.getini("python_files") + ["__init__.py"]
+-            ):
++            # For __init__.py files, only collect them if they explicitly match python_files
++            # (don't add __init__.py to patterns automatically)
++            # For other files, check against patterns as usual
++            patterns = parent.config.getini("python_files")
++            if not path_matches_patterns(path, patterns):
+                 return
+         ihook = parent.session.gethookproxy(path)
+         return ihook.pytest_pycollect_makemodule(path=path, parent=parent)
+@@ -642,8 +644,9 @@ class Package(Module):
+         self._mount_obj_if_needed()
+         this_path = self.fspath.dirpath()
+         init_module = this_path.join("__init__.py")
+-        if init_module.check(file=1) and path_matches_patterns(
+-            init_module, self.config.getini("python_files")
++        if init_module.check(file=1) and (
++            self.isinitpath(init_module) or 
++            path_matches_patterns(init_module, self.config.getini("python_files"))
+         ):
+             yield Module(init_module, self)
+         pkg_prefixes = set()
+diff --git a/test_init_collection.py b/test_init_collection.py
+new file mode 100644
+index 000000000..f9dbacc9e
+--- /dev/null
++++ b/test_init_collection.py
+@@ -0,0 +1,128 @@
++"""Test cases for __init__.py file collection behavior"""
++import subprocess
++import sys
++import os
++import tempfile
++
++def test_init_files_not_collected_by_default():
++    """Test that random __init__.py files are not collected by default"""
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create a subdirectory with an __init__.py that has assert False
++        subdir = os.path.join(tmpdir, "foobar")
++        os.makedirs(subdir)
++        
++        init_file = os.path.join(subdir, "__init__.py")
++        with open(init_file, "w") as f:
++            f.write("assert False\n")
++        
++        # Create a simple test file
++        test_file = os.path.join(tmpdir, "test_foo.py")
++        with open(test_file, "w") as f:
++            f.write("def test_something():\n    pass\n")
++        
++        # Run pytest in the directory
++        result = subprocess.run(
++            [sys.executable, "-m", "pytest", "-v"],
++            cwd=tmpdir,
++            capture_output=True,
++            text=True
++        )
++        
++        # Check that the test passed and __init__.py was not collected
++        assert result.returncode == 0, f"pytest failed with return code {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
++        assert "foobar/__init__.py" not in result.stdout, "__init__.py should not be collected"
++        assert "test_foo.py" in result.stdout, "test_foo.py should be collected"
++        assert "1 passed" in result.stdout, "One test should pass"
++        print("✓ Test passed: __init__.py files are not collected by default")
++
++def test_init_file_collected_when_explicit():
++    """Test that __init__.py is collected when explicitly specified"""
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create a subdirectory with an __init__.py that has a test
++        subdir = os.path.join(tmpdir, "foobar")
++        os.makedirs(subdir)
++        
++        init_file = os.path.join(subdir, "__init__.py")
++        with open(init_file, "w") as f:
++            f.write("def test_in_init():\n    assert True\n")
++        
++        # Run pytest explicitly on the __init__.py file
++        result = subprocess.run(
++            [sys.executable, "-m", "pytest", "-v", os.path.join("foobar", "__init__.py")],
++            cwd=tmpdir,
++            capture_output=True,
++            text=True
++        )
++        
++        # Check that the test in __init__.py was collected and passed
++        assert result.returncode == 0, f"pytest failed with return code {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
++        assert "test_in_init" in result.stdout, "test_in_init should be collected"
++        assert "1 passed" in result.stdout, "One test should pass"
++        print("✓ Test passed: __init__.py is collected when explicitly specified")
++
++def test_init_file_collected_with_python_files_pattern():
++    """Test that __init__.py is collected when it matches python_files pattern"""
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create a subdirectory with an __init__.py that has a test
++        subdir = os.path.join(tmpdir, "foobar")
++        os.makedirs(subdir)
++        
++        init_file = os.path.join(subdir, "__init__.py")
++        with open(init_file, "w") as f:
++            f.write("def test_in_init():\n    assert True\n")
++        
++        # Create pytest.ini with python_files including __init__.py
++        ini_file = os.path.join(tmpdir, "pytest.ini")
++        with open(ini_file, "w") as f:
++            f.write("[pytest]\npython_files = test_*.py __init__.py\n")
++        
++        # Run pytest in the directory
++        result = subprocess.run(
++            [sys.executable, "-m", "pytest", "-v"],
++            cwd=tmpdir,
++            capture_output=True,
++            text=True
++        )
++        
++        # Check that the test in __init__.py was collected and passed
++        assert result.returncode == 0, f"pytest failed with return code {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
++        assert "test_in_init" in result.stdout, "test_in_init should be collected"
++        assert "1 passed" in result.stdout, "One test should pass"
++        print("✓ Test passed: __init__.py is collected when matching python_files pattern")
++
++def test_package_collection():
++    """Test that packages are properly collected"""
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create a package with tests
++        pkg_dir = os.path.join(tmpdir, "mypkg")
++        os.makedirs(pkg_dir)
++        
++        # Create __init__.py in package
++        init_file = os.path.join(pkg_dir, "__init__.py")
++        with open(init_file, "w") as f:
++            f.write("# Package init\n")
++        
++        # Create a test file in the package
++        test_file = os.path.join(pkg_dir, "test_module.py")
++        with open(test_file, "w") as f:
++            f.write("def test_in_package():\n    assert True\n")
++        
++        # Run pytest on the package
++        result = subprocess.run(
++            [sys.executable, "-m", "pytest", "-v", "mypkg"],
++            cwd=tmpdir,
++            capture_output=True,
++            text=True
++        )
++        
++        # Check that the test in the package was collected and passed
++        assert result.returncode == 0, f"pytest failed with return code {result.returncode}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
++        assert "test_in_package" in result.stdout, "test_in_package should be collected"
++        assert "1 passed" in result.stdout, "One test should pass"
++        print("✓ Test passed: package collection works correctly")
++
++if __name__ == "__main__":
++    test_init_files_not_collected_by_default()
++    test_init_file_collected_when_explicit()
++    test_init_file_collected_with_python_files_pattern()
++    test_package_collection()
+diff --git a/test_regression.py b/test_regression.py
+new file mode 100644
+index 000000000..ee636125a
+--- /dev/null
++++ b/test_regression.py
+@@ -0,0 +1,45 @@
++"""Test for regression where pytest tries to collect random __init__.py files"""
++import subprocess
++import sys
++import os
++import tempfile
++import shutil
++
++def test_init_files_not_collected():
++    """Test that random __init__.py files are not collected"""
++    # Create a temporary directory
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create a subdirectory with an __init__.py that has assert False
++        subdir = os.path.join(tmpdir, "foobar")
++        os.makedirs(subdir)
++        
++        init_file = os.path.join(subdir, "__init__.py")
++        with open(init_file, "w") as f:
++            f.write("assert False\n")
++        
++        # Create a simple test file
++        test_file = os.path.join(tmpdir, "test_foo.py")
++        with open(test_file, "w") as f:
++            f.write("def test_something():\n    pass\n")
++        
++        # Run pytest in the directory
++        result = subprocess.run(
++            [sys.executable, "-m", "pytest", "-v"],
++            cwd=tmpdir,
++            capture_output=True,
++            text=True
++        )
++        
++        # The test should pass - the __init__.py file should not be collected
++        print("STDOUT:", result.stdout)
++        print("STDERR:", result.stderr)
++        print("Return code:", result.returncode)
++        
++        # Check that the test passed and __init__.py was not collected
++        assert result.returncode == 0, f"pytest failed with return code {result.returncode}"
++        assert "foobar/__init__.py" not in result.stdout, "__init__.py should not be collected"
++        assert "test_foo.py" in result.stdout, "test_foo.py should be collected"
++        assert "1 passed" in result.stdout, "One test should pass"
++
++if __name__ == "__main__":
++    test_init_files_not_collected()

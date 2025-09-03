@@ -1,0 +1,198 @@
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+index 3a462f1c4c..de320c2f40 100644
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -232,9 +232,21 @@ class Collector:
+         """
+         Get a QuerySet of objects related to `objs` via the relation `related`.
+         """
+-        return related.related_model._base_manager.using(self.using).filter(
++        # Fetch only the fields needed for deletion:
++        # - primary key (for deletion queries)
++        # - foreign key fields (for signal handlers and cascade operations)
++        model = related.related_model
++        opts = model._meta
++        fields = [opts.pk.name]
++        
++        # Add all foreign key fields  
++        for field in opts.fields:
++            if field.many_to_one or field.one_to_one:
++                fields.append(field.attname)
++        
++        return model._base_manager.using(self.using).filter(
+             **{"%s__in" % related.field.name: objs}
+-        )
++        ).only(*fields)
+ 
+     def instances_with_model(self):
+         for model, instances in self.data.items():
+diff --git a/test_delete_field_optimization.py b/test_delete_field_optimization.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_delete_fix.py b/test_delete_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_delete_optimization.py b/test_delete_optimization.py
+new file mode 100644
+index 0000000000..6b84034371
+--- /dev/null
++++ b/test_delete_optimization.py
+@@ -0,0 +1,83 @@
++"""
++Test to verify that .delete() only fetches required fields.
++"""
++import os
++import sys
++import django
++from django.db import models, connection
++from django.test.utils import setup_test_environment, teardown_test_environment
++from django.conf import settings
++from django.apps import apps
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++
++django.setup()
++setup_test_environment()
++
++# Create test models
++class Parent(models.Model):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Child(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE)
++    name = models.CharField(max_length=100)
++    # This field could contain problematic data
++    data = models.TextField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Parent)
++    schema_editor.create_model(Child)
++
++# Create test data
++parent = Parent.objects.create(name="Test Parent")
++child = Child.objects.create(parent=parent, name="Test Child", data="Some data")
++
++# Enable query logging
++from django.db import reset_queries
++from django.conf import settings
++settings.DEBUG = True
++
++# Reset queries and perform delete
++reset_queries()
++parent.delete()
++
++# Check the queries
++print("Queries executed during delete:")
++for i, query in enumerate(connection.queries):
++    print(f"\nQuery {i+1}:")
++    print(f"SQL: {query['sql']}")
++    
++# Check if Child's data field was selected
++child_queries = [q for q in connection.queries if 'child' in q['sql'].lower()]
++if child_queries:
++    for query in child_queries:
++        if 'SELECT' in query['sql']:
++            print(f"\nChild SELECT query: {query['sql']}")
++            if '"data"' in query['sql'] or '`data`' in query['sql'] or 'child.data' in query['sql']:
++                print("ERROR: The 'data' field is being fetched unnecessarily!")
++            else:
++                print("OK: The 'data' field is not being fetched.")
++
++teardown_test_environment()
+diff --git a/test_delete_simple.py b/test_delete_simple.py
+new file mode 100644
+index 0000000000..94a5fec392
+--- /dev/null
++++ b/test_delete_simple.py
+@@ -0,0 +1,63 @@
++"""
++Simple test to verify that .delete() only fetches required fields.
++"""
++import os
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.test import TransactionTestCase
++from django.test.utils import override_settings
++
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test',
++)
++
++django.setup()
++
++# Track SQL queries
++queries_executed = []
++def track_queries(execute, sql, params, many, context):
++    queries_executed.append(sql)
++    return execute(sql, params, many, context)
++
++# Test with mock models
++from django.db import models, connection
++print("Testing deletion behavior...")
++
++# Check the original deletion.py code
++from django.db.models.deletion import Collector
++
++# Let's look at the related_objects method
++collector = Collector(using='default')
++print(f"\nOriginal related_objects method defined at line: {collector.related_objects.__code__.co_firstlineno}")
++
++# Simulate what happens during delete
++class MockRelated:
++    def __init__(self):
++        self.field = type('field', (), {'name': 'parent'})()
++        self.related_model = type('Child', (), {
++            '_base_manager': type('manager', (), {
++                'using': lambda self, db: self,
++                'filter': lambda self, **kwargs: f"QuerySet filtering on {kwargs}"
++            })()
++        })()
++
++related = MockRelated()
++print(f"\nSimulated query: {collector.related_objects(related, ['obj1', 'obj2'])}")
++
++# The issue is that this creates a regular QuerySet without .only() or .values()
++# which means ALL fields will be fetched when the QuerySet is evaluated
++print("\nThe problem: related_objects() doesn't use .only() to limit fields fetched!")
+diff --git a/test_unicode_delete_optimization.py b/test_unicode_delete_optimization.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2

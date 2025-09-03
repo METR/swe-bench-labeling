@@ -1,0 +1,117 @@
+diff --git a/setup.py b/setup.py
+index 2538952e3..94e1d8b32 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index 7d39d80ed..17d100f77 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -83,6 +83,13 @@ def type_to_xref(text: str, env: BuildEnvironment = None) -> addnodes.pending_xr
+     """Convert a type string to a cross reference node."""
+     if text == 'None':
+         reftype = 'obj'
++    elif text.startswith('dict(') and text.endswith(')'):
++        # Special case for dict(str, str)
++        inner_types = text[5:-1].split(',')
++        if len(inner_types) == 2:
++            key_type = type_to_xref(inner_types[0].strip(), env)
++            value_type = type_to_xref(inner_types[1].strip(), env)
++            return nodes.literal('', 'dict(', key_type, ', ', value_type, ')')
+     else:
+         reftype = 'class'
+ 
+@@ -92,7 +99,7 @@ def type_to_xref(text: str, env: BuildEnvironment = None) -> addnodes.pending_xr
+     else:
+         kwargs = {}
+ 
+-    if env.config.python_use_unqualified_type_names:
++    if env and env.config.python_use_unqualified_type_names:
+         # Note: It would be better to use qualname to describe the object to support support
+         # nested classes.  But python domain can't access the real python object because this
+         # module should work not-dynamically.
+@@ -122,7 +129,7 @@ def _parse_annotation(annotation: str, env: BuildEnvironment = None) -> List[Nod
+             if node.value is Ellipsis:
+                 return [addnodes.desc_sig_punctuation('', "...")]
+             else:
+-                return [nodes.Text(node.value)]
++                return [type_to_xref(str(node.value), env)]
+         elif isinstance(node, ast.Expr):
+             return unparse(node.value)
+         elif isinstance(node, ast.Index):
+@@ -138,11 +145,20 @@ def _parse_annotation(annotation: str, env: BuildEnvironment = None) -> List[Nod
+         elif isinstance(node, ast.Module):
+             return sum((unparse(e) for e in node.body), [])
+         elif isinstance(node, ast.Name):
+-            return [nodes.Text(node.id)]
++            return [type_to_xref(node.id, env)]
+         elif isinstance(node, ast.Subscript):
+-            result = unparse(node.value)
++            value = unparse(node.value)
++            slice = unparse(node.slice)
++            if isinstance(node.value, ast.Name) and node.value.id == 'dict':
++                # Special case for dict(str, str)
++                inner_types = ''.join(str(n) for n in slice).split(',')
++                if len(inner_types) == 2:
++                    key_type = type_to_xref(inner_types[0].strip(), env)
++                    value_type = type_to_xref(inner_types[1].strip(), env)
++                    return [nodes.Text('dict('), key_type, nodes.Text(', '), value_type, nodes.Text(')')]
++            result = value
+             result.append(addnodes.desc_sig_punctuation('', '['))
+-            result.extend(unparse(node.slice))
++            result.extend(slice)
+             result.append(addnodes.desc_sig_punctuation('', ']'))
+             return result
+         elif isinstance(node, ast.Tuple):
+@@ -162,7 +178,7 @@ def _parse_annotation(annotation: str, env: BuildEnvironment = None) -> List[Nod
+                 if isinstance(node, ast.Ellipsis):
+                     return [addnodes.desc_sig_punctuation('', "...")]
+                 elif isinstance(node, ast.NameConstant):
+-                    return [nodes.Text(node.value)]
++                    return [type_to_xref(str(node.value), env)]
+ 
+             raise SyntaxError  # unsupported syntax
+ 
+diff --git a/tox.ini b/tox.ini
+index a363e187f..3b8bc12d0 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

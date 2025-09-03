@@ -1,0 +1,21 @@
+diff --git a/docs/ref/files/uploads.txt b/docs/ref/files/uploads.txt
+index 4e843732a1..a5e20065f6 100644
+--- a/docs/ref/files/uploads.txt
++++ b/docs/ref/files/uploads.txt
+@@ -86,6 +86,16 @@ Here are some useful attributes of ``UploadedFile``:
+ 
+     .. _universal newlines: https://www.python.org/dev/peps/pep-0278
+ 
++.. warning::
++
++    When ``FILE_UPLOAD_PERMISSIONS`` is not explicitly set, the permissions for uploaded files
++    might be inconsistent depending on whether a ``MemoryUploadedFile`` or a
++    ``TemporaryUploadedFile`` was used for temporary storage. This depends on the size of the
++    uploaded file and the default ``FILE_UPLOAD_HANDLERS``. To ensure consistent permissions,
++    it's recommended to set ``FILE_UPLOAD_PERMISSIONS`` explicitly in your settings.
++
++    The default value for ``FILE_UPLOAD_PERMISSIONS`` is now ``0o644``. If you need different
++    permissions, make sure to set this value in your project's settings.
+ Subclasses of ``UploadedFile`` include:
+ 
+ .. class:: TemporaryUploadedFile

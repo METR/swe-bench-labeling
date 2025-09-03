@@ -1,0 +1,46 @@
+diff --git a/test_coarsen_construct.py b/test_coarsen_construct.py
+new file mode 100644
+index 00000000..9e3f64e0
+--- /dev/null
++++ b/test_coarsen_construct.py
+@@ -0,0 +1,17 @@
++import xarray as xr
++import numpy as np
++
++# Create a sample dataset
++da = xr.DataArray(np.arange(24), dims=["time"])
++da = da.assign_coords(day=365 * da)
++ds = da.to_dataset(name="T")
++
++# Apply coarsen.construct
++result = ds.coarsen(time=12).construct(time=("year", "month"))
++
++# Check if 'day' is still a coordinate
++assert 'day' in result.coords, "day should be a coordinate after coarsen.construct"
++
++print("Test passed: 'day' is still a coordinate after coarsen.construct")
++print("Result:")
++print(result)
+diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
+index c194ec08..b86f1e12 100644
+--- a/xarray/core/rolling.py
++++ b/xarray/core/rolling.py
+@@ -960,6 +960,9 @@ class Coarsen(CoarsenArithmetic, Generic[T_Xarray]):
+             obj = self.obj
+ 
+         reshaped.attrs = obj.attrs if keep_attrs else {}
++        
++        # Store the original coordinates
++        original_coords = set(obj.coords)
+ 
+         for key, var in obj.variables.items():
+             reshaped_dims = tuple(
+@@ -974,6 +977,8 @@ class Coarsen(CoarsenArithmetic, Generic[T_Xarray]):
+                 reshaped[key] = var
+ 
+         should_be_coords = set(window_dim) & set(self.obj.coords)
++        # Include all original coordinates
++        should_be_coords = should_be_coords.union(original_coords)
+         result = reshaped.set_coords(should_be_coords)
+         if isinstance(self.obj, DataArray):
+             return self.obj._from_temp_dataset(result)

@@ -1,0 +1,336 @@
+diff --git a/setup.py b/setup.py
+index a0c8ac102..2ef89ef1a 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/test_instance_var_xref.py b/test_instance_var_xref.py
+new file mode 100644
+index 000000000..c9c48aead
+--- /dev/null
++++ b/test_instance_var_xref.py
+@@ -0,0 +1,96 @@
++#!/usr/bin/env python
++"""Test case for instance variable cross-reference issue."""
++
++import os
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create test project structure
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create package structure
++package_dir = Path(test_dir) / "mypackage"
++package_dir.mkdir()
++
++# Create __init__.py
++(package_dir / "__init__.py").write_text("")
++
++# Create subpackage A
++sub_a = package_dir / "sub_a"
++sub_a.mkdir()
++(sub_a / "__init__.py").write_text("")
++
++# Create module in subpackage A with a class that has 'limit' attribute
++(sub_a / "module_a.py").write_text('''
++"""Module A."""
++
++class FooA:
++    """Class FooA."""
++    
++    def __init__(self):
++        self.limit = 10  #: The limit for FooA
++''')
++
++# Create subpackage B
++sub_b = package_dir / "sub_b"
++sub_b.mkdir()
++(sub_b / "__init__.py").write_text("")
++
++# Create module in subpackage B with a class that has 'limit' attribute
++(sub_b / "module_b.py").write_text('''
++"""Module B."""
++
++class BarB:
++    """Class BarB."""
++    
++    def __init__(self):
++        self.limit = 20  #: The limit for BarB
++''')
++
++# Create docs directory
++docs_dir = Path(test_dir) / "docs"
++docs_dir.mkdir()
++
++# Create conf.py
++(docs_dir / "conf.py").write_text('''
++import sys
++import os
++sys.path.insert(0, os.path.abspath('..'))
++
++extensions = ['sphinx.ext.autodoc']
++master_doc = 'index'
++html_theme = 'alabaster'
++''')
++
++# Create index.rst
++(docs_dir / "index.rst").write_text('''
++Test Documentation
++==================
++
++.. automodule:: mypackage.sub_a.module_a
++   :members:
++   :undoc-members:
++
++.. automodule:: mypackage.sub_b.module_b
++   :members:
++   :undoc-members:
++''')
++
++# Build the documentation
++os.chdir(docs_dir)
++os.system("sphinx-build -b html . _build/html")
++
++# Check the generated HTML
++html_file = docs_dir / "_build/html/index.html"
++if html_file.exists():
++    content = html_file.read_text()
++    # Look for cross-references in the HTML
++    if 'href=' in content and 'limit' in content:
++        print("\nFound cross-references in HTML - this demonstrates the bug!")
++        print("Instance variables are being linked to each other.")
++        
++# Clean up
++os.chdir("/")
++shutil.rmtree(test_dir)
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 000000000..668a081b0
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,76 @@
++"""Simple test to understand the cross-referencing issue."""
++import os
++import sys
++import tempfile
++from pathlib import Path
++import shutil
++
++# Create a test directory
++test_dir = Path(tempfile.mkdtemp())
++print(f"Test directory: {test_dir}")
++
++# Create test module with global variable and class with same-named instance variable
++test_module = test_dir / "test_module.py"
++test_module.write_text('''
++"""Test module."""
++
++limit = 100  #: Global limit variable
++
++class MyClass:
++    """A test class."""
++    
++    def __init__(self):
++        self.limit = 50  #: Instance limit variable
++''')
++
++# Create minimal Sphinx docs
++docs_dir = test_dir / "docs"
++docs_dir.mkdir()
++
++conf_py = docs_dir / "conf.py"
++conf_py.write_text(f'''
++import sys
++sys.path.insert(0, '{test_dir}')
++extensions = ['sphinx.ext.autodoc']
++master_doc = 'index'
++''')
++
++index_rst = docs_dir / "index.rst"
++index_rst.write_text('''
++Test Module
++===========
++
++.. automodule:: test_module
++   :members:
++   :undoc-members:
++''')
++
++# Build docs with text output to see the structure
++os.chdir(docs_dir)
++os.system("sphinx-build -b text . _build/text")
++
++# Read the text output
++text_file = docs_dir / "_build/text/index.txt"
++if text_file.exists():
++    print("\n--- Generated documentation ---")
++    print(text_file.read_text())
++
++# Also build HTML to check for links
++os.system("sphinx-build -b html . _build/html > /dev/null 2>&1")
++html_file = docs_dir / "_build/html/index.html"
++if html_file.exists():
++    content = html_file.read_text()
++    # Extract the relevant part with limit
++    import re
++    # Find all occurrences of "limit" with context
++    pattern = r'(.{50}limit.{50})'
++    matches = re.findall(pattern, content, re.DOTALL)
++    if matches:
++        print("\n--- HTML snippets containing 'limit' ---")
++        for i, match in enumerate(matches):
++            print(f"\nSnippet {i+1}:")
++            print(repr(match))
++
++# Cleanup
++os.chdir("/testbed")
++shutil.rmtree(test_dir)
+diff --git a/test_var_xref_detailed.py b/test_var_xref_detailed.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/test_var_xref_detailed.py
+@@ -0,0 +1 @@
++
+diff --git a/test_xref_check.py b/test_xref_check.py
+new file mode 100644
+index 000000000..dec1e0db9
+--- /dev/null
++++ b/test_xref_check.py
+@@ -0,0 +1,91 @@
++"""Check for cross-references in generated HTML."""
++import os
++import tempfile
++from pathlib import Path
++import shutil
++import re
++
++# Create a test directory
++test_dir = Path(tempfile.mkdtemp())
++
++# Create package with two modules that have same-named attributes
++pkg_dir = test_dir / "mypkg"
++pkg_dir.mkdir()
++(pkg_dir / "__init__.py").write_text("")
++
++# Module A
++(pkg_dir / "module_a.py").write_text('''
++"""Module A."""
++
++class ClassA:
++    """Class A."""
++    def __init__(self):
++        self.value = 1  #: Value in ClassA
++''')
++
++# Module B - reference to value should create a cross-ref
++(pkg_dir / "module_b.py").write_text('''
++"""Module B."""
++
++class ClassB:
++    """Class B with reference to value."""
++    def __init__(self):
++        self.value = 2  #: Value in ClassB - see value
++''')
++
++# Create Sphinx docs
++docs_dir = test_dir / "docs"
++docs_dir.mkdir()
++
++(docs_dir / "conf.py").write_text(f'''
++import sys
++sys.path.insert(0, '{test_dir}')
++extensions = ['sphinx.ext.autodoc', 'sphinx.ext.intersphinx']
++master_doc = 'index'
++''')
++
++(docs_dir / "index.rst").write_text('''
++Documentation
++=============
++
++.. automodule:: mypkg.module_a
++   :members:
++
++.. automodule:: mypkg.module_b
++   :members:
++''')
++
++# Build HTML
++os.chdir(docs_dir)
++os.system("sphinx-build -b html . _build/html > /dev/null 2>&1")
++
++# Check HTML
++html_file = docs_dir / "_build/html/index.html"
++if html_file.exists():
++    content = html_file.read_text()
++    
++    # Find all hrefs to #-anchors (internal links)
++    href_pattern = r'<a[^>]*href="#([^"]*)"[^>]*>([^<]*)</a>'
++    hrefs = re.findall(href_pattern, content)
++    
++    print("Found internal links:")
++    for target, text in hrefs:
++        if "value" in target or "value" in text:
++            print(f"  Link to {target} with text '{text}'")
++    
++    # Check if instance variables have become links
++    # Look for the pattern where autodoc puts instance variable docs
++    instance_var_pattern = r'<dd><p>Value in Class[AB].*?</p>'
++    matches = re.findall(instance_var_pattern, content, re.DOTALL)
++    
++    print("\nInstance variable documentation:")
++    for match in matches:
++        # Check if there's an unexpected link in the description
++        if '<a' in match and 'href=' in match:
++            print(f"  Found unexpected link in: {match}")
++        else:
++            print(f"  No links in: {match[:50]}...")
++
++# Cleanup
++os.chdir("/testbed")
++shutil.rmtree(test_dir)
+diff --git a/tox.ini b/tox.ini
+index bdf4c2ad3..b12166264 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -26,7 +26,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

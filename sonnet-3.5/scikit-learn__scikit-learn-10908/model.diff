@@ -1,0 +1,28 @@
+diff --git a/sklearn/feature_extraction/tests/test_text.py b/sklearn/feature_extraction/tests/test_text.py
+index 22fbd3f17..7decc9b93 100644
+--- a/sklearn/feature_extraction/tests/test_text.py
++++ b/sklearn/feature_extraction/tests/test_text.py
+@@ -1019,3 +1019,22 @@ def test_vectorizers_invalid_ngram_range(vec):
+     if isinstance(vec, HashingVectorizer):
+         assert_raise_message(
+             ValueError, message, vec.transform, ["good news everyone"])
++
++def test_countvectorizer_get_feature_names_with_vocabulary():
++    vocabulary = ['and', 'document', 'first', 'is', 'one', 'second', 'the', 'third', 'this']
++    vectorizer = CountVectorizer(vocabulary=vocabulary)
++    
++    # Check that get_feature_names works without fitting
++    feature_names = vectorizer.get_feature_names()
++    assert_equal(feature_names, vocabulary)
++    
++    # Check that it still works after fitting
++    corpus = [
++        'This is the first document.',
++        'This is the second second document.',
++        'And the third one.',
++        'Is this the first document?',
++    ]
++    vectorizer.fit(corpus)
++    feature_names_after_fit = vectorizer.get_feature_names()
++    assert_equal(feature_names_after_fit, vocabulary)
+\ No newline at end of file

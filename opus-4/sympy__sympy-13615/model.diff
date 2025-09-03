@@ -1,0 +1,365 @@
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index 917717bb74..91acc24fa2 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -1725,6 +1725,40 @@ def reduce(A, B):
+         if isinstance(B, Union):
+             return Intersection(s.complement(A) for s in B.args)
+ 
++        # Special handling for FiniteSet - Interval case with mixed content
++        if isinstance(A, FiniteSet) and isinstance(B, Interval):
++            # Separate elements that can be evaluated vs those that cannot
++            definite_in = []
++            definite_out = []
++            unknown = []
++            
++            for elem in A:
++                contains_result = B.contains(elem)
++                if contains_result is S.true:
++                    definite_in.append(elem)
++                elif contains_result is S.false:
++                    definite_out.append(elem)
++                else:
++                    unknown.append(elem)
++            
++            # If we have unknown elements, we need to keep them as Complement
++            if unknown:
++                result_parts = []
++                if definite_out:
++                    result_parts.append(FiniteSet(*definite_out))
++                if unknown:
++                    result_parts.append(Complement(FiniteSet(*unknown), B, evaluate=False))
++                
++                if len(result_parts) == 0:
++                    return EmptySet()
++                elif len(result_parts) == 1:
++                    return result_parts[0]
++                else:
++                    return Union(*result_parts)
++            else:
++                # All elements can be definitively classified
++                return FiniteSet(*definite_out) if definite_out else EmptySet()
++
+         result = B._complement(A)
+         if result != None:
+             return result
+diff --git a/test_complement_comprehensive.py b/test_complement_comprehensive.py
+new file mode 100644
+index 0000000000..5656ce5f68
+--- /dev/null
++++ b/test_complement_comprehensive.py
+@@ -0,0 +1,70 @@
++from sympy import FiniteSet, Interval, Complement, symbols, S, Union
++
++x, y, z = symbols('x y z')
++
++print("Test cases:")
++print()
++
++# Original issue case
++a = FiniteSet(x, y, 2)
++b = Interval(-10, 10)
++result = Complement(a, b)
++print(f"1. Complement({a}, {b}) = {result}")
++print("   Expected: {x, y} \\ [-10, 10]")
++expected1 = '{x, y} \\ Interval(-10, 10)'
++print(f"   Pass: {str(result) == expected1}")
++print()
++
++# Case with only numbers
++c = FiniteSet(1, 2, 3, 15)
++d = Interval(0, 10)
++result2 = Complement(c, d)
++print(f"2. Complement({c}, {d}) = {result2}")
++print("   Expected: {15}")
++print(f"   Pass: {result2 == FiniteSet(15)}")
++print()
++
++# Case with only symbols
++e = FiniteSet(x, y, z)
++f = Interval(0, 10)
++result3 = Complement(e, f)
++print(f"3. Complement({e}, {f}) = {result3}")
++print("   Expected: {x, y, z} \\ [0, 10]")
++expected3 = '{x, y, z} \\ Interval(0, 10)'
++print(f"   Pass: {str(result3) == expected3}")
++print()
++
++# Mixed case with some numbers in interval, some out
++g = FiniteSet(x, y, 5, 15)
++h = Interval(0, 10)
++result4 = Complement(g, h)
++print(f"4. Complement({g}, {h}) = {result4}")
++print("   Expected: Union({15}, {x, y} \\ [0, 10])")
++print(f"   Pass: {isinstance(result4, Union)}")
++print()
++
++# Empty result case
++i = FiniteSet(5, 6, 7)
++j = Interval(0, 10)
++result5 = Complement(i, j)
++print(f"5. Complement({i}, {j}) = {result5}")
++print("   Expected: EmptySet")
++print(f"   Pass: {result5 == S.EmptySet}")
++print()
++
++# Test that other Complement operations still work
++k = Interval(0, 5)
++l = Interval(2, 7)
++result6 = Complement(k, l)
++print(f"6. Complement({k}, {l}) = {result6}")
++print("   Expected: [0, 2)")
++print(f"   Pass: {result6 == Interval(0, 2, False, True)}")
++print()
++
++# FiniteSet - FiniteSet
++m = FiniteSet(1, 2, 3, x)
++n = FiniteSet(2, 3, y)
++result7 = Complement(m, n)
++print(f"7. Complement({m}, {n}) = {result7}")
++# This should use the existing FiniteSet logic
++print(f"   Pass: {1 in result7 and x in result7 and 2 not in result7}")
+diff --git a/test_complement_debug.py b/test_complement_debug.py
+new file mode 100644
+index 0000000000..f468591724
+--- /dev/null
++++ b/test_complement_debug.py
+@@ -0,0 +1,26 @@
++from sympy import FiniteSet, Interval, Complement, symbols, S, Intersection
++
++x, y = symbols('x y')
++
++# Test what happens in the complement operation
++a = FiniteSet(x, y, 2)
++b = Interval(-10, 10)
++
++print("Step by step:")
++print(f"a = {a}")
++print(f"b = {b}")
++print()
++
++# What does a.complement(S.Reals) return?
++comp_reals = a.complement(S.Reals)
++print(f"a.complement(S.Reals) = {comp_reals}")
++print()
++
++# What does Intersection(b, comp_reals) return?
++result = Intersection(b, comp_reals)
++print(f"Intersection(b, a.complement(S.Reals)) = {result}")
++print()
++
++# Let's look at the actual Complement object
++comp = Complement(a, b, evaluate=False)
++print(f"Complement(a, b, evaluate=False) = {comp}")
+diff --git a/test_complement_issue.py b/test_complement_issue.py
+new file mode 100644
+index 0000000000..0bbb2bac9c
+--- /dev/null
++++ b/test_complement_issue.py
+@@ -0,0 +1,15 @@
++from sympy import FiniteSet, Interval, Complement, symbols
++
++x, y = symbols('x y')
++
++# Test case from the issue
++a = FiniteSet(x, y, 2)
++b = Interval(-10, 10)
++result = Complement(a, b)
++print(f"Complement({a}, {b}) = {result}")
++print(f"Expected: {{x, y}} \\ [-10, 10]")
++print()
++
++# Let's also test the reverse
++c = Complement(b, a)
++print(f"Complement({b}, {a}) = {c}")
+diff --git a/test_complement_semantics.py b/test_complement_semantics.py
+new file mode 100644
+index 0000000000..f7f6d397a3
+--- /dev/null
++++ b/test_complement_semantics.py
+@@ -0,0 +1,43 @@
++from sympy import FiniteSet, Interval, Complement, symbols, S, Intersection
++
++# Let's understand the semantics of _complement
++
++# First, let's see what Set._complement does
++print("Testing Set._complement:")
++a = Interval(0, 5)
++b = FiniteSet(2, 3)
++
++# According to the comment in Set._complement, it behaves as other - self
++# So a._complement(b) should be b - a = EmptySet (since 2, 3 are in [0, 5])
++print(f"Interval(0, 5)._complement(FiniteSet(2, 3)) = {a._complement(b)}")
++print("This should be FiniteSet(2, 3) - Interval(0, 5) = EmptySet")
++print()
++
++# Let's verify by creating the Complement directly
++print(f"Complement(FiniteSet(2, 3), Interval(0, 5)) = {Complement(FiniteSet(2, 3), Interval(0, 5))}")
++print()
++
++# Now let's trace through what happens in our problematic case
++x, y = symbols('x y')
++fs = FiniteSet(x, y, 2)
++interval = Interval(-10, 10)
++
++print("Tracing Complement(FiniteSet(x, y, 2), Interval(-10, 10)):")
++print("1. Complement.reduce is called")
++print("2. It calls interval._complement(fs)")
++print("3. Since fs contains a number (2), Interval._complement calls Set._complement")
++print("4. Set._complement (line 206-208) returns Intersection(interval, fs.complement(S.Reals))")
++print()
++
++# What is fs.complement(S.Reals)?
++comp = fs.complement(S.Reals)
++print(f"fs.complement(S.Reals) = {comp}")
++print()
++
++# What is the intersection?
++inter = Intersection(interval, comp)
++print(f"Intersection(interval, fs.complement(S.Reals)) = {inter}")
++print()
++
++# This is computing interval - fs, not fs - interval!
++print("So the current code computes interval - fs = {x, y}, not fs - interval!")
+diff --git a/test_complement_verify.py b/test_complement_verify.py
+new file mode 100644
+index 0000000000..c1ed8d7f40
+--- /dev/null
++++ b/test_complement_verify.py
+@@ -0,0 +1,32 @@
++from sympy import FiniteSet, Interval, Complement, symbols, S
++
++# Test to verify the semantic issue
++
++# Simple case: FiniteSet - FiniteSet
++a = FiniteSet(1, 2, 3)
++b = FiniteSet(2, 3, 4)
++print(f"Complement({a}, {b}) = {Complement(a, b)}")
++print(f"Expected: {{1}}")
++print()
++
++# Another simple case: Interval - Interval
++c = Interval(0, 5)
++d = Interval(2, 7)
++print(f"Complement({c}, {d}) = {Complement(c, d)}")
++print(f"Expected: [0, 2)")
++print()
++
++# The problematic case from the issue
++x, y = symbols('x y')
++e = FiniteSet(x, y, 2)
++f = Interval(-10, 10)
++print(f"Complement({e}, {f}) = {Complement(e, f)}")
++print(f"Expected: {{x, y}} \\ [-10, 10]")
++print()
++
++# Check what B._complement(A) actually computes
++g = Interval(0, 5)
++h = FiniteSet(2, 3)
++# g._complement(h) should compute g - h = [0, 2) U (2, 3) U (3, 5]
++print(f"Interval(0, 5)._complement(FiniteSet(2, 3)) = {g._complement(h)}")
++print("This shows that B._complement(A) computes B - A, not A - B!")
+diff --git a/test_contains_check.py b/test_contains_check.py
+new file mode 100644
+index 0000000000..2ddf0370f0
+--- /dev/null
++++ b/test_contains_check.py
+@@ -0,0 +1,19 @@
++from sympy import FiniteSet, Interval, symbols
++
++x, y = symbols('x y')
++
++# Test what elements are contained
++fs = FiniteSet(x, y, 2)
++interval = Interval(-10, 10)
++
++print("Checking which elements of FiniteSet(x, y, 2) are in Interval(-10, 10):")
++for el in fs:
++    contained = interval.contains(el)
++    print(f"  {el} in interval: {contained}")
++    print(f"  {el} in interval != True: {contained != True}")
++print()
++
++# So the result should be elements where contains != True
++result = [el for el in fs if interval.contains(el) != True]
++print(f"Elements where interval.contains(el) != True: {result}")
++print(f"FiniteSet of these elements: {FiniteSet(*result)}")
+diff --git a/test_interval_complement.py b/test_interval_complement.py
+new file mode 100644
+index 0000000000..ea6fc0c788
+--- /dev/null
++++ b/test_interval_complement.py
+@@ -0,0 +1,35 @@
++from sympy import FiniteSet, Interval, symbols
++
++x, y = symbols('x y')
++
++# Test Interval._complement with FiniteSet
++fs = FiniteSet(x, y, 2)
++interval = Interval(-10, 10)
++
++# Check what happens in Interval._complement
++print("In Interval._complement(self, other) where self=Interval(-10,10), other=FiniteSet(x,y,2):")
++print()
++
++# Line 1001-1002: check if other is FiniteSet
++print("isinstance(other, FiniteSet):", isinstance(fs, FiniteSet))
++
++# Line 1002: extract numbers from other
++nums = [m for m in fs.args if m.is_number]
++print(f"nums = [m for m in other.args if m.is_number] = {nums}")
++
++# Line 1003-1004: check if nums is empty
++print(f"nums == [] : {nums == []}")
++print()
++
++# Since nums is not empty ([2]), it goes to line 1006
++print("Since nums is not empty, it calls Set._complement(self, other)")
++print("which should return the intersection computation...")
++print()
++
++# But we're getting {x, y} instead. Let me check if there's something else going on
++from sympy.sets.sets import Set
++
++# What does the base Set._complement return?
++base_result = Set._complement(interval, fs)
++print(f"Set._complement(interval, fs) = {base_result}")
++print(f"Type: {type(base_result)}")
+diff --git a/test_trace_simplification.py b/test_trace_simplification.py
+new file mode 100644
+index 0000000000..0a7afe5108
+--- /dev/null
++++ b/test_trace_simplification.py
+@@ -0,0 +1,32 @@
++from sympy import FiniteSet, Interval, Complement, symbols, S, Intersection, Union
++from sympy.sets.sets import Set
++
++x, y = symbols('x y')
++
++# Create our sets
++fs = FiniteSet(x, y, 2)
++interval = Interval(-10, 10)
++
++# What does interval._complement(fs) return?
++print("Calling interval._complement(fs):")
++result = interval._complement(fs)
++print(f"Result: {result}")
++print(f"Type: {type(result)}")
++print()
++
++# What does Set._complement(fs, interval) return?
++print("Calling Set._complement(fs, interval):")
++result2 = Set._complement(fs, interval)
++print(f"Result: {result2}")
++print()
++
++# Let's manually compute what should happen
++print("Manual computation:")
++print(f"fs.complement(S.Reals) = {fs.complement(S.Reals)}")
++comp = fs.complement(S.Reals)
++print(f"Intersection(interval, comp) = {Intersection(interval, comp)}")
++
++# Let's see what this evaluates to
++inter = Intersection(interval, comp, evaluate=False)
++print(f"Intersection(interval, comp, evaluate=False) = {inter}")
++print(f"After evaluation: {inter.doit()}")

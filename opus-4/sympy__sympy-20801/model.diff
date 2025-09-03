@@ -1,0 +1,38 @@
+diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
+index 79f6a7d165..a2557d5251 100644
+--- a/sympy/core/numbers.py
++++ b/sympy/core/numbers.py
+@@ -1386,10 +1386,10 @@ def __eq__(self, other):
+             other = _sympify(other)
+         except SympifyError:
+             return NotImplemented
+-        if not self:
+-            return not other
+         if isinstance(other, Boolean):
+             return False
++        if not self:
++            return not other
+         if other.is_NumberSymbol:
+             if other.is_irrational:
+                 return False
+diff --git a/sympy/core/tests/test_numbers.py b/sympy/core/tests/test_numbers.py
+index 8b3e99126e..7d0f1a4502 100644
+--- a/sympy/core/tests/test_numbers.py
++++ b/sympy/core/tests/test_numbers.py
+@@ -1711,6 +1711,16 @@ def test_Float_eq():
+     assert 2 == Float(2)  # as per Python
+     # but in a computation...
+     assert t**2 != t**2.0
++    # Issue: S(0.0) == S.false should return False
++    assert Float(0.0) != S.false
++    assert S.false != Float(0.0)
++    assert S(0.0) != S.false
++    assert S.false != S(0.0)
++    # Also check with S.true
++    assert Float(1.0) != S.true
++    assert S.true != Float(1.0)
++    assert S(1.0) != S.true
++    assert S.true != S(1.0)
+ 
+ 
+ def test_int_NumberSymbols():

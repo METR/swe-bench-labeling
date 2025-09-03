@@ -1,0 +1,106 @@
+diff --git a/astropy/units/quantity.py b/astropy/units/quantity.py
+index b98abfafb0..4957ce6cd2 100644
+--- a/astropy/units/quantity.py
++++ b/astropy/units/quantity.py
+@@ -633,14 +633,20 @@ class Quantity(np.ndarray):
+ 
+         Returns
+         -------
+-        result : `~astropy.units.Quantity`
+-            Results of the ufunc, with the unit set properly.
++        result : `~astropy.units.Quantity` or NotImplemented
++            Results of the ufunc, with the unit set properly, or NotImplemented
++            if the inputs are incompatible.
+         """
+         # Determine required conversion functions -- to bring the unit of the
+         # input to that expected (e.g., radian for np.sin), or to get
+         # consistent units between two inputs (e.g., in np.add) --
+         # and the unit of the result (or tuple of units for nout > 1).
+-        converters, unit = converters_and_unit(function, method, *inputs)
++        converters_and_unit_result = converters_and_unit(function, method, *inputs)
++        
++        if converters_and_unit_result is NotImplemented:
++            return NotImplemented
++
++        converters, unit = converters_and_unit_result
+ 
+         out = kwargs.get("out", None)
+         # Avoid loop back by turning any Quantity output into array views.
+diff --git a/astropy/units/quantity_helper/converters.py b/astropy/units/quantity_helper/converters.py
+index 47b40c2072..76a24f8db6 100644
+--- a/astropy/units/quantity_helper/converters.py
++++ b/astropy/units/quantity_helper/converters.py
+@@ -156,14 +156,19 @@ def converters_and_unit(function, method, *args):
+     *args :  `~astropy.units.Quantity` or ndarray subclass
+         Input arguments to the function
+ 
+-    Raises
+-    ------
+-    TypeError : when the specified function cannot be used with Quantities
+-        (e.g., np.logical_or), or when the routine does not know how to handle
+-        the specified function (in which case an issue should be raised on
+-        https://github.com/astropy/astropy).
+-    UnitTypeError : when the conversion to the required (or consistent) units
+-        is not possible.
++    Returns
++    -------
++    converters : list of callable, False or None
++        Functions to convert quantities to the expected input units, or
++        `False` if no conversion is possible, or `None` if not necessary.
++    result_unit : `~astropy.units.Unit` or None
++        Unit of the ufunc result, or `None` if the result is not a Quantity.
++
++    Notes
++    -----
++    This function now returns NotImplemented instead of raising exceptions
++    when inputs are incompatible. This allows for better handling of
++    operations between Quantity objects and other types.
+     """
+ 
+     # Check whether we support this ufunc, by getting the helper function
+@@ -179,7 +184,10 @@ def converters_and_unit(function, method, *args):
+         units = [getattr(arg, "unit", None) for arg in args]
+ 
+         # Determine possible conversion functions, and the result unit.
+-        converters, result_unit = ufunc_helper(function, *units)
++        try:
++            converters, result_unit = ufunc_helper(function, *units)
++        except (UnitConversionError, UnitsError):
++            return NotImplemented
+ 
+         if any(converter is False for converter in converters):
+             # for multi-argument ufuncs with a quantity and a non-quantity,
+@@ -197,20 +205,11 @@ def converters_and_unit(function, method, *args):
+                     if can_have_arbitrary_unit(args[i]):
+                         converters[i] = None
+                     else:
+-                        raise UnitConversionError(
+-                            f"Can only apply '{function.__name__}' function to "
+-                            "dimensionless quantities when other argument is not "
+-                            "a quantity (unless the latter is all zero/infinity/nan)."
+-                        )
++                        return NotImplemented
+             except TypeError:
+                 # _can_have_arbitrary_unit failed: arg could not be compared
+                 # with zero or checked to be finite. Then, ufunc will fail too.
+-                raise TypeError(
+-                    "Unsupported operand type(s) for ufunc {}: '{}'".format(
+-                        function.__name__,
+-                        ",".join([arg.__class__.__name__ for arg in args]),
+-                    )
+-                )
++                return NotImplemented
+ 
+         # In the case of np.power and np.float_power, the unit itself needs to
+         # be modified by an amount that depends on one of the input values,
+diff --git a/pyproject.toml b/pyproject.toml
+index 486d6b9b3b..1c5f74f3a1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",

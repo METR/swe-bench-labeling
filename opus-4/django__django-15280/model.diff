@@ -1,0 +1,233 @@
+diff --git a/test_deferred_issue.py b/test_deferred_issue.py
+new file mode 100644
+index 0000000000..444d7dabd7
+--- /dev/null
++++ b/test_deferred_issue.py
+@@ -0,0 +1,100 @@
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++
++import django
++from django.conf import settings
++
++# Configure minimal settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test-secret-key',
++    )
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Prefetch
++
++# Define test models
++class User(models.Model):
++    email = models.EmailField()
++    kind = models.CharField(
++        max_length=10, choices=[("ADMIN", "Admin"), ("REGULAR", "Regular")]
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Profile(models.Model):
++    full_name = models.CharField(max_length=255)
++    user = models.OneToOneField(User, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(User)
++    schema_editor.create_model(Profile)
++
++# Create test data
++user = User.objects.create(
++    email="test@example.com",
++    kind="ADMIN",
++)
++Profile.objects.create(user=user, full_name="Test Tester")
++
++# Test the query
++queryset = User.objects.only("email").prefetch_related(
++    Prefetch(
++        "profile",
++        queryset=Profile.objects.prefetch_related(
++            Prefetch("user", queryset=User.objects.only("kind"))
++        ),
++    )
++)
++
++# Execute the main queryset
++from django.test.utils import CaptureQueriesContext
++
++with CaptureQueriesContext(connection) as queries:
++    user = queryset.first()
++    
++print(f"Queries executed when fetching user: {len(queries)}")
++for i, query in enumerate(queries):
++    print(f"Query {i+1}: {query['sql']}")
++
++# Check deferred fields
++print(f"\nOuter user deferred fields: {user.get_deferred_fields()}")
++print(f"Inner user (profile.user) deferred fields: {user.profile.user.get_deferred_fields()}")
++
++# Try to access the kind attribute
++print("\nAccessing user.profile.user.kind...")
++with CaptureQueriesContext(connection) as queries:
++    kind = user.profile.user.kind
++    
++print(f"Queries executed when accessing user.profile.user.kind: {len(queries)}")
++for i, query in enumerate(queries):
++    print(f"Query {i+1}: {query['sql']}")
++    
++print(f"\nValue of kind: {kind}")
++print(f"Expected: ADMIN, Got: {kind}, Match: {kind == 'ADMIN'}")
++
++# Clean up
++with connection.schema_editor() as schema_editor:
++    schema_editor.delete_model(Profile)
++    schema_editor.delete_model(User)
+diff --git a/test_issue_reproduce.py b/test_issue_reproduce.py
+new file mode 100644
+index 0000000000..5217dd91d3
+--- /dev/null
++++ b/test_issue_reproduce.py
+@@ -0,0 +1,80 @@
++import os
++import django
++from django.conf import settings
++from django.db import models
++from django.test import TestCase
++
++# Configure Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++# Define test models
++class User(models.Model):
++    email = models.EmailField()
++    kind = models.CharField(
++        max_length=10, choices=[("ADMIN", "Admin"), ("REGULAR", "Regular")]
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Profile(models.Model):
++    full_name = models.CharField(max_length=255)
++    user = models.OneToOneField(User, on_delete=models.CASCADE)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test the issue
++from django.db import connection
++from django.db.models import Prefetch
++from django.test.utils import CaptureQueriesContext
++
++# Create the tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(User)
++    schema_editor.create_model(Profile)
++
++# Create test data
++user = User.objects.create(
++    email="test@example.com",
++    kind="ADMIN",
++)
++Profile.objects.create(user=user, full_name="Test Tester")
++
++# Test the query
++queryset = User.objects.only("email").prefetch_related(
++    Prefetch(
++        "profile",
++        queryset=Profile.objects.prefetch_related(
++            Prefetch("user", queryset=User.objects.only("kind"))
++        ),
++    )
++)
++
++# Execute the main queryset
++with CaptureQueriesContext(connection) as queries:
++    user = queryset.first()
++    
++print(f"Queries executed when fetching user: {len(queries)}")
++for i, query in enumerate(queries):
++    print(f"Query {i+1}: {query['sql']}")
++
++# Check deferred fields
++print(f"\nDeferred fields on user.profile.user: {user.profile.user.get_deferred_fields()}")
++
++# Try to access the kind attribute
++with CaptureQueriesContext(connection) as queries:
++    kind = user.profile.user.kind
++    
++print(f"\nQueries executed when accessing user.profile.user.kind: {len(queries)}")
++for i, query in enumerate(queries):
++    print(f"Query {i+1}: {query['sql']}")
++    
++print(f"\nValue of kind: {kind}")
++print(f"Expected: ADMIN, Got: {kind}, Match: {kind == 'ADMIN'}")
++
++# Clean up
++with connection.schema_editor() as schema_editor:
++    schema_editor.delete_model(Profile)
++    schema_editor.delete_model(User)
+diff --git a/tests/prefetch_related/models.py b/tests/prefetch_related/models.py
+index 0ded7e8b4a..fa40b044e5 100644
+--- a/tests/prefetch_related/models.py
++++ b/tests/prefetch_related/models.py
+@@ -281,4 +281,23 @@ class Flea(models.Model):
+     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+     current_room = models.ForeignKey(Room, models.SET_NULL, related_name='fleas', null=True)
+     pets_visited = models.ManyToManyField(Pet, related_name='fleas_hosted')
++
++
++# Models for testing deferred fields with prefetch_related
++class User(models.Model):
++    email = models.EmailField()
++    kind = models.CharField(
++        max_length=10, choices=[("ADMIN", "Admin"), ("REGULAR", "Regular")]
++    )
++
++    class Meta:
++        ordering = ['id']
++
++
++class Profile(models.Model):
++    full_name = models.CharField(max_length=255)
++    user = models.OneToOneField(User, on_delete=models.CASCADE)
++
++    class Meta:
++        ordering = ['id']
+     people_visited = models.ManyToManyField(Person, related_name='fleas_hosted')
+diff --git a/tests/prefetch_related/tests.py b/tests/prefetch_related/tests.py
+index 4ea7fccd5e..a1c5e60d05 100644
+--- a/tests/prefetch_related/tests.py
++++ b/tests/prefetch_related/tests.py
+@@ -13,7 +13,7 @@ from .models import (
+     Article, Author, Author2, AuthorAddress, AuthorWithAge, Bio, Book,
+     Bookmark, BookReview, BookWithYear, Comment, Department, Employee,
+     FavoriteAuthors, House, LessonEntry, ModelIterableSubclass, Person,
+-    Qualification, Reader, Room, TaggedItem, Teacher, WordEntry,
++    Profile, Qualification, Reader, Room, TaggedItem, Teacher, User, WordEntry,
+ )
+ 
+ 

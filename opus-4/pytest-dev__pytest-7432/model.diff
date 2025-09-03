@@ -1,0 +1,84 @@
+diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py
+index 7bd975e5a..9b48bb445 100644
+--- a/src/_pytest/skipping.py
++++ b/src/_pytest/skipping.py
+@@ -270,8 +270,8 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]):
+         else:
+             rep.longrepr = "Unexpected success"
+         rep.outcome = "failed"
+-    elif item.config.option.runxfail:
+-        pass  # don't interfere
++    elif item.config.option.runxfail and not item._store.get(skipped_by_mark_key, False):
++        pass  # don't interfere with xfail, but still process skip marks
+     elif call.excinfo and isinstance(call.excinfo.value, xfail.Exception):
+         assert call.excinfo.value.msg is not None
+         rep.wasxfail = "reason: " + call.excinfo.value.msg
+diff --git a/test_comprehensive_fix.py b/test_comprehensive_fix.py
+new file mode 100644
+index 000000000..e8faca3dd
+--- /dev/null
++++ b/test_comprehensive_fix.py
+@@ -0,0 +1,26 @@
++import pytest
++
++# Test skip with runxfail
++@pytest.mark.skip
++def test_skip_with_runxfail():
++    assert 0
++
++# Test skipif with runxfail
++@pytest.mark.skipif(True, reason="always skip")
++def test_skipif_with_runxfail():
++    assert 0
++
++# Test xfail with runxfail (should run normally)
++@pytest.mark.xfail
++def test_xfail_with_runxfail():
++    assert 0  # This should fail when run with --runxfail
++
++# Test xfail with run=False
++@pytest.mark.xfail(run=False, reason="don't run")
++def test_xfail_no_run():
++    assert 0  # This should not run even with --runxfail
++
++# Test passing xfail with runxfail (should pass)
++@pytest.mark.xfail
++def test_xfail_passing_with_runxfail():
++    assert 1  # This should pass when run with --runxfail
+diff --git a/test_skip_location.py b/test_skip_location.py
+new file mode 100644
+index 000000000..0e5ca0671
+--- /dev/null
++++ b/test_skip_location.py
+@@ -0,0 +1,5 @@
++import pytest
++
++@pytest.mark.skip
++def test_skip_location() -> None:
++    assert 0
+diff --git a/test_skipif_location.py b/test_skipif_location.py
+new file mode 100644
+index 000000000..dde0a548e
+--- /dev/null
++++ b/test_skipif_location.py
+@@ -0,0 +1,5 @@
++import pytest
++
++@pytest.mark.skipif(True, reason="always skip")
++def test_skipif_location() -> None:
++    assert 0
+diff --git a/test_xfail_with_runxfail.py b/test_xfail_with_runxfail.py
+new file mode 100644
+index 000000000..052ff581a
+--- /dev/null
++++ b/test_xfail_with_runxfail.py
+@@ -0,0 +1,9 @@
++import pytest
++
++@pytest.mark.xfail
++def test_xfail_should_pass_with_runxfail() -> None:
++    assert 0  # This will fail without --runxfail
++
++@pytest.mark.xfail
++def test_xfail_should_fail_with_runxfail() -> None:
++    assert 1  # This will pass without --runxfail

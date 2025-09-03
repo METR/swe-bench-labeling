@@ -1,0 +1,42 @@
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index b0df8749..b4f02150 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -1961,7 +1961,12 @@ class DataArray(AbstractArray, DataWithCoords):
+         # pull variables out of datarray
+         data_dict = {}
+         for k in variables:
+-            data_dict[k] = self.sel({variable_dim: k}).squeeze(drop=True)
++            selected = self.sel({variable_dim: k})
++            if selected.ndim == 0:
++                # Handle single-dimension variables
++                data_dict[k] = selected.item()
++            else:
++                data_dict[k] = selected.squeeze(drop=True)
+ 
+         # unstacked dataset
+         return Dataset(data_dict)
+diff --git a/xarray/tests/test_dataarray.py b/xarray/tests/test_dataarray.py
+index d942667a..52acaf3d 100644
+--- a/xarray/tests/test_dataarray.py
++++ b/xarray/tests/test_dataarray.py
+@@ -2133,6 +2133,19 @@ class TestDataArray:
+         data = DataArray([0, 1], dims="x", coords={"x": [0, 1]})
+         with pytest.raises(ValueError, match="'x' is not a stacked coordinate"):
+             data.to_unstacked_dataset("x", 0)
++    def test_to_unstacked_dataset_single_dim(self):
++        arr = DataArray(np.arange(3), coords=[("x", [0, 1, 2])])
++        data = Dataset({"a": arr, "b": arr})
++        stacked = data.to_stacked_array('y', sample_dims=['x'])
++        unstacked = stacked.to_unstacked_dataset('y')
++        assert_identical(data, unstacked)
++
++        # Test with a single-dimension variable
++        arr_single = DataArray([42], coords=[("x", [0])])
++        data_mixed = Dataset({"a": arr, "b": arr_single})
++        stacked_mixed = data_mixed.to_stacked_array('y', sample_dims=['x'])
++        unstacked_mixed = stacked_mixed.to_unstacked_dataset('y')
++        assert_identical(data_mixed, unstacked_mixed)
+ 
+     def test_transpose(self):
+         da = DataArray(

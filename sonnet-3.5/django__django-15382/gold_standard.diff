@@ -1,0 +1,60 @@
+From b7d1da5a62fe4141beff2bfea565f7ef0038c94c Mon Sep 17 00:00:00 2001
+From: Simon Charette <charette.s@gmail.com>
+Date: Tue, 1 Feb 2022 13:27:41 -0500
+Subject: [PATCH] Fixed #33482 -- Fixed QuerySet filtering againts negated
+ Exists() with empty queryset.
+
+Thanks Tobias Bengfort for the report.
+---
+ django/db/models/expressions.py | 19 ++++++++++++-------
+ tests/expressions/tests.py      |  7 +++++++
+ 2 files changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 81f8f79c71a7..c71970636ca7 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1211,13 +1211,18 @@ def __invert__(self):
+ 
+     def as_sql(self, compiler, connection, template=None, **extra_context):
+         query = self.query.exists(using=connection.alias)
+-        sql, params = super().as_sql(
+-            compiler,
+-            connection,
+-            template=template,
+-            query=query,
+-            **extra_context,
+-        )
++        try:
++            sql, params = super().as_sql(
++                compiler,
++                connection,
++                template=template,
++                query=query,
++                **extra_context,
++            )
++        except EmptyResultSet:
++            if self.negated:
++                return '', ()
++            raise
+         if self.negated:
+             sql = 'NOT {}'.format(sql)
+         return sql, params
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index 5cf9dd1ea59c..89c6a7c8de1c 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -1905,6 +1905,13 @@ def test_optimizations(self):
+         )
+         self.assertNotIn('ORDER BY', captured_sql)
+ 
++    def test_negated_empty_exists(self):
++        manager = Manager.objects.create()
++        qs = Manager.objects.filter(
++            ~Exists(Manager.objects.none()) & Q(pk=manager.pk)
++        )
++        self.assertSequenceEqual(qs, [manager])
++
+ 
+ class FieldTransformTests(TestCase):
+ 

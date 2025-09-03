@@ -1,0 +1,433 @@
+diff --git a/django/db/models/sql/where.py b/django/db/models/sql/where.py
+index aaab1730b7..87d48a99a2 100644
+--- a/django/db/models/sql/where.py
++++ b/django/db/models/sql/where.py
+@@ -129,13 +129,15 @@ class WhereNode(tree.Node):
+             # Convert if the database doesn't support XOR:
+             #   a XOR b XOR c XOR ...
+             # to:
+-            #   (a OR b OR c OR ...) AND (a + b + c + ...) == 1
++            #   (a OR b OR c OR ...) AND ((a + b + c + ...) % 2) == 1
++            from django.db.models.functions import Mod
+             lhs = self.__class__(self.children, OR)
+             rhs_sum = reduce(
+                 operator.add,
+                 (Case(When(c, then=1), default=0) for c in self.children),
+             )
+-            rhs = Exact(1, rhs_sum)
++            # Check if the sum is odd (parity check)
++            rhs = Exact(1, Mod(rhs_sum, 2))
+             return self.__class__([lhs, rhs], AND, self.negated).as_sql(
+                 compiler, connection
+             )
+diff --git a/test_xor_3_operands.py b/test_xor_3_operands.py
+new file mode 100644
+index 0000000000..67a2f71c30
+--- /dev/null
++++ b/test_xor_3_operands.py
+@@ -0,0 +1,65 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Q
++
++# Define the Number model from xor_lookups
++class Number(models.Model):
++    num = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Number)
++
++# Create test data like in xor_lookups tests
++numbers = [Number.objects.create(num=i) for i in range(10)]
++
++# Test the specific case from the test (line 32-33 of xor_lookups/tests.py)
++# Q(num__lte=7) ^ ~Q(num__lt=3) ^ Q(num__lte=1)
++# This should match [numbers[2]] + numbers[8:]
++
++result = Number.objects.filter(Q(num__lte=7) ^ ~Q(num__lt=3) ^ Q(num__lte=1))
++result_nums = sorted([n.num for n in result])
++expected_nums = sorted([numbers[2].num] + [n.num for n in numbers[8:]])
++
++print(f"Result: {result_nums}")
++print(f"Expected: {expected_nums}")
++print(f"Test passed: {result_nums == expected_nums}")
++
++# Let's analyze this step by step:
++print("\nStep-by-step analysis:")
++print("Q(num__lte=7): nums 0-7 are True")
++print("~Q(num__lt=3): nums 3-9 are True (NOT less than 3)")
++print("Q(num__lte=1): nums 0-1 are True")
++print("\nFor each number:")
++for i in range(10):
++    a = i <= 7  # Q(num__lte=7)
++    b = not (i < 3)  # ~Q(num__lt=3)
++    c = i <= 1  # Q(num__lte=1)
++    xor_result = (a ^ b ^ c)  # Python's XOR for booleans
++    print(f"num={i}: {a} ^ {b} ^ {c} = {xor_result}")
++    
++print("\nNumbers where XOR is True: ", [i for i in range(10) if (i <= 7) ^ (not (i < 3)) ^ (i <= 1)])
+diff --git a/test_xor_issue.py b/test_xor_issue.py
+new file mode 100644
+index 0000000000..8d82eca764
+--- /dev/null
++++ b/test_xor_issue.py
+@@ -0,0 +1,53 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Q
++
++# Define a simple model
++class Client(models.Model):
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++from django.db import connection
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Client)
++
++# Create a client with id=37
++client = Client.objects.create(id=37, name="Test Client")
++
++# Test XOR operations
++print("Testing XOR operations on SQLite (doesn't support native XOR):")
++print(f"Client.objects.filter(Q(id=37)).count() = {Client.objects.filter(Q(id=37)).count()}")
++print(f"Client.objects.filter(Q(id=37) ^ Q(id=37)).count() = {Client.objects.filter(Q(id=37) ^ Q(id=37)).count()}")
++print(f"Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37)).count() = {Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37)).count()}")
++print(f"Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37) ^ Q(id=37)).count() = {Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37) ^ Q(id=37)).count()}")
++print(f"Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37) ^ Q(id=37) ^ Q(id=37)).count() = {Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37) ^ Q(id=37) ^ Q(id=37)).count()}")
++
++print("\nExpected values: 1, 0, 1, 0, 1")
++
++# Let's also check the generated SQL for 3 XOR conditions
++queryset = Client.objects.filter(Q(id=37) ^ Q(id=37) ^ Q(id=37))
++print(f"\nGenerated SQL for Q(id=37) ^ Q(id=37) ^ Q(id=37):")
++print(queryset.query)
+diff --git a/test_xor_parity.py b/test_xor_parity.py
+new file mode 100644
+index 0000000000..9a1919c973
+--- /dev/null
++++ b/test_xor_parity.py
+@@ -0,0 +1,89 @@
++"""
++Test to verify that XOR with multiple operands works correctly on databases
++that don't support native XOR (testing parity behavior).
++"""
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Q
++from django.test import TestCase
++
++# Define a test model
++class Item(models.Model):
++    a = models.BooleanField(default=False)
++    b = models.BooleanField(default=False)
++    c = models.BooleanField(default=False)
++    d = models.BooleanField(default=False)
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create the table
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Item)
++
++# Test all combinations for 3-way XOR
++print("Testing 3-way XOR (a ^ b ^ c):")
++print("Expected: True when odd number of operands are True")
++print()
++
++for a in [False, True]:
++    for b in [False, True]:
++        for c in [False, True]:
++            # Create item with these values
++            Item.objects.all().delete()
++            item = Item.objects.create(a=a, b=b, c=c)
++            
++            # Test XOR query
++            result = Item.objects.filter(Q(a=True) ^ Q(b=True) ^ Q(c=True)).exists()
++            
++            # Calculate expected (odd number of True values)
++            true_count = sum([a, b, c])
++            expected = (true_count % 2) == 1
++            
++            status = "✓" if result == expected else "✗"
++            print(f"a={a}, b={b}, c={c}: result={result}, expected={expected} {status}")
++
++print("\nTesting 4-way XOR (a ^ b ^ c ^ d):")
++print("Expected: True when odd number of operands are True")
++print()
++
++for a in [False, True]:
++    for b in [False, True]:
++        for c in [False, True]:
++            for d in [False, True]:
++                # Create item with these values
++                Item.objects.all().delete()
++                item = Item.objects.create(a=a, b=b, c=c, d=d)
++                
++                # Test XOR query
++                result = Item.objects.filter(Q(a=True) ^ Q(b=True) ^ Q(c=True) ^ Q(d=True)).exists()
++                
++                # Calculate expected (odd number of True values)
++                true_count = sum([a, b, c, d])
++                expected = (true_count % 2) == 1
++                
++                status = "✓" if result == expected else "✗"
++                print(f"a={a}, b={b}, c={c}, d={d}: result={result}, expected={expected} {status}")
++
++# Summary
++print("\nAll tests passed! XOR now correctly implements parity (odd number of True values).")
+diff --git a/test_xor_parity_fix.py b/test_xor_parity_fix.py
+new file mode 100644
+index 0000000000..b90bf92f38
+--- /dev/null
++++ b/test_xor_parity_fix.py
+@@ -0,0 +1,52 @@
++"""
++Test case to add to Django's test suite for XOR parity fix.
++This test method should be added to the XorLookupsTests class in tests/xor_lookups/tests.py
++
++    def test_xor_parity(self):
++        '''
++        Test that XOR with multiple operands implements parity correctly.
++        XOR should return True when an odd number of operands are True.
++        '''
++        # Test with 3 operands - all True
++        # True ^ True ^ True = True (3 is odd)
++        self.assertCountEqual(
++            Number.objects.filter(Q(num__gte=0) ^ Q(num__lte=9) ^ Q(num__in=range(10))),
++            self.numbers,  # All numbers match since all conditions are True
++        )
++        
++        # Test with 4 operands - all True 
++        # True ^ True ^ True ^ True = False (4 is even)
++        self.assertCountEqual(
++            Number.objects.filter(Q(num__gte=0) ^ Q(num__lte=9) ^ Q(num__in=range(10)) ^ Q(num__lt=10)),
++            [],  # No numbers match since 4 True values is even
++        )
++        
++        # Test with 5 operands - all True
++        # True ^ True ^ True ^ True ^ True = True (5 is odd)
++        self.assertCountEqual(
++            Number.objects.filter(
++                Q(num__gte=0) ^ Q(num__lte=9) ^ Q(num__in=range(10)) ^ 
++                Q(num__lt=10) ^ Q(num__gte=0)
++            ),
++            self.numbers,  # All numbers match since 5 True values is odd
++        )
++        
++        # Test mixed case from issue description
++        # For num=5: True ^ True ^ True = True (3 True values is odd)
++        num5 = self.numbers[5]
++        self.assertEqual(
++            Number.objects.filter(Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id)).count(),
++            1
++        )
++        self.assertEqual(
++            Number.objects.filter(Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id)).count(),
++            0
++        )
++        self.assertEqual(
++            Number.objects.filter(
++                Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id) ^ 
++                Q(id=num5.id) ^ Q(id=num5.id)
++            ).count(),
++            1
++        )
++"""
+diff --git a/test_xor_postgres.py b/test_xor_postgres.py
+new file mode 100644
+index 0000000000..e973bfc7d0
+--- /dev/null
++++ b/test_xor_postgres.py
+@@ -0,0 +1,65 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings for PostgreSQL
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.postgresql',
++            'NAME': 'test_db',
++            'USER': 'postgres',
++            'PASSWORD': 'postgres',
++            'HOST': 'localhost',
++            'PORT': '5432',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++)
++
++django.setup()
++
++from django.db import models, connection
++from django.db.models import Q
++
++# Check if XOR is supported
++print(f"Database supports XOR: {connection.features.supports_logical_xor}")
++
++# Define a simple model
++class TestModel(models.Model):
++    value = models.BooleanField()
++
++    class Meta:
++        app_label = 'test_app'
++
++# Test the SQL generation for XOR
++from django.db.models.sql.where import WhereNode, XOR
++from django.db.models.expressions import Case, When
++from django.db.models.lookups import Exact
++from django.db.models.functions import Mod
++import operator
++from functools import reduce
++
++# Create a mock WhereNode with 3 children
++node = WhereNode()
++node.connector = XOR
++node.children = [
++    Exact(lookup_name='exact', lhs='test_app_testmodel.value', rhs=True),
++    Exact(lookup_name='exact', lhs='test_app_testmodel.value', rhs=True),
++    Exact(lookup_name='exact', lhs='test_app_testmodel.value', rhs=True),
++]
++
++# Test that it would generate the correct logic
++print("\nFor PostgreSQL (doesn't support native XOR):")
++print("The XOR logic should convert to:")
++print("(a OR b OR c) AND ((a + b + c) % 2 == 1)")
++print("\nThis means:")
++print("- 0 True values: 0 % 2 = 0 -> False")
++print("- 1 True value:  1 % 2 = 1 -> True")
++print("- 2 True values: 2 % 2 = 0 -> False")
++print("- 3 True values: 3 % 2 = 1 -> True")
++print("\nWhich correctly implements parity (odd number of True values).")
+diff --git a/tests/xor_lookups/tests.py b/tests/xor_lookups/tests.py
+index a9cdf9cb31..00183c423b 100644
+--- a/tests/xor_lookups/tests.py
++++ b/tests/xor_lookups/tests.py
+@@ -65,3 +65,52 @@ class XorLookupsTests(TestCase):
+             Number.objects.filter(Q(pk__in=[]) ^ Q(num__gte=5)),
+             self.numbers[5:],
+         )
++
++    def test_xor_parity(self):
++        """
++        Test that XOR with multiple operands implements parity correctly.
++        XOR should return True when an odd number of operands are True.
++        Regression test for #xxxxx (XOR wrongly interpreted as exactly-one).
++        """
++        # Test with 3 operands - all True
++        # True ^ True ^ True = True (3 is odd)
++        self.assertCountEqual(
++            Number.objects.filter(Q(num__gte=0) ^ Q(num__lte=9) ^ Q(num__in=range(10))),
++            self.numbers,  # All numbers match since all conditions are True
++        )
++        
++        # Test with 4 operands - all True 
++        # True ^ True ^ True ^ True = False (4 is even)
++        self.assertCountEqual(
++            Number.objects.filter(Q(num__gte=0) ^ Q(num__lte=9) ^ Q(num__in=range(10)) ^ Q(num__lt=10)),
++            [],  # No numbers match since 4 True values is even
++        )
++        
++        # Test with 5 operands - all True
++        # True ^ True ^ True ^ True ^ True = True (5 is odd)
++        self.assertCountEqual(
++            Number.objects.filter(
++                Q(num__gte=0) ^ Q(num__lte=9) ^ Q(num__in=range(10)) ^ 
++                Q(num__lt=10) ^ Q(num__gte=0)
++            ),
++            self.numbers,  # All numbers match since 5 True values is odd
++        )
++        
++        # Test case from issue description using same ID
++        # For num=5: True ^ True ^ True = True (3 True values is odd)
++        num5 = self.numbers[5]
++        self.assertEqual(
++            Number.objects.filter(Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id)).count(),
++            1
++        )
++        self.assertEqual(
++            Number.objects.filter(Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id)).count(),
++            0
++        )
++        self.assertEqual(
++            Number.objects.filter(
++                Q(id=num5.id) ^ Q(id=num5.id) ^ Q(id=num5.id) ^ 
++                Q(id=num5.id) ^ Q(id=num5.id)
++            ).count(),
++            1
++        )

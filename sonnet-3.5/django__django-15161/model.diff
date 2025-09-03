@@ -1,0 +1,83 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 8642e1f151..626645ed51 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -684,6 +684,15 @@ class Func(SQLiteNumericMixin, Expression):
+         """Return a dict of extra __init__() options to include in the repr."""
+         return {}
+ 
++    def deconstruct(self):
++        path = 'django.db.models.Func'
++        args = tuple(self.source_expressions)
++        kwargs = {}
++        if self.output_field is not None:
++            kwargs['output_field'] = self.output_field
++        kwargs.update(self.extra)
++        return path, args, kwargs
++
+     def get_source_expressions(self):
+         return self.source_expressions
+ 
+@@ -806,6 +815,14 @@ class Value(SQLiteNumericMixin, Expression):
+     def empty_result_set_value(self):
+         return self.value
+ 
++    def deconstruct(self):
++        path = 'django.db.models.Value'
++        args = (self.value,)
++        kwargs = {}
++        if self.output_field is not None:
++            kwargs['output_field'] = self.output_field
++        return path, args, kwargs
++
+ 
+ class RawSQL(Expression):
+     def __init__(self, sql, params, output_field=None):
+@@ -1132,6 +1149,15 @@ class Case(SQLiteNumericMixin, Expression):
+             return self.default.get_group_by_cols(alias)
+         return super().get_group_by_cols(alias)
+ 
++    def deconstruct(self):
++        path = 'django.db.models.Case'
++        args = tuple(self.cases)
++        kwargs = {'default': self.default}
++        if self.output_field is not None:
++            kwargs['output_field'] = self.output_field
++        kwargs.update(self.extra)
++        return path, args, kwargs
++
+ 
+ class Subquery(BaseExpression, Combinable):
+     """
+@@ -1189,6 +1215,15 @@ class Subquery(BaseExpression, Combinable):
+             return [Ref(alias, self)]
+         return self.query.get_group_by_cols()
+ 
++    def deconstruct(self):
++        path = 'django.db.models.Subquery'
++        args = (self.query,)
++        kwargs = {}
++        if self.output_field is not None:
++            kwargs['output_field'] = self.output_field
++        kwargs.update(self.extra)
++        return path, args, kwargs
++
+ 
+ class Exists(Subquery):
+     template = 'EXISTS(%(subquery)s)'
+@@ -1224,6 +1259,15 @@ class Exists(Subquery):
+             sql = 'CASE WHEN {} THEN 1 ELSE 0 END'.format(sql)
+         return sql, params
+ 
++    def deconstruct(self):
++        path = 'django.db.models.Exists'
++        args = (self.query,)
++        kwargs = {'negated': self.negated}
++        if self.output_field is not None:
++            kwargs['output_field'] = self.output_field
++        kwargs.update(self.extra)
++        return path, args, kwargs
++
+ 
+ class OrderBy(Expression):
+     template = '%(expression)s %(ordering)s'

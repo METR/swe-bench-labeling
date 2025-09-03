@@ -1,0 +1,220 @@
+diff --git a/django/contrib/admindocs/utils.py b/django/contrib/admindocs/utils.py
+index 1ce4594501..a776e6ab88 100644
+--- a/django/contrib/admindocs/utils.py
++++ b/django/contrib/admindocs/utils.py
+@@ -166,11 +166,13 @@ def replace_named_groups(pattern):
+     for start, end, group_name in named_group_indices:
+         # Handle nested parentheses, e.g. '^(?P<a>(x|y))/b'.
+         unmatched_open_brackets, prev_char = 1, None
++        found_end = False
+         for idx, val in enumerate(pattern[end:]):
+             # If brackets are balanced, the end of the string for the current
+             # named capture group pattern has been reached.
+             if unmatched_open_brackets == 0:
+                 group_pattern_and_name.append((pattern[start:end + idx], group_name))
++                found_end = True
+                 break
+ 
+             # Check for unescaped `(` and `)`. They mark the start and end of a
+@@ -180,6 +182,11 @@ def replace_named_groups(pattern):
+             elif val == ')' and prev_char != '\\':
+                 unmatched_open_brackets -= 1
+             prev_char = val
++        
++        # If we've processed the whole remaining string and haven't found the end
++        # (i.e., the pattern ends with this group), add it now
++        if not found_end and unmatched_open_brackets == 0:
++            group_pattern_and_name.append((pattern[start:], group_name))
+ 
+     # Replace the string for named capture groups with their group names.
+     for group_pattern, group_name in group_pattern_and_name:
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..fc9dd6880d
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,63 @@
++from django.contrib.admindocs.utils import replace_named_groups
++
++test_cases = [
++    # Test case 1: Original issue - no trailing character
++    (r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)', 
++     'entries/<pk>/relationships/<related_field>'),
++    
++    # Test case 2: With trailing slash
++    (r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)/',
++     'entries/<pk>/relationships/<related_field>/'),
++    
++    # Test case 3: With anchors
++    (r'^(?P<a>\w+)/b/(?P<c>\w+)$',
++     '^<a>/b/<c>$'),
++    
++    # Test case 4: Single named group at end
++    (r'test/(?P<id>\d+)',
++     'test/<id>'),
++    
++    # Test case 5: Nested parentheses
++    (r'^(?P<a>(x|y))/b',
++     '^<a>/b'),
++    
++    # Test case 6: Multiple groups with nested parentheses
++    (r'^(?P<a>(x|y))/(?P<b>\w+)',
++     '^<a>/<b>'),
++    
++    # Test case 7: Groups with special characters in pattern
++    (r'(?P<year>\d{4})/(?P<month>\d{2})',
++     '<year>/<month>'),
++    
++    # Test case 8: Mixed named and unnamed groups (unnamed groups should remain)
++    (r'^(?P<a>\w+)/b/(\w+)$',
++     '^<a>/b/(\w+)$'),
++    
++    # Test case 9: Empty pattern after group
++    (r'(?P<everything>.*)',
++     '<everything>'),
++    
++    # Test case 10: Escaped parentheses should not affect counting
++    (r'(?P<test>\(.*\))',
++     '<test>'),
++]
++
++print("Testing replace_named_groups function:")
++print("=" * 50)
++
++all_passed = True
++for i, (pattern, expected) in enumerate(test_cases, 1):
++    result = replace_named_groups(pattern)
++    passed = result == expected
++    all_passed = all_passed and passed
++    
++    print(f"\nTest {i}: {'PASSED' if passed else 'FAILED'}")
++    print(f"  Pattern:  {pattern}")
++    print(f"  Expected: {expected}")
++    print(f"  Result:   {result}")
++    
++    if not passed:
++        print(f"  ERROR: Result doesn't match expected!")
++
++print("\n" + "=" * 50)
++print(f"Overall: {'ALL TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
+diff --git a/test_replace_named_groups.py b/test_replace_named_groups.py
+new file mode 100644
+index 0000000000..ed1c9b5527
+--- /dev/null
++++ b/test_replace_named_groups.py
+@@ -0,0 +1,24 @@
++from django.contrib.admindocs.utils import replace_named_groups
++
++# Test the issue described in the bug report
++pattern1 = r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)'
++result1 = replace_named_groups(pattern1)
++print(f"Pattern without trailing slash: {pattern1}")
++print(f"Result: {result1}")
++print(f"Expected: entries/<pk>/relationships/<related_field>")
++print()
++
++# Test with trailing slash (workaround mentioned in issue)
++pattern2 = r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)/'
++result2 = replace_named_groups(pattern2)
++print(f"Pattern with trailing slash: {pattern2}")
++print(f"Result: {result2}")
++print(f"Expected: entries/<pk>/relationships/<related_field>/")
++print()
++
++# Additional test cases
++pattern3 = r'^(?P<a>\w+)/b/(?P<c>\w+)$'
++result3 = replace_named_groups(pattern3)
++print(f"Pattern with ^ and $: {pattern3}")
++print(f"Result: {result3}")
++print(f"Expected: ^<a>/b/<c>$")
+diff --git a/test_simplify_regex.py b/test_simplify_regex.py
+new file mode 100644
+index 0000000000..44b369bfa5
+--- /dev/null
++++ b/test_simplify_regex.py
+@@ -0,0 +1,15 @@
++from django.contrib.admindocs.views import simplify_regex
++
++# Test the issue with simplify_regex
++pattern = r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)'
++result = simplify_regex(pattern)
++print(f"Pattern: {pattern}")
++print(f"Result: {result}")
++print(f"Expected: /entries/<pk>/relationships/<related_field>/")
++
++# Test with trailing slash
++pattern2 = r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)/'
++result2 = simplify_regex(pattern2)
++print(f"\nPattern with slash: {pattern2}")
++print(f"Result: {result2}")
++print(f"Expected: /entries/<pk>/relationships/<related_field>/")
+diff --git a/tests/admin_docs/test_replace_named_groups.py b/tests/admin_docs/test_replace_named_groups.py
+new file mode 100644
+index 0000000000..cb969d7d29
+--- /dev/null
++++ b/tests/admin_docs/test_replace_named_groups.py
+@@ -0,0 +1,50 @@
++import unittest
++
++from django.contrib.admindocs.utils import replace_named_groups
++from django.test import SimpleTestCase
++
++
++class TestReplaceNamedGroups(SimpleTestCase):
++    def test_replace_named_groups_trailing_group(self):
++        """
++        Test that replace_named_groups() correctly replaces named groups, 
++        including those at the end of the pattern without trailing characters.
++        """
++        # Test the original issue - pattern ending with a named group
++        pattern = r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)'
++        expected = 'entries/<pk>/relationships/<related_field>'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        # Test with trailing slash
++        pattern = r'entries/(?P<pk>[^/.]+)/relationships/(?P<related_field>\w+)/'
++        expected = 'entries/<pk>/relationships/<related_field>/'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        # Test with multiple named groups ending the pattern
++        pattern = r'^(?P<a>\w+)/b/(?P<c>\w+)$'
++        expected = '^<a>/b/<c>$'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        # Test single named group at end
++        pattern = r'test/(?P<id>\d+)'
++        expected = 'test/<id>'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        # Test with nested parentheses
++        pattern = r'^(?P<a>(x|y))/b'
++        expected = '^<a>/b'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        # Test with escaped parentheses  
++        pattern = r'(?P<test>\(.*\))'
++        expected = '<test>'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        # Existing examples from docstring
++        pattern = r'^(?P<a>\w+)/b/(\w+)$'
++        expected = '^<a>/b/(\w+)$'
++        self.assertEqual(replace_named_groups(pattern), expected)
++
++        pattern = r'^(?P<a>\w+)/b/(?P<c>\w+)/$'
++        expected = '^<a>/b/<c>/$'
++        self.assertEqual(replace_named_groups(pattern), expected)
+diff --git a/tests/admin_docs/test_utils.py b/tests/admin_docs/test_utils.py
+index 17ea912015..abfdda1002 100644
+--- a/tests/admin_docs/test_utils.py
++++ b/tests/admin_docs/test_utils.py
+@@ -1,7 +1,8 @@
+ import unittest
+ 
+ from django.contrib.admindocs.utils import (
+-    docutils_is_available, parse_docstring, parse_rst, trim_docstring,
++    docutils_is_available, parse_docstring, parse_rst, replace_named_groups,
++    trim_docstring,
+ )
+ 
+ from .tests import AdminDocsSimpleTestCase

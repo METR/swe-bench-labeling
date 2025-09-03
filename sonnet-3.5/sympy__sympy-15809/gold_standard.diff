@@ -1,0 +1,329 @@
+From 4dd3cbb9c55226392fe2664111d156f3a244526a Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Sun, 20 Jan 2019 11:31:34 +0530
+Subject: [PATCH 1/8] Fixed Min/Max when no args are given
+
+---
+ sympy/functions/elementary/miscellaneous.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 5f9fe73c5c42..cb58929de5f8 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -340,7 +340,10 @@ def real_root(arg, n=None, evaluate=None):
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+         if not args:
+-            raise ValueError("The Max/Min functions must have arguments.")
++            if cls == Min:
++                return S.Infinity
++            if cls == Max:
++                return S.NegativeInfinity
+ 
+         args = (sympify(arg) for arg in args)
+ 
+
+From 33b6bcd406b919dd2c31b9702a4fcab0c09d882f Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Sun, 20 Jan 2019 15:23:38 +0530
+Subject: [PATCH 2/8] Added test
+
+---
+ sympy/functions/elementary/miscellaneous.py       | 15 ++++++++++-----
+ .../elementary/tests/test_miscellaneous.py        |  4 ++--
+ 2 files changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index cb58929de5f8..3d595ed35ec1 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -339,11 +339,6 @@ def real_root(arg, n=None, evaluate=None):
+ 
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+-        if not args:
+-            if cls == Min:
+-                return S.Infinity
+-            if cls == Max:
+-                return S.NegativeInfinity
+ 
+         args = (sympify(arg) for arg in args)
+ 
+@@ -733,6 +728,11 @@ class Max(MinMaxBase, Application):
+     zero = S.Infinity
+     identity = S.NegativeInfinity
+ 
++    def __new__(cls, *args, **assumptions):
++        if not args:
++            return S.NegativeInfinity
++        return super(Max, cls).__new__(cls, *args, **assumptions)
++
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+         n = len(self.args)
+@@ -798,6 +798,11 @@ class Min(MinMaxBase, Application):
+     zero = S.NegativeInfinity
+     identity = S.Infinity
+ 
++    def __new__(cls, *args, **assumptions):
++        if not args:
++            return S.Infinity
++        return super(Min, cls).__new__(cls, *args, **assumptions)
++
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+         n = len(self.args)
+diff --git a/sympy/functions/elementary/tests/test_miscellaneous.py b/sympy/functions/elementary/tests/test_miscellaneous.py
+index f78dc7669865..3eaec6c23986 100644
+--- a/sympy/functions/elementary/tests/test_miscellaneous.py
++++ b/sympy/functions/elementary/tests/test_miscellaneous.py
+@@ -86,7 +86,7 @@ def test_Min():
+     assert Min(p, p_).func is Min
+ 
+     # lists
+-    raises(ValueError, lambda: Min())
++    assert Min() == S.Infinity
+     assert Min(x, y) == Min(y, x)
+     assert Min(x, y, z) == Min(z, y, x)
+     assert Min(x, Min(y, z)) == Min(z, y, x)
+@@ -157,7 +157,7 @@ def test_Max():
+ 
+     # lists
+ 
+-    raises(ValueError, lambda: Max())
++    assert Max() == S.NegativeInfinity
+     assert Max(x, y) == Max(y, x)
+     assert Max(x, y, z) == Max(z, y, x)
+     assert Max(x, Max(y, z)) == Max(z, y, x)
+
+From 63d0f9a10e96f377a50e3add636871bae9476660 Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Mon, 21 Jan 2019 17:56:01 +0530
+Subject: [PATCH 3/8] Added test
+
+---
+ sympy/functions/elementary/tests/test_miscellaneous.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/sympy/functions/elementary/tests/test_miscellaneous.py b/sympy/functions/elementary/tests/test_miscellaneous.py
+index 3eaec6c23986..0383c178f666 100644
+--- a/sympy/functions/elementary/tests/test_miscellaneous.py
++++ b/sympy/functions/elementary/tests/test_miscellaneous.py
+@@ -87,6 +87,7 @@ def test_Min():
+ 
+     # lists
+     assert Min() == S.Infinity
++    assert Min(x) == x
+     assert Min(x, y) == Min(y, x)
+     assert Min(x, y, z) == Min(z, y, x)
+     assert Min(x, Min(y, z)) == Min(z, y, x)
+@@ -158,6 +159,7 @@ def test_Max():
+     # lists
+ 
+     assert Max() == S.NegativeInfinity
++    assert Max(x) == x
+     assert Max(x, y) == Max(y, x)
+     assert Max(x, y, z) == Max(z, y, x)
+     assert Max(x, Max(y, z)) == Max(z, y, x)
+
+From e566a22043bd6598f0b7b7b3d4bc5b012d4cdb7b Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Tue, 22 Jan 2019 01:10:40 +0530
+Subject: [PATCH 4/8] Update
+
+---
+ sympy/functions/elementary/miscellaneous.py | 14 ++++++--------
+ 1 file changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 3d595ed35ec1..dfcb69615b39 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -339,6 +339,8 @@ def real_root(arg, n=None, evaluate=None):
+ 
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
++        if not args:
++            cls._eval_no_args()
+ 
+         args = (sympify(arg) for arg in args)
+ 
+@@ -728,10 +730,8 @@ class Max(MinMaxBase, Application):
+     zero = S.Infinity
+     identity = S.NegativeInfinity
+ 
+-    def __new__(cls, *args, **assumptions):
+-        if not args:
+-            return S.NegativeInfinity
+-        return super(Max, cls).__new__(cls, *args, **assumptions)
++    def _eval_no_args():
++        return S.NegativeInfinity
+ 
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+@@ -798,10 +798,8 @@ class Min(MinMaxBase, Application):
+     zero = S.NegativeInfinity
+     identity = S.Infinity
+ 
+-    def __new__(cls, *args, **assumptions):
+-        if not args:
+-            return S.Infinity
+-        return super(Min, cls).__new__(cls, *args, **assumptions)
++    def _eval_no_args():
++        return S.Infinity
+ 
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+
+From e5bbc4bf7501e8bfaac0dc480d8ea1ecf56e649a Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Tue, 22 Jan 2019 01:58:54 +0530
+Subject: [PATCH 5/8] Update
+
+---
+ sympy/functions/elementary/miscellaneous.py | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index dfcb69615b39..4c1379fe50ca 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -340,7 +340,7 @@ def real_root(arg, n=None, evaluate=None):
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+         if not args:
+-            cls._eval_no_args()
++            cls._eval_no_args(cls)
+ 
+         args = (sympify(arg) for arg in args)
+ 
+@@ -730,7 +730,7 @@ class Max(MinMaxBase, Application):
+     zero = S.Infinity
+     identity = S.NegativeInfinity
+ 
+-    def _eval_no_args():
++    def _eval_no_args(self):
+         return S.NegativeInfinity
+ 
+     def fdiff( self, argindex ):
+@@ -798,7 +798,7 @@ class Min(MinMaxBase, Application):
+     zero = S.NegativeInfinity
+     identity = S.Infinity
+ 
+-    def _eval_no_args():
++    def _eval_no_args(self):
+         return S.Infinity
+ 
+     def fdiff( self, argindex ):
+
+From 29d3e6b5f3588d566525a14d8de53bb7934a38ce Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Tue, 22 Jan 2019 16:03:56 +0530
+Subject: [PATCH 6/8] Update
+
+---
+ sympy/functions/elementary/miscellaneous.py | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 4c1379fe50ca..60f1e3a6630a 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -340,7 +340,7 @@ def real_root(arg, n=None, evaluate=None):
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+         if not args:
+-            cls._eval_no_args(cls)
++            cls._eval_no_args()
+ 
+         args = (sympify(arg) for arg in args)
+ 
+@@ -730,7 +730,8 @@ class Max(MinMaxBase, Application):
+     zero = S.Infinity
+     identity = S.NegativeInfinity
+ 
+-    def _eval_no_args(self):
++    @classmethod
++    def _eval_no_args(cls):
+         return S.NegativeInfinity
+ 
+     def fdiff( self, argindex ):
+@@ -798,7 +799,8 @@ class Min(MinMaxBase, Application):
+     zero = S.NegativeInfinity
+     identity = S.Infinity
+ 
+-    def _eval_no_args(self):
++    @classmethod
++    def _eval_no_args(cls):
+         return S.Infinity
+ 
+     def fdiff( self, argindex ):
+
+From 001e9ceae300917ceab05411a32adfb92f104668 Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Fri, 25 Jan 2019 13:50:01 +0530
+Subject: [PATCH 7/8] Added return
+
+---
+ sympy/functions/elementary/miscellaneous.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 60f1e3a6630a..3ee681637f91 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -340,7 +340,7 @@ def real_root(arg, n=None, evaluate=None):
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+         if not args:
+-            cls._eval_no_args()
++            return cls._eval_no_args()
+ 
+         args = (sympify(arg) for arg in args)
+ 
+
+From b7ad445a5e7d70d3fb18e0fe32caceb60fd54239 Mon Sep 17 00:00:00 2001
+From: jmig5776 <jmig5776@gmail.com>
+Date: Fri, 25 Jan 2019 20:48:50 +0530
+Subject: [PATCH 8/8] Update
+
+---
+ sympy/functions/elementary/miscellaneous.py | 10 ----------
+ 1 file changed, 10 deletions(-)
+
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 3ee681637f91..5e4e89bdf481 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -339,8 +339,6 @@ def real_root(arg, n=None, evaluate=None):
+ 
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+-        if not args:
+-            return cls._eval_no_args()
+ 
+         args = (sympify(arg) for arg in args)
+ 
+@@ -730,10 +728,6 @@ class Max(MinMaxBase, Application):
+     zero = S.Infinity
+     identity = S.NegativeInfinity
+ 
+-    @classmethod
+-    def _eval_no_args(cls):
+-        return S.NegativeInfinity
+-
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+         n = len(self.args)
+@@ -799,10 +793,6 @@ class Min(MinMaxBase, Application):
+     zero = S.NegativeInfinity
+     identity = S.Infinity
+ 
+-    @classmethod
+-    def _eval_no_args(cls):
+-        return S.Infinity
+-
+     def fdiff( self, argindex ):
+         from sympy import Heaviside
+         n = len(self.args)

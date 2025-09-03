@@ -1,0 +1,76 @@
+From d1832bfaa042a2dc5d9fc8ae52810ff8201974a6 Mon Sep 17 00:00:00 2001
+From: Thomas Fan <thomasjpfan@gmail.com>
+Date: Sun, 9 Jun 2019 11:20:27 -0400
+Subject: [PATCH 1/2] BUG Fixes export_text
+
+---
+ sklearn/tree/export.py            |  3 ++-
+ sklearn/tree/tests/test_export.py | 15 +++++++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/tree/export.py b/sklearn/tree/export.py
+index 1fe11e596a359..2c9d21b7bb5cc 100644
+--- a/sklearn/tree/export.py
++++ b/sklearn/tree/export.py
+@@ -890,7 +890,8 @@ def export_text(decision_tree, feature_names=None, max_depth=10,
+         value_fmt = "{}{} value: {}\n"
+ 
+     if feature_names:
+-        feature_names_ = [feature_names[i] for i in tree_.feature]
++        feature_names_ = [feature_names[i] if i != _tree.TREE_UNDEFINED
++                          else None for i in tree_.feature]
+     else:
+         feature_names_ = ["feature_{}".format(i) for i in tree_.feature]
+ 
+diff --git a/sklearn/tree/tests/test_export.py b/sklearn/tree/tests/test_export.py
+index 503431f456874..317a11ae25836 100644
+--- a/sklearn/tree/tests/test_export.py
++++ b/sklearn/tree/tests/test_export.py
+@@ -396,6 +396,21 @@ def test_export_text():
+     assert export_text(reg, decimals=1) == expected_report
+     assert export_text(reg, decimals=1, show_weights=True) == expected_report
+ 
++    X_single = [[-2], [-1], [-1], [1], [1], [2]]
++    reg = DecisionTreeRegressor(max_depth=2, random_state=0)
++    reg.fit(X_single, y_mo)
++
++    expected_report = dedent("""
++    |--- first <= 0.0
++    |   |--- value: [-1.0, -1.0]
++    |--- first >  0.0
++    |   |--- value: [1.0, 1.0]
++    """).lstrip()
++    assert export_text(reg, decimals=1,
++                       feature_names=['first']) == expected_report
++    assert export_text(reg, decimals=1, show_weights=True,
++                       feature_names=['first']) == expected_report
++
+ 
+ def test_plot_tree_entropy(pyplot):
+     # mostly smoke tests
+
+From 287fe3336f69944d0accd990f08a8b9281858086 Mon Sep 17 00:00:00 2001
+From: Thomas Fan <thomasjpfan@gmail.com>
+Date: Thu, 13 Jun 2019 11:34:11 -0400
+Subject: [PATCH 2/2] DOC Adds whats new
+
+---
+ doc/whats_new/v0.21.rst | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/doc/whats_new/v0.21.rst b/doc/whats_new/v0.21.rst
+index e588121b9928c..2c0c8a858bffe 100644
+--- a/doc/whats_new/v0.21.rst
++++ b/doc/whats_new/v0.21.rst
+@@ -12,6 +12,11 @@ Version 0.21.3
+ Changelog
+ ---------
+ 
++:mod:`sklearn.tree`
++...................
++
++- |Fix| Fixed bug in :func:`tree.export_text` when the tree has one feature and 
++  a single feature name is passed in. :pr:`14053` by `Thomas Fan`
+ 
+ .. _changes_0_21_2:
+ 

@@ -1,0 +1,14 @@
+diff --git a/sympy/solvers/solveset.py b/sympy/solvers/solveset.py
+index 445be3e0e8..b2ad676541 100644
+--- a/sympy/solvers/solveset.py
++++ b/sympy/solvers/solveset.py
+@@ -920,6 +920,9 @@ def _solveset(f, symbol, domain, _check=False):
+     elif _is_function_class_equation(TrigonometricFunction, f, symbol) or \
+             _is_function_class_equation(HyperbolicFunction, f, symbol):
+         result = _solve_trig(f, symbol, domain)
++    # Add a new condition to check for transcendental equations
++    elif any(isinstance(arg, (TrigonometricFunction, HyperbolicFunction, exp, log)) for arg in f.args):
++        return ConditionSet(symbol, Eq(f, 0), domain)
+     elif isinstance(f, arg):
+         a = f.args[0]
+         result = solveset_real(a > 0, symbol)

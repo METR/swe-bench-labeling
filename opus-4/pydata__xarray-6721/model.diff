@@ -1,0 +1,298 @@
+diff --git a/test.zarr/.zattrs b/test.zarr/.zattrs
+new file mode 100644
+index 00000000..9e26dfee
+--- /dev/null
++++ b/test.zarr/.zattrs
+@@ -0,0 +1 @@
++{}
+\ No newline at end of file
+diff --git a/test.zarr/.zgroup b/test.zarr/.zgroup
+new file mode 100644
+index 00000000..3b7daf22
+--- /dev/null
++++ b/test.zarr/.zgroup
+@@ -0,0 +1,3 @@
++{
++    "zarr_format": 2
++}
+\ No newline at end of file
+diff --git a/test.zarr/.zmetadata b/test.zarr/.zmetadata
+new file mode 100644
+index 00000000..48848931
+--- /dev/null
++++ b/test.zarr/.zmetadata
+@@ -0,0 +1,37 @@
++{
++    "metadata": {
++        ".zattrs": {},
++        ".zgroup": {
++            "zarr_format": 2
++        },
++        "test/.zarray": {
++            "chunks": [
++                10,
++                20
++            ],
++            "compressor": {
++                "blocksize": 0,
++                "clevel": 5,
++                "cname": "lz4",
++                "id": "blosc",
++                "shuffle": 1
++            },
++            "dtype": "<f8",
++            "fill_value": "NaN",
++            "filters": null,
++            "order": "C",
++            "shape": [
++                10,
++                20
++            ],
++            "zarr_format": 2
++        },
++        "test/.zattrs": {
++            "_ARRAY_DIMENSIONS": [
++                "x",
++                "y"
++            ]
++        }
++    },
++    "zarr_consolidated_format": 1
++}
+\ No newline at end of file
+diff --git a/test.zarr/test/.zarray b/test.zarr/test/.zarray
+new file mode 100644
+index 00000000..31af92cb
+--- /dev/null
++++ b/test.zarr/test/.zarray
+@@ -0,0 +1,22 @@
++{
++    "chunks": [
++        10,
++        20
++    ],
++    "compressor": {
++        "blocksize": 0,
++        "clevel": 5,
++        "cname": "lz4",
++        "id": "blosc",
++        "shuffle": 1
++    },
++    "dtype": "<f8",
++    "fill_value": "NaN",
++    "filters": null,
++    "order": "C",
++    "shape": [
++        10,
++        20
++    ],
++    "zarr_format": 2
++}
+\ No newline at end of file
+diff --git a/test.zarr/test/.zattrs b/test.zarr/test/.zattrs
+new file mode 100644
+index 00000000..74ac71d9
+--- /dev/null
++++ b/test.zarr/test/.zattrs
+@@ -0,0 +1,6 @@
++{
++    "_ARRAY_DIMENSIONS": [
++        "x",
++        "y"
++    ]
++}
+\ No newline at end of file
+diff --git a/test.zarr/test/0.0 b/test.zarr/test/0.0
+new file mode 100644
+index 00000000..79b16586
+Binary files /dev/null and b/test.zarr/test/0.0 differ
+diff --git a/test_chunks_issue.py b/test_chunks_issue.py
+new file mode 100644
+index 00000000..d4d84550
+--- /dev/null
++++ b/test_chunks_issue.py
+@@ -0,0 +1,39 @@
++import xarray as xr
++import numpy as np
++import zarr
++import tempfile
++import os
++
++# Create a test to reproduce the issue
++def test_zarr_chunks_does_not_load_data():
++    """Test that accessing chunks on zarr-backed arrays doesn't load data into memory."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        zarr_path = os.path.join(tmpdir, 'test.zarr')
++        
++        # Create a large array that would be noticeable if loaded into memory
++        data = xr.DataArray(np.zeros((1000, 1000)), dims=['x', 'y'])
++        ds = xr.Dataset({'large_array': data})
++        
++        # Save to zarr with specific chunks
++        ds.to_zarr(zarr_path, mode='w', encoding={'large_array': {'chunks': (100, 100)}})
++        
++        # Open the dataset
++        ds_zarr = xr.open_dataset(zarr_path, engine='zarr')
++        
++        # Track if data is loaded by monitoring the _data attribute
++        var = ds_zarr['large_array'].variable
++        print(f"Before accessing chunks - _in_memory: {var._in_memory}")
++        
++        # This should NOT load data into memory
++        chunks = ds_zarr.chunks
++        print(f"Chunks: {chunks}")
++        
++        # Check if data was loaded
++        print(f"After accessing chunks - _in_memory: {var._in_memory}")
++        
++        # The variable should still be lazy
++        assert not var._in_memory, "Data was loaded into memory when accessing chunks!"
++
++if __name__ == "__main__":
++    test_zarr_chunks_does_not_load_data()
+diff --git a/test_zarr_chunks_regression.py b/test_zarr_chunks_regression.py
+new file mode 100644
+index 00000000..0ecc9915
+--- /dev/null
++++ b/test_zarr_chunks_regression.py
+@@ -0,0 +1,98 @@
++"""
++Test for regression of zarr chunks loading issue.
++https://github.com/pydata/xarray/issues/6534
++"""
++import pytest
++import xarray as xr
++import numpy as np
++import tempfile
++import os
++
++
++def test_zarr_chunks_does_not_load_data():
++    """Test that accessing chunks on zarr-backed arrays doesn't load data into memory."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        zarr_path = os.path.join(tmpdir, 'test.zarr')
++        
++        # Create a large array that would be noticeable if loaded into memory
++        data = xr.DataArray(np.zeros((1000, 1000)), dims=['x', 'y'])
++        ds = xr.Dataset({'large_array': data})
++        
++        # Save to zarr with specific chunks
++        ds.to_zarr(zarr_path, mode='w', encoding={'large_array': {'chunks': (100, 100)}})
++        
++        # Open the dataset
++        ds_zarr = xr.open_dataset(zarr_path, engine='zarr')
++        
++        # Track if data is loaded by monitoring the _in_memory attribute
++        var = ds_zarr['large_array'].variable
++        assert not var._in_memory, "Data should not be in memory after opening"
++        
++        # This should NOT load data into memory
++        chunks = ds_zarr.chunks
++        
++        # Check if data was loaded
++        assert not var._in_memory, "Data was loaded into memory when accessing chunks!"
++        
++        # Verify chunks are correct
++        assert chunks == {'x': (100,), 'y': (100,)}, f"Unexpected chunks: {chunks}"
++
++
++def test_zarr_chunks_from_encoding():
++    """Test that zarr chunks are read from encoding without loading data."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        zarr_path = os.path.join(tmpdir, 'test.zarr')
++        
++        # Create dataset with multiple variables having different chunks
++        data1 = xr.DataArray(np.zeros((1000, 2000)), dims=['x', 'y'], name='var1')
++        data2 = xr.DataArray(np.zeros((1000, 2000)), dims=['x', 'y'], name='var2')
++        ds = xr.Dataset({'var1': data1, 'var2': data2})
++        
++        # Save with specific chunks
++        encoding = {
++            'var1': {'chunks': (200, 400)},
++            'var2': {'chunks': (200, 400)}
++        }
++        ds.to_zarr(zarr_path, mode='w', encoding=encoding)
++        
++        # Open and check chunks
++        ds_zarr = xr.open_dataset(zarr_path, engine='zarr')
++        
++        # Verify encoding contains chunks
++        assert 'chunks' in ds_zarr['var1'].encoding
++        assert ds_zarr['var1'].encoding['chunks'] == (200, 400)
++        
++        # Check variable chunksizes (should use encoding)
++        var1_chunksizes = ds_zarr['var1'].variable.chunksizes
++        assert var1_chunksizes == {'x': (200,), 'y': (400,)}
++        
++        # Check dataset chunks
++        ds_chunks = ds_zarr.chunks
++        assert ds_chunks == {'x': (200,), 'y': (400,)}
++        
++        # Verify data wasn't loaded
++        assert not ds_zarr['var1'].variable._in_memory
++        assert not ds_zarr['var2'].variable._in_memory
++
++
++def test_dask_chunks_still_work():
++    """Ensure dask arrays still report chunks correctly."""
++    import dask.array as da
++    
++    # Create dask arrays
++    data = da.zeros((1000, 2000), chunks=(100, 200))
++    arr = xr.DataArray(data, dims=['x', 'y'])
++    ds = xr.Dataset({'var': arr})
++    
++    # Check chunks
++    assert ds.chunks == {'x': (100,) * 10, 'y': (200,) * 10}
++    assert arr.chunks == ((100,) * 10, (200,) * 10)
++
++
++if __name__ == "__main__":
++    test_zarr_chunks_does_not_load_data()
++    test_zarr_chunks_from_encoding()
++    test_dask_chunks_still_work()
++    print("All tests passed!")
+diff --git a/xarray/core/common.py b/xarray/core/common.py
+index 3c328f42..53717b2b 100644
+--- a/xarray/core/common.py
++++ b/xarray/core/common.py
+@@ -2023,7 +2023,11 @@ def get_chunksizes(
+ 
+     chunks: dict[Any, tuple[int, ...]] = {}
+     for v in variables:
+-        if hasattr(v.data, "chunks"):
++        # First check encoding for chunk information (for zarr and other backends)
++        # This avoids loading data into memory
++        has_chunk_info = ("chunks" in v.encoding and v.encoding["chunks"] is not None) or hasattr(v._data, "chunks")
++        
++        if has_chunk_info:
+             for dim, c in v.chunksizes.items():
+                 if dim in chunks and c != chunks[dim]:
+                     raise ValueError(
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index 2d115ff0..8e4fb697 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -1014,8 +1014,18 @@ class Variable(AbstractArray, NdimSizeLenMixin, VariableArithmetic):
+         Variable.chunks
+         xarray.unify_chunks
+         """
++        # For zarr arrays and other lazy arrays that store chunk information in encoding
++        if "chunks" in self.encoding and not hasattr(self._data, "chunks"):
++            chunks = self.encoding["chunks"]
++            if chunks is not None:
++                # Ensure chunks is a tuple
++                if not isinstance(chunks, tuple):
++                    chunks = tuple(chunks)
++                return Frozen({dim: (size,) for dim, size in zip(self.dims, chunks)})
++        
++        # For dask arrays, access chunks directly from _data
+         if hasattr(self._data, "chunks"):
+-            return Frozen({dim: c for dim, c in zip(self.dims, self.data.chunks)})
++            return Frozen({dim: c for dim, c in zip(self.dims, self._data.chunks)})
+         else:
+             return {}
+ 

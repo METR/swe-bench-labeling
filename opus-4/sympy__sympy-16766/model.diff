@@ -1,0 +1,239 @@
+diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
+index a3f0310735..f7e17b3707 100644
+--- a/sympy/printing/pycode.py
++++ b/sympy/printing/pycode.py
+@@ -357,6 +357,13 @@ def _print_Not(self, expr):
+         PREC = precedence(expr)
+         return self._operators['not'] + self.parenthesize(expr.args[0], PREC)
+ 
++    def _print_Indexed(self, expr):
++        base, *index = expr.args
++        return "{}[{}]".format(self._print(base), ", ".join([self._print(ind) for ind in index]))
++    
++    def _print_IndexedBase(self, expr):
++        return str(expr)
++
+ 
+ for k in PythonCodePrinter._kf:
+     setattr(PythonCodePrinter, '_print_%s' % k, _print_known_func)
+diff --git a/sympy/printing/tests/test_pycode.py b/sympy/printing/tests/test_pycode.py
+index f1a9a37898..69b260d6eb 100644
+--- a/sympy/printing/tests/test_pycode.py
++++ b/sympy/printing/tests/test_pycode.py
+@@ -96,3 +96,37 @@ def test_NumPyPrinter_print_seq():
+     n = NumPyPrinter()
+ 
+     assert n._print_seq(range(2)) == '(0, 1,)'
++
++
++def test_PythonCodePrinter_Indexed():
++    from sympy.tensor.indexed import IndexedBase
++    prntr = PythonCodePrinter()
++    
++    p = IndexedBase("p")
++    q = IndexedBase("q")
++    i, j, k = symbols('i j k')
++    
++    # Test basic indexed access
++    assert prntr.doprint(p[0]) == 'p[0]'
++    assert prntr.doprint(p[0, 1]) == 'p[0, 1]'
++    assert prntr.doprint(p[0, 1, 2]) == 'p[0, 1, 2]'
++    
++    # Test with symbolic indices
++    assert prntr.doprint(p[i]) == 'p[i]'
++    assert prntr.doprint(p[i, j]) == 'p[i, j]'
++    assert prntr.doprint(p[i, j, k]) == 'p[i, j, k]'
++    
++    # Test with expression indices
++    assert prntr.doprint(p[i+1]) == 'p[i + 1]'
++    assert prntr.doprint(p[2*i, j-1]) == 'p[2*i, j - 1]'
++    
++    # Test nested indexed
++    assert prntr.doprint(p[q[0]]) == 'p[q[0]]'
++    
++    # Test IndexedBase alone
++    assert prntr.doprint(p) == 'p'
++    assert prntr.doprint(q) == 'q'
++    
++    # Test using pycode function
++    assert pycode(p[0]) == 'p[0]'
++    assert pycode(p[i, j]) == 'p[i, j]'
+diff --git a/test_indexed_comprehensive.py b/test_indexed_comprehensive.py
+new file mode 100644
+index 0000000000..5acc5bd627
+--- /dev/null
++++ b/test_indexed_comprehensive.py
+@@ -0,0 +1,49 @@
++from sympy import *
++
++# Test basic indexed access
++p = IndexedBase("p")
++print("Basic single index:")
++print(f"pycode(p[0]) = {pycode(p[0])}")
++print()
++
++# Test multiple indices
++print("Multiple indices:")
++print(f"pycode(p[0, 1]) = {pycode(p[0, 1])}")
++print(f"pycode(p[0, 1, 2]) = {pycode(p[0, 1, 2])}")
++print()
++
++# Test with symbols as indices
++i, j, k = symbols('i j k')
++print("Symbolic indices:")
++print(f"pycode(p[i]) = {pycode(p[i])}")
++print(f"pycode(p[i, j]) = {pycode(p[i, j])}")
++print(f"pycode(p[i, j, k]) = {pycode(p[i, j, k])}")
++print()
++
++# Test with expressions as indices
++print("Expression indices:")
++print(f"pycode(p[i+1]) = {pycode(p[i+1])}")
++print(f"pycode(p[2*i, j-1]) = {pycode(p[2*i, j-1])}")
++print()
++
++# Test nested indexed
++q = IndexedBase("q")
++print("Nested indexed:")
++print(f"pycode(p[q[0]]) = {pycode(p[q[0]])}")
++print()
++
++# Test in expressions
++print("In expressions:")
++print(f"pycode(p[0] + p[1]) = {pycode(p[0] + p[1])}")
++print(f"pycode(p[i] * q[j]) = {pycode(p[i] * q[j])}")
++print()
++
++# Test with lambdify
++print("Test with lambdify:")
++expr = p[0] + p[1] * 2
++f = lambdify([p], expr, modules='numpy')
++print(f"Expression: {expr}")
++print(f"Generated code: {pycode(expr)}")
++import numpy as np
++test_array = np.array([1, 2, 3])
++print(f"f([1, 2, 3]) = {f(test_array)}")
+diff --git a/test_indexed_simple.py b/test_indexed_simple.py
+new file mode 100644
+index 0000000000..a71d6096bc
+--- /dev/null
++++ b/test_indexed_simple.py
+@@ -0,0 +1,44 @@
++from sympy import *
++
++# Test basic indexed access
++p = IndexedBase("p")
++print("Basic single index:")
++print(f"pycode(p[0]) = {pycode(p[0])}")
++print()
++
++# Test multiple indices
++print("Multiple indices:")
++print(f"pycode(p[0, 1]) = {pycode(p[0, 1])}")
++print(f"pycode(p[0, 1, 2]) = {pycode(p[0, 1, 2])}")
++print()
++
++# Test with symbols as indices
++i, j, k = symbols('i j k')
++print("Symbolic indices:")
++print(f"pycode(p[i]) = {pycode(p[i])}")
++print(f"pycode(p[i, j]) = {pycode(p[i, j])}")
++print(f"pycode(p[i, j, k]) = {pycode(p[i, j, k])}")
++print()
++
++# Test with expressions as indices
++print("Expression indices:")
++print(f"pycode(p[i+1]) = {pycode(p[i+1])}")
++print(f"pycode(p[2*i, j-1]) = {pycode(p[2*i, j-1])}")
++print()
++
++# Test nested indexed
++q = IndexedBase("q")
++print("Nested indexed:")
++print(f"pycode(p[q[0]]) = {pycode(p[q[0]])}")
++print()
++
++# Test in expressions
++print("In expressions:")
++print(f"pycode(p[0] + p[1]) = {pycode(p[0] + p[1])}")
++print(f"pycode(p[i] * q[j]) = {pycode(p[i] * q[j])}")
++print()
++
++# Test IndexedBase alone
++print("IndexedBase alone:")
++print(f"pycode(p) = {pycode(p)}")
++print(f"pycode(q) = {pycode(q)}")
+diff --git a/test_inheritance.py b/test_inheritance.py
+new file mode 100644
+index 0000000000..ca15590f7b
+--- /dev/null
++++ b/test_inheritance.py
+@@ -0,0 +1,23 @@
++from sympy import *
++from sympy.printing.pycode import NumPyPrinter, MpmathPrinter, SciPyPrinter
++
++# Test that subclasses also work
++p = IndexedBase("p")
++i = symbols('i')
++
++print("NumPyPrinter:")
++np_printer = NumPyPrinter()
++print(f"p[0] = {np_printer.doprint(p[0])}")
++print(f"p[i] = {np_printer.doprint(p[i])}")
++print()
++
++print("MpmathPrinter:")
++mp_printer = MpmathPrinter()
++print(f"p[0] = {mp_printer.doprint(p[0])}")
++print(f"p[i] = {mp_printer.doprint(p[i])}")
++print()
++
++print("SciPyPrinter:")
++sp_printer = SciPyPrinter()
++print(f"p[0] = {sp_printer.doprint(p[0])}")
++print(f"p[i] = {sp_printer.doprint(p[i])}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..5126e5575b
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,10 @@
++from sympy import *
++p = IndexedBase("p")
++
++print("Testing pycode(p[0]):")
++print(pycode(p[0]))
++print()
++
++# Let's also test with multiple indices
++print("Testing pycode(p[0, 1]):")
++print(pycode(p[0, 1]))
+diff --git a/test_lambdify.py b/test_lambdify.py
+new file mode 100644
+index 0000000000..c3726a689e
+--- /dev/null
++++ b/test_lambdify.py
+@@ -0,0 +1,23 @@
++from sympy import *
++from sympy.utilities.lambdify import lambdastr
++
++# Test with lambdify's string generation
++p = IndexedBase("p")
++i = symbols('i')
++
++# Simple indexed expression
++expr1 = p[0] + p[1]
++print("Expression:", expr1)
++print("lambdastr:", lambdastr([p], expr1))
++print()
++
++# More complex expression
++expr2 = p[i] + p[i+1] * 2
++print("Expression:", expr2)
++print("lambdastr:", lambdastr([p, i], expr2))
++print()
++
++# Test that pycode works as expected (which lambdify uses internally)
++print("pycode(p[0]):", pycode(p[0]))
++print("pycode(p[i]):", pycode(p[i]))
++print("pycode(expr1):", pycode(expr1))

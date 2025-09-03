@@ -1,0 +1,360 @@
+diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
+index 19f7c0a8d..8c34a62cb 100644
+--- a/sphinx/directives/other.py
++++ b/sphinx/directives/other.py
+@@ -369,14 +369,69 @@ class Include(BaseInclude, SphinxDirective):
+     """
+ 
+     def run(self) -> list[Node]:
+-        if self.arguments[0].startswith('<') and \
+-           self.arguments[0].endswith('>'):
+-            # docutils "standard" includes, do not do path processing
++        # Store the original method to restore it later
++        original_insert_input = self.state_machine.insert_input
++        
++        # Create a wrapper that emits source-read event
++        def insert_input_with_event(include_lines, source):
++            # Check if this is being called for included content
++            # We want to process only the actual content, not the end marker
++            is_end_marker = (len(include_lines) == 2 and 
++                           include_lines[0] == '' and 
++                           include_lines[1].startswith('.. end of inclusion from'))
++            
++            if not is_end_marker:
++                # Join the lines back into a string for the event
++                content = '\n'.join(include_lines)
++                
++                # Emit source-read event - we need to pass the included file's docname
++                # Since the included file might not have a docname, we use the source path
++                # Remove .rst extension if present to match docname format
++                docname = source
++                if docname.endswith('.rst'):
++                    docname = docname[:-4]
++                # Make it relative to source directory if possible
++                try:
++                    from pathlib import Path
++                    source_dir = Path(self.env.srcdir)
++                    source_path = Path(source)
++                    if source_path.is_absolute():
++                        try:
++                            # Try to make it relative to source directory
++                            docname = str(source_path.relative_to(source_dir))
++                            if docname.endswith('.rst'):
++                                docname = docname[:-4]
++                        except ValueError:
++                            # Path is not relative to source_dir
++                            pass
++                except Exception:
++                    pass
++                
++                # Emit the event with the content
++                arg = [content]
++                self.env.events.emit('source-read', docname, arg)
++                
++                # Split the potentially modified content back into lines
++                include_lines = arg[0].split('\n')
++            
++            # Call the original method with potentially modified content
++            return original_insert_input(include_lines, source)
++        
++        # Temporarily replace the method
++        self.state_machine.insert_input = insert_input_with_event
++        
++        try:
++            if self.arguments[0].startswith('<') and \
++               self.arguments[0].endswith('>'):
++                # docutils "standard" includes, do not do path processing
++                return super().run()
++            rel_filename, filename = self.env.relfn2path(self.arguments[0])
++            self.arguments[0] = filename
++            self.env.note_included(filename)
+             return super().run()
+-        rel_filename, filename = self.env.relfn2path(self.arguments[0])
+-        self.arguments[0] = filename
+-        self.env.note_included(filename)
+-        return super().run()
++        finally:
++            # Restore the original method
++            self.state_machine.insert_input = original_insert_input
+ 
+ 
+ def setup(app: Sphinx) -> dict[str, Any]:
+diff --git a/test_issue/conf.py b/test_issue/conf.py
+new file mode 100644
+index 000000000..de4440537
+--- /dev/null
++++ b/test_issue/conf.py
+@@ -0,0 +1,8 @@
++import sys
++import os
++
++sys.path.insert(0, os.path.abspath('.'))
++
++extensions = [
++        'my-extension'
++]
+diff --git a/test_issue/index.rst b/test_issue/index.rst
+new file mode 100644
+index 000000000..f2dec1395
+--- /dev/null
++++ b/test_issue/index.rst
+@@ -0,0 +1,6 @@
++This is a test
++==============
++
++.. include:: something-to-include.rst
++
++&REPLACE_ME;
+diff --git a/test_issue/my-extension.py b/test_issue/my-extension.py
+new file mode 100644
+index 000000000..108bb6a84
+--- /dev/null
++++ b/test_issue/my-extension.py
+@@ -0,0 +1,26 @@
++#!/usr/bin/env python3
++
++from sphinx.application import Sphinx
++
++
++__version__ = '1.0'
++
++
++def subst_vars_replace(app: Sphinx, docname, source):
++    print(f"source-read event called for docname: {docname}")
++    print(f"Original content: {repr(source[0][:100])}")
++    result = source[0]
++    result = result.replace("&REPLACE_ME;", "REPLACED")
++    source[0] = result
++    print(f"Modified content: {repr(source[0][:100])}")
++
++
++def setup(app: Sphinx):
++
++    app.connect('source-read', subst_vars_replace)
++
++    return dict(
++        version=__version__,
++        parallel_read_safe=True,
++        parallel_write_safe=True
++    )
+diff --git a/test_issue/something-to-include.rst b/test_issue/something-to-include.rst
+new file mode 100644
+index 000000000..e63253568
+--- /dev/null
++++ b/test_issue/something-to-include.rst
+@@ -0,0 +1,4 @@
++Testing
++=======
++
++&REPLACE_ME;
+diff --git a/test_issue_edge_cases.py b/test_issue_edge_cases.py
+new file mode 100644
+index 000000000..24a0ff8a8
+--- /dev/null
++++ b/test_issue_edge_cases.py
+@@ -0,0 +1,185 @@
++#!/usr/bin/env python3
++"""Test edge cases for the include directive source-read event fix."""
++
++import os
++import tempfile
++import shutil
++from pathlib import Path
++from sphinx.cmd.build import build_main
++
++
++def test_include_source_read_event():
++    """Test that source-read event is properly triggered for included files."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        # Create test structure
++        srcdir = Path(tmpdir) / "source"
++        builddir = Path(tmpdir) / "build"
++        srcdir.mkdir()
++        
++        # Create conf.py with a custom extension
++        conf_py = srcdir / "conf.py"
++        conf_py.write_text("""
++import sys
++sys.path.insert(0, '.')
++
++extensions = ['test_extension']
++""")
++        
++        # Create the test extension
++        ext_py = srcdir / "test_extension.py"
++        ext_py.write_text("""
++from sphinx.application import Sphinx
++
++replacements = []
++
++def source_read_handler(app, docname, source):
++    # Record what files were processed
++    replacements.append(docname)
++    # Do the replacement
++    source[0] = source[0].replace("REPLACE_ME", "REPLACED")
++
++def setup(app: Sphinx):
++    app.connect('source-read', source_read_handler)
++    return {
++        'version': '1.0',
++        'parallel_read_safe': True,
++        'parallel_write_safe': True
++    }
++""")
++        
++        # Create main document
++        index_rst = srcdir / "index.rst"
++        index_rst.write_text("""Test Include
++============
++
++Before include: REPLACE_ME
++
++.. include:: included.rst
++
++After include: REPLACE_ME
++
++.. include:: subdir/nested.rst
++""")
++        
++        # Create included document
++        included_rst = srcdir / "included.rst"
++        included_rst.write_text("""Included Section
++----------------
++
++In included file: REPLACE_ME
++""")
++        
++        # Create nested included document
++        subdir = srcdir / "subdir"
++        subdir.mkdir()
++        nested_rst = subdir / "nested.rst"
++        nested_rst.write_text("""Nested Section
++--------------
++
++In nested file: REPLACE_ME
++""")
++        
++        # Build the documentation
++        result = build_main(['-b', 'html', '-q', str(srcdir), str(builddir)])
++        
++        # Check the build succeeded
++        if result != 0:
++            print(f"Build failed with code {result}")
++            # Try to see what went wrong
++            import subprocess
++            subprocess.run(['sphinx-build', '-b', 'html', str(srcdir), str(builddir)])
++        
++        # Read the generated HTML
++        with open(builddir / "index.html", 'r') as f:
++            html_content = f.read()
++        
++        # Verify all REPLACE_ME instances were replaced
++        assert "REPLACE_ME" not in html_content
++        assert html_content.count("REPLACED") == 4  # 2 in index + 1 in included + 1 in nested
++        
++        # Import the extension to check which files were processed
++        import sys
++        sys.path.insert(0, str(srcdir))
++        import test_extension
++        
++        # Verify all files triggered the source-read event
++        assert 'index' in test_extension.replacements
++        assert 'included' in test_extension.replacements
++        assert 'subdir/nested' in test_extension.replacements
++        
++        print("✓ All tests passed!")
++
++
++def test_include_with_options():
++    """Test that include directive with options still triggers source-read."""
++    
++    with tempfile.TemporaryDirectory() as tmpdir:
++        srcdir = Path(tmpdir) / "source"
++        builddir = Path(tmpdir) / "build"
++        srcdir.mkdir()
++        
++        # Create conf.py
++        conf_py = srcdir / "conf.py"
++        conf_py.write_text("""
++import sys
++sys.path.insert(0, '.')
++
++extensions = ['test_extension2']
++""")
++        
++        # Create the test extension
++        ext_py = srcdir / "test_extension2.py"
++        ext_py.write_text("""
++from sphinx.application import Sphinx
++
++def source_read_handler(app, docname, source):
++    source[0] = source[0].replace("LINE_TO_REPLACE", "REPLACED_LINE")
++
++def setup(app: Sphinx):
++    app.connect('source-read', source_read_handler)
++    return {
++        'version': '1.0',
++        'parallel_read_safe': True,
++        'parallel_write_safe': True
++    }
++""")
++        
++        # Create main document with include directive using options
++        index_rst = srcdir / "index.rst"
++        index_rst.write_text("""Test Include with Options
++=========================
++
++.. include:: data.txt
++   :start-line: 1
++   :end-line: 3
++""")
++        
++        # Create data file
++        data_txt = srcdir / "data.txt"
++        data_txt.write_text("""Line 0
++LINE_TO_REPLACE
++Another line
++LINE_TO_REPLACE
++Last line
++""")
++        
++        # Build
++        result = build_main(['-b', 'html', str(srcdir), str(builddir)])
++        assert result == 0
++        
++        # Check output
++        with open(builddir / "index.html", 'r') as f:
++            html_content = f.read()
++        
++        # The include should contain the replaced text
++        assert "REPLACED_LINE" in html_content
++        assert "LINE_TO_REPLACE" not in html_content
++        
++        print("✓ Include with options test passed!")
++
++
++if __name__ == "__main__":
++    test_include_source_read_event()
++    test_include_with_options()
++    print("\n✅ All edge case tests passed!")
+diff --git a/test_literal_include/conf.py b/test_literal_include/conf.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/test_literal_include/conf.py
+@@ -0,0 +1 @@
++
+diff --git a/tox.ini b/tox.ini
+index a3dc56211..c76147de3 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -24,7 +24,7 @@ setenv =
+     PYTHONWARNINGS = error
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -X warn_default_encoding -m pytest --durations 25 {posargs}
++    python -X dev -X warn_default_encoding -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:docs]
+ basepython = python3

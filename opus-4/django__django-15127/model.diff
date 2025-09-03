@@ -1,0 +1,277 @@
+diff --git a/django/contrib/messages/storage/base.py b/django/contrib/messages/storage/base.py
+index 01422066a6..160bbbe867 100644
+--- a/django/contrib/messages/storage/base.py
++++ b/django/contrib/messages/storage/base.py
+@@ -1,6 +1,9 @@
+ from django.conf import settings
+ from django.contrib.messages import constants, utils
+ 
++# LEVEL_TAGS is kept for backward compatibility but is no longer used internally.
++# The Message.level_tag property now dynamically fetches tags via utils.get_level_tags()
++# to properly support @override_settings.
+ LEVEL_TAGS = utils.get_level_tags()
+ 
+ 
+@@ -38,7 +41,7 @@ class Message:
+ 
+     @property
+     def level_tag(self):
+-        return LEVEL_TAGS.get(self.level, '')
++        return utils.get_level_tags().get(self.level, '')
+ 
+ 
+ class BaseStorage:
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e5cd52b206
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,137 @@
++import django
++from django.conf import settings
++
++# Configure Django before importing other Django modules
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=[
++        'django.contrib.messages',
++        'django.contrib.sessions',
++    ],
++    MIDDLEWARE=[
++        'django.contrib.sessions.middleware.SessionMiddleware',
++        'django.contrib.messages.middleware.MessageMiddleware',
++    ],
++    MESSAGE_STORAGE='django.contrib.messages.storage.session.SessionStorage',
++    SECRET_KEY='test-secret-key',
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++)
++django.setup()
++
++from django.test import TestCase, override_settings
++from django.contrib.messages import constants, add_message, get_messages
++from django.contrib.messages.storage.base import Message
++from django.http import HttpRequest
++from django.contrib.messages.storage import default_storage
++from django.contrib.messages.storage.session import SessionStorage
++
++
++class TestLevelTagsWithOverrideSettings(TestCase):
++    def test_message_level_tags_update_with_override_settings(self):
++        """Test that level_tag updates correctly with @override_settings"""
++        
++        # Test 1: Default level tags
++        msg = Message(constants.INFO, 'Test message')
++        self.assertEqual(msg.level_tag, 'info')
++        
++        msg = Message(constants.ERROR, 'Error message')
++        self.assertEqual(msg.level_tag, 'error')
++        
++        # Test 2: Override settings inline
++        with override_settings(MESSAGE_TAGS={constants.INFO: 'custom-info', constants.ERROR: 'custom-error'}):
++            msg = Message(constants.INFO, 'Test message')
++            self.assertEqual(msg.level_tag, 'custom-info')
++            
++            msg = Message(constants.ERROR, 'Error message')
++            self.assertEqual(msg.level_tag, 'custom-error')
++        
++        # Test 3: Back to default after override
++        msg = Message(constants.INFO, 'Test message')
++        self.assertEqual(msg.level_tag, 'info')
++    
++    @override_settings(MESSAGE_TAGS={constants.WARNING: 'custom-warning'})
++    def test_decorator_override(self):
++        """Test that @override_settings decorator works"""
++        msg = Message(constants.WARNING, 'Warning message')
++        self.assertEqual(msg.level_tag, 'custom-warning')
++        
++        # Other levels should still have default tags
++        msg = Message(constants.INFO, 'Info message')
++        self.assertEqual(msg.level_tag, 'info')
++    
++    def test_nested_overrides(self):
++        """Test nested override_settings"""
++        msg = Message(constants.DEBUG, 'Debug message')
++        self.assertEqual(msg.level_tag, 'debug')
++        
++        with override_settings(MESSAGE_TAGS={constants.DEBUG: 'custom-debug-1'}):
++            msg = Message(constants.DEBUG, 'Debug message')
++            self.assertEqual(msg.level_tag, 'custom-debug-1')
++            
++            with override_settings(MESSAGE_TAGS={constants.DEBUG: 'custom-debug-2'}):
++                msg = Message(constants.DEBUG, 'Debug message')
++                self.assertEqual(msg.level_tag, 'custom-debug-2')
++            
++            # Back to first override
++            msg = Message(constants.DEBUG, 'Debug message')
++            self.assertEqual(msg.level_tag, 'custom-debug-1')
++        
++        # Back to default
++        msg = Message(constants.DEBUG, 'Debug message')
++        self.assertEqual(msg.level_tag, 'debug')
++    
++    def test_custom_level_tags(self):
++        """Test custom level tags"""
++        CUSTOM_LEVEL = 45
++        
++        # Without override, custom level has no tag
++        msg = Message(CUSTOM_LEVEL, 'Custom message')
++        self.assertEqual(msg.level_tag, '')
++        
++        # With override, custom level gets a tag
++        with override_settings(MESSAGE_TAGS={CUSTOM_LEVEL: 'custom-level'}):
++            msg = Message(CUSTOM_LEVEL, 'Custom message')
++            self.assertEqual(msg.level_tag, 'custom-level')
++
++
++if __name__ == "__main__":
++    from django.test.utils import setup_test_environment, teardown_test_environment
++    setup_test_environment()
++    
++    suite = TestLevelTagsWithOverrideSettings()
++    
++    print("Running test_message_level_tags_update_with_override_settings...")
++    try:
++        suite.test_message_level_tags_update_with_override_settings()
++        print("✓ Passed")
++    except AssertionError as e:
++        print(f"✗ Failed: {e}")
++    
++    print("\nRunning test_decorator_override...")
++    try:
++        suite.test_decorator_override()
++        print("✓ Passed")
++    except AssertionError as e:
++        print(f"✗ Failed: {e}")
++    
++    print("\nRunning test_nested_overrides...")
++    try:
++        suite.test_nested_overrides()
++        print("✓ Passed")
++    except AssertionError as e:
++        print(f"✗ Failed: {e}")
++    
++    print("\nRunning test_custom_level_tags...")
++    try:
++        suite.test_custom_level_tags()
++        print("✓ Passed")
++    except AssertionError as e:
++        print(f"✗ Failed: {e}")
++    
++    teardown_test_environment()
++    print("\nAll tests completed!")
+diff --git a/test_for_django_suite.py b/test_for_django_suite.py
+new file mode 100644
+index 0000000000..2a2714d7b7
+--- /dev/null
++++ b/test_for_django_suite.py
+@@ -0,0 +1,46 @@
++"""
++Test case for the issue where LEVEL_TAGS not updated when using @override_settings.
++This test can be added to Django's messages test suite.
++"""
++
++from django.test import TestCase, override_settings
++from django.contrib.messages import constants
++from django.contrib.messages.storage.base import Message
++
++
++class TestLevelTagOverrideSettings(TestCase):
++    """Test that Message.level_tag properly reflects MESSAGE_TAGS changes via @override_settings."""
++    
++    def test_level_tag_respects_override_settings(self):
++        """
++        The level_tag property should reflect changes made to MESSAGE_TAGS
++        via @override_settings without requiring manual updates to LEVEL_TAGS.
++        """
++        # Default behavior
++        msg = Message(constants.INFO, 'Test')
++        self.assertEqual(msg.level_tag, 'info')
++        
++        # Override MESSAGE_TAGS
++        with override_settings(MESSAGE_TAGS={constants.INFO: 'custom-info'}):
++            msg = Message(constants.INFO, 'Test')
++            self.assertEqual(msg.level_tag, 'custom-info')
++        
++        # Back to default
++        msg = Message(constants.INFO, 'Test')
++        self.assertEqual(msg.level_tag, 'info')
++    
++    @override_settings(MESSAGE_TAGS={
++        constants.DEBUG: 'custom-debug',
++        constants.ERROR: 'custom-error',
++    })
++    def test_level_tag_with_decorator(self):
++        """Test @override_settings decorator works with level_tag."""
++        msg_debug = Message(constants.DEBUG, 'Debug')
++        self.assertEqual(msg_debug.level_tag, 'custom-debug')
++        
++        msg_error = Message(constants.ERROR, 'Error')
++        self.assertEqual(msg_error.level_tag, 'custom-error')
++        
++        # Non-overridden levels still use defaults
++        msg_info = Message(constants.INFO, 'Info')
++        self.assertEqual(msg_info.level_tag, 'info')
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..580e250cb2
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,53 @@
++import django
++from django.conf import settings
++
++# Configure Django before importing other Django modules
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=[
++        'django.contrib.messages',
++    ],
++    MESSAGE_STORAGE='django.contrib.messages.storage.session.SessionStorage',
++)
++django.setup()
++
++from django.test import TestCase, override_settings
++from django.contrib.messages import constants
++from django.contrib.messages.storage.base import Message
++from django.http import HttpRequest
++from django.contrib.messages.storage import default_storage
++
++
++class TestLevelTagsIssue(TestCase):
++    def test_level_tags_without_override(self):
++        """Test that level_tag works without override_settings"""
++        msg = Message(constants.INFO, 'Test message')
++        # Default tag for INFO level is 'info'
++        self.assertEqual(msg.level_tag, 'info')
++    
++    @override_settings(MESSAGE_TAGS={constants.INFO: 'custom-info'})
++    def test_level_tags_with_override_settings(self):
++        """Test that level_tag doesn't update with @override_settings - demonstrating the bug"""
++        msg = Message(constants.INFO, 'Test message')
++        # This should be 'custom-info' but will be 'info' due to the bug
++        print(f"Expected: 'custom-info', Got: '{msg.level_tag}'")
++        # This assertion will fail, demonstrating the bug
++        self.assertEqual(msg.level_tag, 'custom-info')
++
++
++if __name__ == "__main__":
++    # Run the test
++    from django.test.utils import setup_test_environment, teardown_test_environment
++    setup_test_environment()
++    
++    test = TestLevelTagsIssue()
++    test.test_level_tags_without_override()
++    print("Test without override passed")
++    
++    try:
++        test.test_level_tags_with_override_settings()
++        print("Test with override passed")
++    except AssertionError as e:
++        print(f"Test with override failed as expected: {e}")
++    
++    teardown_test_environment()

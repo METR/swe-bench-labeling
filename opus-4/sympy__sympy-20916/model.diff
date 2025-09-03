@@ -1,0 +1,382 @@
+diff --git a/run_convention_tests.py b/run_convention_tests.py
+new file mode 100644
+index 0000000000..840f6c8822
+--- /dev/null
++++ b/run_convention_tests.py
+@@ -0,0 +1,39 @@
++from sympy.printing.tests.test_conventions import test_super_sub, test_requires_partial
++
++# Run the tests
++print("Running test_super_sub...")
++try:
++    test_super_sub()
++    print("✓ test_super_sub passed")
++except Exception as e:
++    print(f"✗ test_super_sub failed: {e}")
++
++print("\nRunning test_requires_partial...")
++try:
++    test_requires_partial()
++    print("✓ test_requires_partial passed")
++except Exception as e:
++    print(f"✗ test_requires_partial failed: {e}")
++
++# Additional tests for Unicode support
++from sympy.printing.conventions import split_super_sub
++
++print("\nRunning additional Unicode tests...")
++try:
++    # Test Unicode Greek letters
++    assert split_super_sub("ω0") == ("ω", [], ["0"])
++    assert split_super_sub("α1") == ("α", [], ["1"])
++    assert split_super_sub("β2") == ("β", [], ["2"])
++    assert split_super_sub("Ω99") == ("Ω", [], ["99"])
++    
++    # Test other Unicode characters
++    assert split_super_sub("θ0") == ("θ", [], ["0"])
++    assert split_super_sub("я1") == ("я", [], ["1"])  # Cyrillic
++    
++    # Make sure it still works with ASCII
++    assert split_super_sub("omega0") == ("omega", [], ["0"])
++    assert split_super_sub("x1") == ("x", [], ["1"])
++    
++    print("✓ Unicode tests passed")
++except AssertionError as e:
++    print(f"✗ Unicode tests failed: {e}")
+diff --git a/sympy/printing/conventions.py b/sympy/printing/conventions.py
+index 9a3be6bbe9..994dfe4dd6 100644
+--- a/sympy/printing/conventions.py
++++ b/sympy/printing/conventions.py
+@@ -7,7 +7,9 @@
+ from collections.abc import Iterable
+ from sympy import Derivative
+ 
+-_name_with_digits_p = re.compile(r'^([a-zA-Z]+)([0-9]+)$')
++# Match any Unicode letter characters followed by digits
++# Using negative lookahead to ensure we don't match digits at the start
++_name_with_digits_p = re.compile(r'^(\D+?)(\d+)$', re.UNICODE)
+ 
+ 
+ def split_super_sub(text):
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 0000000000..4eb5602f81
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,29 @@
++from sympy import symbols
++from sympy.printing.pretty import pretty
++from sympy.printing.pretty.pretty_symbology import pretty_symbol, pretty_use_unicode
++
++# Enable unicode
++pretty_use_unicode(True)
++
++# Test the pretty_symbol function directly
++print("Direct pretty_symbol calls:")
++print("w0:", repr(pretty_symbol('w0')))
++print("omega0:", repr(pretty_symbol('omega0')))
++
++# Check if Greek names are recognized properly
++from sympy.printing.pretty.pretty_symbology import greek_unicode
++print("\nGreek unicode mapping for 'omega':", greek_unicode.get('omega'))
++
++# Test with actual symbols
++omega0 = symbols('omega0')
++w0 = symbols('w0')
++
++# Check the symbol names
++print("\nSymbol names:")
++print("omega0.name:", omega0.name)
++print("w0.name:", w0.name)
++
++# Test pretty printing
++print("\nPretty printing:")
++print("w0:", pretty(w0, use_unicode=True))
++print("omega0:", pretty(omega0, use_unicode=True))
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..15eb45195b
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,41 @@
++from sympy import symbols
++from sympy.printing.pretty import pretty
++from sympy.printing.pretty.pretty_symbology import pretty_use_unicode, pretty_symbol
++from sympy.printing.conventions import split_super_sub, _name_with_digits_p
++
++pretty_use_unicode(False)  # ASCII mode
++
++# Test in ASCII mode
++omega0 = symbols('omega0')
++print("ASCII mode:")
++print("omega0:", pretty(omega0))
++
++pretty_use_unicode(True)  # Unicode mode
++
++# Check the regex pattern
++print("\nChecking _name_with_digits_p pattern:")
++print("Pattern:", _name_with_digits_p.pattern)
++
++# Test various symbol names
++test_names = ['omega0', 'Ω0', 'ω0', 'αβγ123', 'w0']
++for name in test_names:
++    match = _name_with_digits_p.match(name)
++    print(f"{name:10} matches: {bool(match)}", end='')
++    if match:
++        print(f" -> groups: {match.groups()}")
++    else:
++        print()
++
++# Now let's modify the pattern to support Unicode letters
++import re
++# Create a pattern that supports Unicode letters
++unicode_name_with_digits_p = re.compile(r'^(\w+?)(\d+)$', re.UNICODE)
++
++print("\nChecking Unicode-aware pattern:")
++for name in test_names:
++    match = unicode_name_with_digits_p.match(name)
++    print(f"{name:10} matches: {bool(match)}", end='')
++    if match:
++        print(f" -> groups: {match.groups()}")
++    else:
++        print()
+diff --git a/test_exact_issue.py b/test_exact_issue.py
+new file mode 100644
+index 0000000000..45b5cd689e
+--- /dev/null
++++ b/test_exact_issue.py
+@@ -0,0 +1,23 @@
++from sympy import symbols, Matrix, pprint
++
++# Create symbols exactly as shown in the issue
++t0, t1, t2 = symbols('t_0 t_1 t_2')  # Using underscore for subscripts
++w0 = symbols('w_0')
++omega0 = symbols('omega_0')  # Using omega with underscore
++
++# Create matrices
++matrix_w = Matrix([[-t0*w0, -t1*w0, -t2*w0]])
++matrix_omega = Matrix([[-t0*omega0, -t1*omega0, -t2*omega0]])
++
++print("With w_0:")
++pprint(matrix_w, use_unicode=True)
++
++print("\nWith omega_0:")
++pprint(matrix_omega, use_unicode=True)
++
++# Also test without explicit underscore
++omega0_no_underscore = symbols('omega0')
++matrix_omega_no_underscore = Matrix([[-t0*omega0_no_underscore, -t1*omega0_no_underscore, -t2*omega0_no_underscore]])
++
++print("\nWith omega0 (no underscore):")
++pprint(matrix_omega_no_underscore, use_unicode=True)
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..21a02f0a11
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,38 @@
++from sympy import symbols, Matrix, pprint
++from sympy.printing.pretty import pretty
++
++# Test case for the issue - Greek letter omega with subscript
++omega0 = symbols('omega0')
++w0 = symbols('w0')
++t0, t1, t2 = symbols('t0 t1 t2')
++
++# Create matrices with both regular and Greek letters
++matrix_regular = Matrix([[-t0*w0, -t1*w0, -t2*w0]])
++matrix_greek = Matrix([[-t0*omega0, -t1*omega0, -t2*omega0]])
++
++print("Regular letter w with subscript 0:")
++pprint(matrix_regular, use_unicode=True)
++
++print("\nGreek letter omega with subscript 0:")
++pprint(matrix_greek, use_unicode=True)
++
++print("\nDirect pretty print of omega0:")
++print(pretty(omega0, use_unicode=True))
++
++print("\nDirect pretty print of w0:")
++print(pretty(w0, use_unicode=True))
++
++# Test with other Greek letters
++alpha0 = symbols('alpha0')
++beta1 = symbols('beta1')
++gamma2 = symbols('gamma2')
++
++print("\nOther Greek letters with subscripts:")
++print("alpha0:", pretty(alpha0, use_unicode=True))
++print("beta1:", pretty(beta1, use_unicode=True))  
++print("gamma2:", pretty(gamma2, use_unicode=True))
++
++# Test expression
++expr = t0*omega0 + t1*alpha0
++print("\nExpression with Greek letters:")
++pprint(expr, use_unicode=True)
+diff --git a/test_regex_edge_cases.py b/test_regex_edge_cases.py
+new file mode 100644
+index 0000000000..009e94105c
+--- /dev/null
++++ b/test_regex_edge_cases.py
+@@ -0,0 +1,53 @@
++from sympy import symbols, pprint
++from sympy.printing.conventions import split_super_sub
++
++# Test various edge cases with the new regex
++test_cases = [
++    # Standard cases
++    'x0', 'y1', 'z99',
++    # Greek letters
++    'omega0', 'alpha1', 'beta2',
++    # Unicode Greek letters
++    'ω0', 'α1', 'β2', 'Ω99',
++    # Mixed Unicode 
++    'αβγ123',
++    # With underscores
++    'x_0', 'omega_1', 'ω_2',
++    # With carets
++    'x^2', 'y_1^2',
++    # Special cases
++    'x', 'y', 'omega', 'ω',  # No digits
++    '123',  # Only digits (should not match)
++    '_sub', '^sup',  # Starting with special chars
++    # Other Unicode characters
++    'θ0', 'φ1', 'ψ2', 'Γ3', 'Δ4',
++    # Cyrillic
++    'я0', 'ж1',
++    # Complex cases
++    'x_sub0', 'omega_sub0', 'ω_sub0'
++]
++
++print("Testing split_super_sub with new regex:")
++print("-" * 60)
++for test in test_cases:
++    try:
++        result = split_super_sub(test)
++        print(f"{test:15} -> {result}")
++    except Exception as e:
++        print(f"{test:15} -> ERROR: {e}")
++
++# Test with actual symbols
++print("\n" + "=" * 60)
++print("Testing pretty printing:")
++print("-" * 60)
++
++# Select some test cases for pretty printing
++pretty_test_cases = ['x0', 'omega0', 'ω0', 'α1', 'θ2', 'Γ3']
++
++for name in pretty_test_cases:
++    try:
++        sym = symbols(name)
++        print(f"{name:10} -> ", end='')
++        pprint(sym, use_unicode=True)
++    except Exception as e:
++        print(f"{name:10} -> ERROR: {e}")
+diff --git a/test_split.py b/test_split.py
+new file mode 100644
+index 0000000000..ab2bc21386
+--- /dev/null
++++ b/test_split.py
+@@ -0,0 +1,10 @@
++from sympy.printing.conventions import split_super_sub
++
++# Test with regular letter
++print("Testing 'w0':", split_super_sub('w0'))
++
++# Test with Greek letter
++print("Testing 'omega0':", split_super_sub('omega0'))
++
++# Test with explicit subscript
++print("Testing 'omega_0':", split_super_sub('omega_0'))
+diff --git a/test_unicode_symbols.py b/test_unicode_symbols.py
+new file mode 100644
+index 0000000000..e8191b57f4
+--- /dev/null
++++ b/test_unicode_symbols.py
+@@ -0,0 +1,42 @@
++from sympy import symbols, pprint, Matrix
++from sympy.printing.pretty import pretty
++
++# Test creating a symbol with Greek Unicode character directly
++try:
++    # Some users might create symbols with Greek Unicode characters directly
++    omega0_unicode = symbols('ω0')  # Using actual Greek omega character
++    print("Symbol with Unicode Greek letter ω0:")
++    print("Symbol name:", repr(omega0_unicode.name))
++    print("Pretty print:", pretty(omega0_unicode, use_unicode=True))
++    
++    # Test in a matrix
++    t0 = symbols('t_0')
++    matrix = Matrix([[-t0*omega0_unicode]])
++    print("\nIn matrix:")
++    pprint(matrix, use_unicode=True)
++    
++except Exception as e:
++    print("Error:", e)
++
++# Also test the case from the issue more carefully
++print("\n" + "="*50)
++print("Reproducing issue pattern:")
++
++# The issue shows this as "Bad":
++# [ -t₀⋅ω0   -t₁⋅ω0   -t₂⋅ω0]
++# Note that omega is shown as ω but 0 is not subscripted
++
++# Let's see if we can reproduce this
++t0, t1, t2 = symbols('t_0 t_1 t_2')
++# Using Unicode omega in symbol name
++omega0_bad = symbols('ω0')
++w0_good = symbols('w_0')
++
++matrix_bad = Matrix([[-t0*omega0_bad, -t1*omega0_bad, -t2*omega0_bad]])
++matrix_good = Matrix([[-t0*w0_good, -t1*w0_good, -t2*w0_good]])
++
++print("\nWith Unicode omega in symbol name (ω0):")
++pprint(matrix_bad, use_unicode=True)
++
++print("\nWith ASCII w_0:")
++pprint(matrix_good, use_unicode=True)
+diff --git a/test_variations.py b/test_variations.py
+new file mode 100644
+index 0000000000..47cef454da
+--- /dev/null
++++ b/test_variations.py
+@@ -0,0 +1,38 @@
++from sympy import symbols, pprint
++from sympy.printing.pretty.pretty_symbology import pretty_symbol, pretty_use_unicode
++from sympy.printing.conventions import split_super_sub
++
++pretty_use_unicode(True)
++
++# Test various naming patterns
++patterns = [
++    'omega0',     # Greek letter with digit
++    'omega_0',    # Greek letter with underscore and digit
++    'Omega0',     # Capital Greek letter with digit
++    'alpha1',     # Another Greek letter
++    'w0',         # Regular letter with digit
++    'omega',      # Just Greek letter
++]
++
++print("Testing split_super_sub:")
++for p in patterns:
++    print(f"{p:10} -> {split_super_sub(p)}")
++
++print("\nTesting pretty_symbol:")
++for p in patterns:
++    print(f"{p:10} -> {repr(pretty_symbol(p))}")
++
++print("\nTesting actual symbols:")
++for p in patterns:
++    sym = symbols(p)
++    print(f"{p:10} -> {pprint(sym, use_unicode=True)}", end='')
++    print()
++
++# Check a specific case mentioned in the issue
++print("\nChecking issue pattern:")
++# The issue shows omega0 rendering as ω0 (without subscript)
++# Let's check if there's a context where this happens
++import re
++pattern = re.compile(r'^([a-zA-Z]+)([0-9]+)$')
++print(f"Pattern matches 'omega0': {bool(pattern.match('omega0'))}")
++print(f"Pattern matches 'ω0': {bool(pattern.match('ω0'))}")

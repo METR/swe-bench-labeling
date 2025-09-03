@@ -1,0 +1,52 @@
+From 614250d90c011fffb63e6cc460aa881a206b8d53 Mon Sep 17 00:00:00 2001
+From: Sjoerd Job Postmus <sjoerdjob@sjec.nl>
+Date: Sat, 13 Apr 2019 12:11:34 +0200
+Subject: [PATCH] Fixed #30363 -- Do not use exponential notation for small
+ decimal numbers.
+
+In 9cc6a60040b0f64f8ea066dd215176d4bd16621d a security patch was
+introduced to prevent allocating large segments of memory when a
+very large or very small decimal number was to be formatted.
+
+As a side-effect, there was a change in formatting of small decimal
+numbers even when the `decimal_pos` argument was provided, which meant
+that reasonable small decimal numbers (above 1e-199) would be formatted
+as `0.00`, while smaller decimal numbers (under 1e-200) would be
+formatted as `1e-200`.
+---
+ django/utils/numberformat.py           | 8 ++++++++
+ tests/utils_tests/test_numberformat.py | 2 +-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/django/utils/numberformat.py b/django/utils/numberformat.py
+index 88b35fc435c9..961a60e37d65 100644
+--- a/django/utils/numberformat.py
++++ b/django/utils/numberformat.py
+@@ -27,6 +27,14 @@ def format(number, decimal_sep, decimal_pos=None, grouping=0, thousand_sep='',
+     # sign
+     sign = ''
+     if isinstance(number, Decimal):
++
++        if decimal_pos is not None:
++            # If the provided number is too small to affect any of the visible
++            # decimal places, consider it equal to '0'.
++            cutoff = Decimal('0.' + '1'.rjust(decimal_pos, '0'))
++            if abs(number) < cutoff:
++                number = Decimal('0')
++
+         # Format values with more than 200 digits (an arbitrary cutoff) using
+         # scientific notation to avoid high memory usage in {:f}'.format().
+         _, digits, exponent = number.as_tuple()
+diff --git a/tests/utils_tests/test_numberformat.py b/tests/utils_tests/test_numberformat.py
+index 3d656025ab58..1dac45e89019 100644
+--- a/tests/utils_tests/test_numberformat.py
++++ b/tests/utils_tests/test_numberformat.py
+@@ -94,7 +94,7 @@ def test_decimal_numbers(self):
+             ('1e-10', 8, '0.00000000'),
+             ('1e-11', 8, '0.00000000'),
+             ('1' + ('0' * 300), 3, '1.000e+300'),
+-            ('0.{}1234'.format('0' * 299), 3, '1.234e-300'),
++            ('0.{}1234'.format('0' * 299), 3, '0.000'),
+         ]
+         for value, decimal_pos, expected_value in tests:
+             with self.subTest(value=value):

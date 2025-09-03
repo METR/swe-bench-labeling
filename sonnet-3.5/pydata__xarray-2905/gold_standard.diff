@@ -1,0 +1,263 @@
+From c770858c3c2fdc5215d33a9bb5697a130cacfea5 Mon Sep 17 00:00:00 2001
+From: Yunus Sevinchan <yunussevinchan@gmail.com>
+Date: Wed, 17 Apr 2019 23:33:52 +0200
+Subject: [PATCH 1/8] In as_compatible_data, check explicitly for nested
+ self-described types
+
+This change was prompted by the fact that `getattr(data, 'values', data)`
+affected any kind of data with a `values` attribute, which is not the
+desired behaviour at that point.
+
+This also extends tests to assert that custom objects with such an
+attribute are not attempted to be converted
+---
+ xarray/core/variable.py       |  3 ++-
+ xarray/tests/test_variable.py | 11 ++++++++++-
+ 2 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index 96c6b7bd59b..244892714c1 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -171,7 +171,8 @@ def as_compatible_data(data, fastpath=False):
+         data = np.timedelta64(getattr(data, 'value', data), 'ns')
+ 
+     # we don't want nested self-described arrays
+-    data = getattr(data, 'values', data)
++    if isinstance(data, (pd.Series, pd.Index, pd.DataFrame)):
++        data = data.values
+ 
+     if isinstance(data, np.ma.MaskedArray):
+         mask = np.ma.getmaskarray(data)
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index eec8d268026..ee208e32e07 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -2018,13 +2018,22 @@ def __init__(self, array):
+         class CustomIndexable(CustomArray, indexing.ExplicitlyIndexed):
+             pass
+ 
++        # Type with data stored in values attribute
++        class CustomWithValuesAttr:
++            def __init__(self, array):
++                self.values = array
++
+         array = CustomArray(np.arange(3))
+         orig = Variable(dims=('x'), data=array, attrs={'foo': 'bar'})
+         assert isinstance(orig._data, np.ndarray)  # should not be CustomArray
+ 
+         array = CustomIndexable(np.arange(3))
+         orig = Variable(dims=('x'), data=array, attrs={'foo': 'bar'})
+-        assert isinstance(orig._data, CustomIndexable)
++        assert isinstance(orig._data, CustomIndexable)        
++
++        array = CustomWithValuesAttr(np.arange(3))
++        orig = Variable(dims=('x'), data=array, attrs={'foo': 'bar'})
++        assert isinstance(orig._data, CustomWithValuesAttr)
+ 
+ 
+ def test_raise_no_warning_for_nan_in_binary_ops():
+
+From 69ed5e5a418ab2b5de2fb6d43080371d62e5bc89 Mon Sep 17 00:00:00 2001
+From: Yunus Sevinchan <yunussevinchan@gmail.com>
+Date: Wed, 17 Apr 2019 23:49:50 +0200
+Subject: [PATCH 2/8] Add whats-new entry
+
+---
+ doc/whats-new.rst | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index e9bdc710029..d5492c0aa51 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -28,6 +28,10 @@ Bug fixes
+   By `Mayeul d'Avezac <https://github.com/mdavezac>`_.
+ - Return correct count for scalar datetime64 arrays (:issue:`2770`)
+   By `Dan Nowacki <https://github.com/dnowacki-usgs>`_.
++- Use specific type checks in
++  :py:func:`~xarray.core.variable.as_compatible_data` instead of blanket
++  access to ``values`` attribute (:issue:`2097`)
++  By `Yunus Sevinchan <https://github.com/blusquare>`_.
+ 
+ .. _whats-new.0.12.1:
+ 
+
+From b890edea09c532a8dc8fcad56260f91799de161d Mon Sep 17 00:00:00 2001
+From: Yunus Sevinchan <yunussevinchan@gmail.com>
+Date: Wed, 17 Apr 2019 23:54:35 +0200
+Subject: [PATCH 3/8] Remove trailing whitespace
+
+---
+ xarray/tests/test_variable.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index ee208e32e07..b7938567391 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -2029,7 +2029,7 @@ def __init__(self, array):
+ 
+         array = CustomIndexable(np.arange(3))
+         orig = Variable(dims=('x'), data=array, attrs={'foo': 'bar'})
+-        assert isinstance(orig._data, CustomIndexable)        
++        assert isinstance(orig._data, CustomIndexable)
+ 
+         array = CustomWithValuesAttr(np.arange(3))
+         orig = Variable(dims=('x'), data=array, attrs={'foo': 'bar'})
+
+From 7905c6f418ac4e32478dfed339272d8a27f23626 Mon Sep 17 00:00:00 2001
+From: Yunus Sevinchan <yunussevinchan@gmail.com>
+Date: Wed, 17 Apr 2019 23:33:52 +0200
+Subject: [PATCH 4/8] In as_compatible_data, check explicitly for nested
+ self-described types
+
+This change was prompted by the fact that `getattr(data, 'values', data)`
+affected any kind of data with a `values` attribute, which is not the
+desired behaviour at that point.
+
+This also extends tests to assert that custom objects with such an
+attribute are not attempted to be converted
+---
+ xarray/core/variable.py       | 3 ++-
+ xarray/tests/test_variable.py | 9 +++++++++
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index 041c303dd3a..ab5cda38783 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -199,7 +199,8 @@ def as_compatible_data(data, fastpath=False):
+         data = np.timedelta64(getattr(data, "value", data), "ns")
+ 
+     # we don't want nested self-described arrays
+-    data = getattr(data, "values", data)
++    if isinstance(data, (pd.Series, pd.Index, pd.DataFrame)):
++        data = data.values
+ 
+     if isinstance(data, np.ma.MaskedArray):
+         mask = np.ma.getmaskarray(data)
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index 245dc1acc42..4982cccda26 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -2129,6 +2129,11 @@ def __init__(self, array):
+         class CustomIndexable(CustomArray, indexing.ExplicitlyIndexed):
+             pass
+ 
++        # Type with data stored in values attribute
++        class CustomWithValuesAttr:
++            def __init__(self, array):
++                self.values = array
++
+         array = CustomArray(np.arange(3))
+         orig = Variable(dims=("x"), data=array, attrs={"foo": "bar"})
+         assert isinstance(orig._data, np.ndarray)  # should not be CustomArray
+@@ -2137,6 +2142,10 @@ class CustomIndexable(CustomArray, indexing.ExplicitlyIndexed):
+         orig = Variable(dims=("x"), data=array, attrs={"foo": "bar"})
+         assert isinstance(orig._data, CustomIndexable)
+ 
++        array = CustomWithValuesAttr(np.arange(3))
++        orig = Variable(dims=("x"), data=array, attrs={"foo": "bar"})
++        assert isinstance(orig._data, CustomWithValuesAttr)
++
+ 
+ def test_raise_no_warning_for_nan_in_binary_ops():
+     with pytest.warns(None) as record:
+
+From 2dc7f9f9a92368b35f4e06b06f8e80623046ac3d Mon Sep 17 00:00:00 2001
+From: dcherian <deepak@cherian.net>
+Date: Sat, 30 Nov 2019 15:49:04 -0500
+Subject: [PATCH 5/8] whats-new
+
+---
+ doc/whats-new.rst | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 884c3cef91c..8024eaafc61 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -32,7 +32,10 @@ New Features
+ 
+ Bug fixes
+ ~~~~~~~~~
+-
++- Use specific type checks in
++  :py:func:`~xarray.core.variable.as_compatible_data` instead of blanket
++  access to ``values`` attribute (:issue:`2097`)
++  By `Yunus Sevinchan <https://github.com/blusquare>`_.
+ 
+ Documentation
+ ~~~~~~~~~~~~~
+
+From 9d7eaacc11baef837c280bdd920cf9dd7e114806 Mon Sep 17 00:00:00 2001
+From: dcherian <deepak@cherian.net>
+Date: Sat, 30 Nov 2019 17:58:15 -0500
+Subject: [PATCH 6/8] Fix test.
+
+---
+ xarray/tests/test_variable.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index 4982cccda26..9a401455c9b 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -2143,8 +2143,8 @@ def __init__(self, array):
+         assert isinstance(orig._data, CustomIndexable)
+ 
+         array = CustomWithValuesAttr(np.arange(3))
+-        orig = Variable(dims=("x"), data=array, attrs={"foo": "bar"})
+-        assert isinstance(orig._data, CustomWithValuesAttr)
++        orig = Variable(dims=("x"), data=[array], attrs={"foo": "bar"})
++        assert isinstance(orig._data.item(), CustomWithValuesAttr)
+ 
+ 
+ def test_raise_no_warning_for_nan_in_binary_ops():
+
+From 55ce662477a089b405bdbc4d90cbb4746c7d0469 Mon Sep 17 00:00:00 2001
+From: Yunus Sevinchan <yunussevinchan@gmail.com>
+Date: Sun, 1 Dec 2019 16:57:47 +0100
+Subject: [PATCH 7/8] Update @blsqr github URL in whats-new
+
+---
+ doc/whats-new.rst | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index d9a2abe1d84..691107545fd 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -35,7 +35,7 @@ Bug fixes
+ - Use specific type checks in
+   :py:func:`~xarray.core.variable.as_compatible_data` instead of blanket
+   access to ``values`` attribute (:issue:`2097`)
+-  By `Yunus Sevinchan <https://github.com/blusquare>`_.
++  By `Yunus Sevinchan <https://github.com/blsqr>`_.
+ 
+ Documentation
+ ~~~~~~~~~~~~~
+
+From ad71bb2da711434989f872531c220c3bbe9374d5 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Wed, 17 Feb 2021 23:47:35 +0100
+Subject: [PATCH 8/8] actually check that values is not extracted
+
+---
+ xarray/tests/test_variable.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index 57afb13f7c6..0d4c8662d21 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -2314,7 +2314,7 @@ def __init__(self, array):
+         assert isinstance(orig._data, CustomIndexable)
+ 
+         array = CustomWithValuesAttr(np.arange(3))
+-        orig = Variable(dims=("x"), data=[array], attrs={"foo": "bar"})
++        orig = Variable(dims=(), data=array)
+         assert isinstance(orig._data.item(), CustomWithValuesAttr)
+ 
+ 

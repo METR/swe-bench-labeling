@@ -1,0 +1,302 @@
+diff --git a/sklearn/utils/_set_output.py b/sklearn/utils/_set_output.py
+index 335773c6a..d27df0005 100644
+--- a/sklearn/utils/_set_output.py
++++ b/sklearn/utils/_set_output.py
+@@ -55,7 +55,7 @@ def _wrap_in_pandas_container(
+     if isinstance(data_to_wrap, pd.DataFrame):
+         if columns is not None:
+             data_to_wrap.columns = columns
+-        if index is not None:
++        if index is not None and len(index) == len(data_to_wrap):
+             data_to_wrap.index = index
+         return data_to_wrap
+ 
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..321b1f643
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,117 @@
++import pandas as pd
++import numpy as np
++from sklearn.base import BaseEstimator, TransformerMixin
++from sklearn import set_config
++from sklearn.pipeline import make_union, FeatureUnion
++from sklearn.preprocessing import StandardScaler
++from typing import Optional
++
++
++# Test 1: Aggregating transformer (original issue)
++print("Test 1: Aggregating transformer")
++index = pd.date_range(start="2020-01-01", end="2020-01-05", inclusive="left", freq="H")
++data = pd.DataFrame(index=index, data=[10] * len(index), columns=["value"])
++data["date"] = index.date
++
++class AggregatingTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
++        return X["value"].groupby(X["date"]).sum()
++
++set_config(transform_output="pandas")
++try:
++    result = make_union(AggregatingTransformer()).fit_transform(data)
++    print(f"✓ Success! Result shape: {result.shape}")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
++
++
++# Test 2: Normal transformer (same number of rows)
++print("\nTest 2: Normal transformer (same rows)")
++data2 = pd.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]}, index=['x', 'y', 'z'])
++
++class IdentityTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X, y=None):
++        return self
++    
++    def transform(self, X):
++        return X
++
++try:
++    result = make_union(IdentityTransformer()).fit_transform(data2)
++    print(f"✓ Success! Result shape: {result.shape}")
++    print(f"  Index preserved: {list(result.index) == list(data2.index)}")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
++
++
++# Test 3: Multiple transformers with different behaviors
++print("\nTest 3: Multiple transformers")
++class DoubleTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X, y=None):
++        return self
++    
++    def transform(self, X):
++        return X * 2
++
++try:
++    result = make_union(IdentityTransformer(), DoubleTransformer()).fit_transform(data2)
++    print(f"✓ Success! Result shape: {result.shape}")
++    print(f"  Index preserved: {list(result.index) == list(data2.index)}")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
++
++
++# Test 4: StandardScaler (real sklearn transformer)
++print("\nTest 4: StandardScaler")
++data3 = pd.DataFrame({'feature1': [1, 2, 3, 4, 5], 'feature2': [10, 20, 30, 40, 50]})
++
++try:
++    result = make_union(StandardScaler()).fit_transform(data3)
++    print(f"✓ Success! Result shape: {result.shape}")
++    print(f"  Result type: {type(result)}")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
++
++
++# Test 5: Mixed - aggregating and normal transformers
++print("\nTest 5: Mixed transformers (aggregating + normal)")
++data4 = pd.DataFrame({
++    'value': [1, 2, 3, 4, 5, 6],
++    'group': ['A', 'A', 'B', 'B', 'C', 'C']
++})
++
++class GroupSumTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X, y=None):
++        return self
++    
++    def transform(self, X):
++        return X.groupby('group')['value'].sum()
++
++class SelectValueTransformer(BaseEstimator, TransformerMixin):  
++    def fit(self, X, y=None):
++        return self
++    
++    def transform(self, X):
++        return X[['value']]
++
++try:
++    # This should fail because the transformers return different numbers of rows
++    result = make_union(GroupSumTransformer(), SelectValueTransformer()).fit_transform(data4)
++    print(f"✓ Success! Result shape: {result.shape}")
++except Exception as e:
++    print(f"✓ Expected error caught: {type(e).__name__}")
++
++
++# Test 6: Return to default mode
++print("\nTest 6: Default mode (numpy)")
++set_config(transform_output="default")
++
++try:
++    result = make_union(AggregatingTransformer()).fit_transform(data)
++    print(f"✓ Success! Result shape: {result.shape}")
++    print(f"  Result type: {type(result)}")
++except Exception as e:
++    print(f"✗ Error: {type(e).__name__}: {e}")
+diff --git a/test_dataframe_creation.py b/test_dataframe_creation.py
+new file mode 100644
+index 000000000..bb6af7430
+--- /dev/null
++++ b/test_dataframe_creation.py
+@@ -0,0 +1,23 @@
++import pandas as pd
++import numpy as np
++
++# Create a series with 4 elements
++s = pd.Series([1, 2, 3, 4])
++print(f"Series shape: {s.shape}")
++
++# Try to create DataFrame with mismatched index
++long_index = pd.RangeIndex(96)
++print(f"Long index length: {len(long_index)}")
++
++try:
++    df = pd.DataFrame(s, index=long_index)
++    print(f"Success! DataFrame shape: {df.shape}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++# What about with columns?
++try:
++    df = pd.DataFrame(s, index=long_index, columns=['col'])
++    print(f"With columns - Success! DataFrame shape: {df.shape}")
++except Exception as e:
++    print(f"With columns - Error: {type(e).__name__}: {e}")
+diff --git a/test_debug.py b/test_debug.py
+new file mode 100644
+index 000000000..70dd2c6bd
+--- /dev/null
++++ b/test_debug.py
+@@ -0,0 +1,41 @@
++import pandas as pd
++from sklearn.base import BaseEstimator, TransformerMixin
++from sklearn import set_config
++from sklearn.pipeline import make_union, FeatureUnion
++from typing import Optional
++
++index = pd.date_range(start="2020-01-01", end="2020-01-05", inclusive="left", freq="H")
++data = pd.DataFrame(index=index, data=[10] * len(index), columns=["value"])
++data["date"] = index.date
++
++print(f"Original data shape: {data.shape}")
++
++
++class MyTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
++        result = X["value"].groupby(X["date"]).sum()
++        print(f"Transform result shape: {result.shape}")
++        print(f"Transform result type: {type(result)}")
++        return result
++
++
++# Check if FeatureUnion has auto wrapping enabled
++fu = make_union(MyTransformer())
++print(f"FeatureUnion auto wrap keys: {getattr(fu, '_sklearn_auto_wrap_output_keys', 'Not found')}")
++print(f"FeatureUnion has get_feature_names_out: {hasattr(fu, 'get_feature_names_out')}")
++
++# Check the transform method
++print(f"Transform method: {fu.transform}")
++print(f"Transform method module: {fu.transform.__module__}")
++
++set_config(transform_output="pandas")
++try:
++    result = fu.fit_transform(data)
++    print(f"Success! Result shape: {result.shape}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 000000000..6e651b781
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,32 @@
++import pandas as pd
++from sklearn.base import BaseEstimator, TransformerMixin
++from sklearn import set_config
++from sklearn.pipeline import make_union
++from typing import Optional
++
++index = pd.date_range(start="2020-01-01", end="2020-01-05", inclusive="left", freq="H")
++data = pd.DataFrame(index=index, data=[10] * len(index), columns=["value"])
++data["date"] = index.date
++
++
++class MyTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
++        return X["value"].groupby(X["date"]).sum()
++
++
++# This works.
++set_config(transform_output="default")
++print("With default output:")
++print(make_union(MyTransformer()).fit_transform(data))
++print()
++
++# This does not work.
++set_config(transform_output="pandas")
++print("With pandas output:")
++try:
++    print(make_union(MyTransformer()).fit_transform(data))
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+diff --git a/test_mixed_debug.py b/test_mixed_debug.py
+new file mode 100644
+index 000000000..48cc715e3
+--- /dev/null
++++ b/test_mixed_debug.py
+@@ -0,0 +1,32 @@
++import pandas as pd
++from sklearn.base import BaseEstimator, TransformerMixin
++from sklearn import set_config
++from sklearn.pipeline import make_union
++
++data = pd.DataFrame({
++    'value': [1, 2, 3, 4, 5, 6],
++    'group': ['A', 'A', 'B', 'B', 'C', 'C']
++})
++
++class GroupSumTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X, y=None):
++        return self
++    
++    def transform(self, X):
++        result = X.groupby('group')['value'].sum()
++        print(f"GroupSum result shape: {result.shape}, type: {type(result)}")
++        return result
++
++class SelectValueTransformer(BaseEstimator, TransformerMixin):  
++    def fit(self, X, y=None):
++        return self
++    
++    def transform(self, X):
++        result = X[['value']]
++        print(f"SelectValue result shape: {result.shape}, type: {type(result)}")
++        return result
++
++set_config(transform_output="pandas")
++result = make_union(GroupSumTransformer(), SelectValueTransformer()).fit_transform(data)
++print(f"Final result shape: {result.shape}")
++print(f"Final result:\n{result}")
+diff --git a/test_series.py b/test_series.py
+new file mode 100644
+index 000000000..b59dfbac8
+--- /dev/null
++++ b/test_series.py
+@@ -0,0 +1,8 @@
++import pandas as pd
++
++# Check if pd.Series is considered pd.DataFrame
++s = pd.Series([1, 2, 3])
++print(f"Series isinstance DataFrame: {isinstance(s, pd.DataFrame)}")
++print(f"Series type: {type(s)}")
++print(f"Has index attr: {hasattr(s, 'index')}")
++print(f"Index length: {len(s.index)}")

@@ -1,0 +1,92 @@
+diff --git a/setup.py b/setup.py
+index 2b4504101..d865b8b37 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py
+index af4b47bb0..6d1dbda06 100644
+--- a/sphinx/ext/autodoc/typehints.py
++++ b/sphinx/ext/autodoc/typehints.py
+@@ -62,9 +62,11 @@ def merge_typehints(app: Sphinx, domain: str, objtype: str, contentnode: Element
+ 
+         for field_list in field_lists:
+             if app.config.autodoc_typehints_description_target == "all":
+-                modify_field_list(field_list, annotations[fullname])
++                augment_descriptions_with_types(field_list, annotations[fullname], documented_only=False)
++            elif app.config.autodoc_typehints_description_target == "documented":
++                augment_descriptions_with_types(field_list, annotations[fullname], documented_only=True)
+             else:
+-                augment_descriptions_with_types(field_list, annotations[fullname])
++                augment_descriptions_with_types(field_list, annotations[fullname], documented_only=False)
+ 
+ 
+ def insert_field_list(node: Element) -> nodes.field_list:
+@@ -130,6 +132,7 @@ def modify_field_list(node: nodes.field_list, annotations: Dict[str, str]) -> No
+ def augment_descriptions_with_types(
+     node: nodes.field_list,
+     annotations: Dict[str, str],
++    documented_only: bool = False
+ ) -> None:
+     fields = cast(Iterable[nodes.field], node)
+     has_description = set()  # type: Set[str]
+@@ -158,7 +161,7 @@ def augment_descriptions_with_types(
+     for name in annotations:
+         if name == 'return':
+             continue
+-        if name in has_description and name not in has_type:
++        if (not documented_only or name in has_description) and name not in has_type:
+             field = nodes.field()
+             field += nodes.field_name('', 'type ' + name)
+             field += nodes.field_body('', nodes.paragraph('', annotations[name]))
+@@ -166,7 +169,7 @@ def augment_descriptions_with_types(
+ 
+     # Add 'rtype' if 'return' is present and 'rtype' isn't.
+     if 'return' in annotations:
+-        if 'return' in has_description and 'return' not in has_type:
++        if (not documented_only or 'return' in has_description) and 'return' not in has_type:
+             field = nodes.field()
+             field += nodes.field_name('', 'rtype')
+             field += nodes.field_body('', nodes.paragraph('', annotations['return']))
+diff --git a/tox.ini b/tox.ini
+index b6a67fd85..483f2df92 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

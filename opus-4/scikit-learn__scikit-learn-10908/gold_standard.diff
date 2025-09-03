@@ -1,0 +1,176 @@
+From f9100a6ee5c8bd44c7be13974c3306b1e1badca9 Mon Sep 17 00:00:00 2001
+From: Maskani Filali Mohamed <maskani.mohamed@gmail.com>
+Date: Mon, 2 Apr 2018 23:51:14 -0400
+Subject: [PATCH 1/6] Add validation of vocabulary in get_feature_names
+
+---
+ sklearn/feature_extraction/text.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sklearn/feature_extraction/text.py b/sklearn/feature_extraction/text.py
+index a1e0845abe9ac..920a18b1fab5d 100644
+--- a/sklearn/feature_extraction/text.py
++++ b/sklearn/feature_extraction/text.py
+@@ -971,6 +971,9 @@ def inverse_transform(self, X):
+ 
+     def get_feature_names(self):
+         """Array mapping from feature integer indices to feature name"""
++        if not hasattr(self, 'vocabulary_'):
++            self._validate_vocabulary()
++
+         self._check_vocabulary()
+ 
+         return [t for t, i in sorted(six.iteritems(self.vocabulary_),
+
+From 8a38cd28ef8edd4790d49ded0792a94b9e8b6715 Mon Sep 17 00:00:00 2001
+From: Maskani Filali Mohamed <maskani.mohamed@gmail.com>
+Date: Tue, 3 Apr 2018 00:08:10 -0400
+Subject: [PATCH 2/6] Add validation of vocabulary in inverse_transform
+
+---
+ sklearn/feature_extraction/text.py | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sklearn/feature_extraction/text.py b/sklearn/feature_extraction/text.py
+index 920a18b1fab5d..feca973dc7608 100644
+--- a/sklearn/feature_extraction/text.py
++++ b/sklearn/feature_extraction/text.py
+@@ -951,6 +951,9 @@ def inverse_transform(self, X):
+         X_inv : list of arrays, len = n_samples
+             List of arrays of terms.
+         """
++        if not hasattr(self, 'vocabulary_'):
++            self._validate_vocabulary()
++
+         self._check_vocabulary()
+ 
+         if sp.issparse(X):
+
+From 65ff2069e6d3be9b403eb87b22d6ec11fc6e0a34 Mon Sep 17 00:00:00 2001
+From: Maskani Filali Mohamed <maskani.mohamed@gmail.com>
+Date: Tue, 3 Apr 2018 12:07:54 -0400
+Subject: [PATCH 3/6] Remove custom vocab check in inverse_transform
+
+---
+ sklearn/feature_extraction/text.py | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/sklearn/feature_extraction/text.py b/sklearn/feature_extraction/text.py
+index feca973dc7608..920a18b1fab5d 100644
+--- a/sklearn/feature_extraction/text.py
++++ b/sklearn/feature_extraction/text.py
+@@ -951,9 +951,6 @@ def inverse_transform(self, X):
+         X_inv : list of arrays, len = n_samples
+             List of arrays of terms.
+         """
+-        if not hasattr(self, 'vocabulary_'):
+-            self._validate_vocabulary()
+-
+         self._check_vocabulary()
+ 
+         if sp.issparse(X):
+
+From c7f32bc2f4e0bfb9804c84c766e6661886b6770e Mon Sep 17 00:00:00 2001
+From: Maskani Filali Mohamed <maskani.mohamed@gmail.com>
+Date: Tue, 3 Apr 2018 12:09:32 -0400
+Subject: [PATCH 4/6] Add test for custom vocabulary in get_feature_names
+
+---
+ sklearn/feature_extraction/tests/test_text.py | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/sklearn/feature_extraction/tests/test_text.py b/sklearn/feature_extraction/tests/test_text.py
+index ff13cd6e00179..563f101ed235a 100644
+--- a/sklearn/feature_extraction/tests/test_text.py
++++ b/sklearn/feature_extraction/tests/test_text.py
+@@ -269,7 +269,7 @@ def test_countvectorizer_custom_vocabulary_pipeline():
+     assert_equal(X.shape[1], len(what_we_like))
+ 
+ 
+-def test_countvectorizer_custom_vocabulary_repeated_indeces():
++def test_countvectorizer_custom_vocabulary_repeated_indices():
+     vocab = {"pizza": 0, "beer": 0}
+     try:
+         CountVectorizer(vocabulary=vocab)
+@@ -543,7 +543,9 @@ def test_feature_names():
+ 
+     # test for Value error on unfitted/empty vocabulary
+     assert_raises(ValueError, cv.get_feature_names)
++    assert_false(cv.fixed_vocabulary_)
+ 
++    # test for vocabulary learned from data
+     X = cv.fit_transform(ALL_FOOD_DOCS)
+     n_samples, n_features = X.shape
+     assert_equal(len(cv.vocabulary_), n_features)
+@@ -557,6 +559,20 @@ def test_feature_names():
+     for idx, name in enumerate(feature_names):
+         assert_equal(idx, cv.vocabulary_.get(name))
+ 
++    # test for custom vocabulary
++    vocab = ['beer', 'burger', 'celeri', 'coke', 'pizza',
++             'salad', 'sparkling', 'tomato', 'water']
++
++    cv = CountVectorizer(vocabulary=vocab)
++    feature_names = cv.get_feature_names()
++    assert_array_equal(['beer', 'burger', 'celeri', 'coke', 'pizza',
++                        'salad', 'sparkling', 'tomato', 'water'],
++                        feature_names)
++    assert_true(cv.fixed_vocabulary_)
++
++    for idx, name in enumerate(feature_names):
++        assert_equal(idx, cv.vocabulary_.get(name))
++
+ 
+ def test_vectorizer_max_features():
+     vec_factories = (
+
+From 6b63776a337995002d7de622a7643d73f36291b4 Mon Sep 17 00:00:00 2001
+From: Maskani Filali Mohamed <maskani.mohamed@gmail.com>
+Date: Tue, 3 Apr 2018 12:33:00 -0400
+Subject: [PATCH 5/6] Fix pep8
+
+---
+ sklearn/feature_extraction/tests/test_text.py | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/sklearn/feature_extraction/tests/test_text.py b/sklearn/feature_extraction/tests/test_text.py
+index 563f101ed235a..756748dc35e30 100644
+--- a/sklearn/feature_extraction/tests/test_text.py
++++ b/sklearn/feature_extraction/tests/test_text.py
+@@ -565,9 +565,8 @@ def test_feature_names():
+ 
+     cv = CountVectorizer(vocabulary=vocab)
+     feature_names = cv.get_feature_names()
+-    assert_array_equal(['beer', 'burger', 'celeri', 'coke', 'pizza',
+-                        'salad', 'sparkling', 'tomato', 'water'],
+-                        feature_names)
++    assert_array_equal(['beer', 'burger', 'celeri', 'coke', 'pizza', 'salad',
++                        'sparkling', 'tomato', 'water'], feature_names)
+     assert_true(cv.fixed_vocabulary_)
+ 
+     for idx, name in enumerate(feature_names):
+
+From 78c53e4f769236057497ccf123ac3adb895ba80e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tom=20Dupr=C3=A9=20la=20Tour?= <tom.dupre-la-tour@m4x.org>
+Date: Wed, 25 Apr 2018 19:56:16 +0200
+Subject: [PATCH 6/6] whats new entry
+
+---
+ doc/whats_new/v0.20.rst | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
+index dfba937a361ad..a5a0b3feec3b7 100644
+--- a/doc/whats_new/v0.20.rst
++++ b/doc/whats_new/v0.20.rst
+@@ -140,6 +140,10 @@ Preprocessing
+ 
+ - :class:`preprocessing.PolynomialFeatures` now supports sparse input.
+   :issue:`10452` by :user:`Aman Dalmia <dalmia>` and `Joel Nothman`_.
++  
++- Enable the call to :meth:`get_feature_names` in unfitted
++  :class:`feature_extraction.text.CountVectorizer` initialized with a
++  vocabulary. :issue:`10908` by :user:`chkoar <chkoar>`.
+ 
+ Model evaluation and meta-estimators
+ 

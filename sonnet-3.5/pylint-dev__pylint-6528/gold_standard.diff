@@ -1,0 +1,690 @@
+From c361b3d2b28f65e8c2b68f1e388a6c6e2b2e69d3 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Fri, 6 May 2022 22:48:06 +0200
+Subject: [PATCH 01/13] Ignore specified files/directories in recursive mode
+
+---
+ pylint/lint/pylinter.py | 16 ++++++++++++++--
+ tests/test_self.py      | 35 ++++++++++++++++++++++++++++++++++-
+ 2 files changed, 48 insertions(+), 3 deletions(-)
+
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 7c40f4bf23..26d9214eb9 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -672,8 +672,7 @@ def initialize(self) -> None:
+             if not msg.may_be_emitted():
+                 self._msgs_state[msg.msgid] = False
+ 
+-    @staticmethod
+-    def _discover_files(files_or_modules: Sequence[str]) -> Iterator[str]:
++    def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+         """Discover python modules and packages in sub-directory.
+ 
+         Returns iterator of paths to discovered modules and packages.
+@@ -682,11 +681,24 @@ def _discover_files(files_or_modules: Sequence[str]) -> Iterator[str]:
+             if os.path.isdir(something) and not os.path.isfile(
+                 os.path.join(something, "__init__.py")
+             ):
++
+                 skip_subtrees: list[str] = []
+                 for root, _, files in os.walk(something):
+                     if any(root.startswith(s) for s in skip_subtrees):
+                         # Skip subtree of already discovered package.
+                         continue
++                    if any((pattern.match(os.path.basename(root)) for pattern in self.config.ignore_patterns)):
++                        # Skip if mathes ignore-patterns list
++                        skip_subtrees.append(root)
++                        continue
++                    if any((pattern.match(root) for pattern in self.config.ignore_paths)):
++                        # Skip if mathes ignore-paths list
++                        skip_subtrees.append(root)
++                        continue
++                    if os.path.basename(root) in self.config.ignore:
++                        # Skip if in ignore list
++                        skip_subtrees.append(root)
++                        continue
+                     if "__init__.py" in files:
+                         skip_subtrees.append(root)
+                         yield root
+diff --git a/tests/test_self.py b/tests/test_self.py
+index a186174f1f..1eb0886ae6 100644
+--- a/tests/test_self.py
++++ b/tests/test_self.py
+@@ -1239,6 +1239,39 @@ def test_recursive(self):
+             code=0,
+         )
+ 
++    def test_ignore_recursive(self):
++        self._runtest(
++            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore=ignored_subdirectory"],
++            code=0,
++        )
++
++        self._runtest(
++            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore=failing.py"],
++            code=0,
++        )
++
++    def test_ignore_pattern_recursive(self):
++        self._runtest(
++            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-pattern=ignored_.*"],
++            code=0,
++        )
++
++        self._runtest(
++            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-pattern=failing.*"],
++            code=0,
++        )
++
++    def test_ignore_path_recursive(self):
++        self._runtest(
++            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-path=.*ignored.*"],
++            code=0,
++        )
++
++        self._runtest(
++            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-path=.*failing.*"],
++            code=0,
++        )
++
+     def test_recursive_current_dir(self):
+         with _test_sys_path():
+             # pytest is including directory HERE/regrtest_data to sys.path which causes
+@@ -1249,7 +1282,7 @@ def test_recursive_current_dir(self):
+                 if not os.path.basename(path) == "regrtest_data"
+             ]
+             with _test_cwd():
+-                os.chdir(join(HERE, "regrtest_data", "directory"))
++                os.chdir(join(HERE, "regrtest_data", "directory", "subdirectory"))
+                 self._runtest(
+                     [".", "--recursive=y"],
+                     code=0,
+
+From 09c4262457cd4150f9daf7180a332d8da3889f06 Mon Sep 17 00:00:00 2001
+From: "pre-commit-ci[bot]"
+ <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+Date: Fri, 6 May 2022 21:04:35 +0000
+Subject: [PATCH 02/13] [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+for more information, see https://pre-commit.ci
+---
+ pylint/lint/pylinter.py |  7 +++++--
+ tests/test_self.py      | 36 ++++++++++++++++++++++++++++++------
+ 2 files changed, 35 insertions(+), 8 deletions(-)
+
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 26d9214eb9..fe59d98854 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -687,11 +687,14 @@ def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+                     if any(root.startswith(s) for s in skip_subtrees):
+                         # Skip subtree of already discovered package.
+                         continue
+-                    if any((pattern.match(os.path.basename(root)) for pattern in self.config.ignore_patterns)):
++                    if any(
++                        pattern.match(os.path.basename(root))
++                        for pattern in self.config.ignore_patterns
++                    ):
+                         # Skip if mathes ignore-patterns list
+                         skip_subtrees.append(root)
+                         continue
+-                    if any((pattern.match(root) for pattern in self.config.ignore_paths)):
++                    if any(pattern.match(root) for pattern in self.config.ignore_paths):
+                         # Skip if mathes ignore-paths list
+                         skip_subtrees.append(root)
+                         continue
+diff --git a/tests/test_self.py b/tests/test_self.py
+index 1eb0886ae6..e5cfb7c97e 100644
+--- a/tests/test_self.py
++++ b/tests/test_self.py
+@@ -1241,34 +1241,58 @@ def test_recursive(self):
+ 
+     def test_ignore_recursive(self):
+         self._runtest(
+-            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore=ignored_subdirectory"],
++            [
++                join(HERE, "regrtest_data", "directory"),
++                "--recursive=y",
++                "--ignore=ignored_subdirectory",
++            ],
+             code=0,
+         )
+ 
+         self._runtest(
+-            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore=failing.py"],
++            [
++                join(HERE, "regrtest_data", "directory"),
++                "--recursive=y",
++                "--ignore=failing.py",
++            ],
+             code=0,
+         )
+ 
+     def test_ignore_pattern_recursive(self):
+         self._runtest(
+-            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-pattern=ignored_.*"],
++            [
++                join(HERE, "regrtest_data", "directory"),
++                "--recursive=y",
++                "--ignore-pattern=ignored_.*",
++            ],
+             code=0,
+         )
+ 
+         self._runtest(
+-            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-pattern=failing.*"],
++            [
++                join(HERE, "regrtest_data", "directory"),
++                "--recursive=y",
++                "--ignore-pattern=failing.*",
++            ],
+             code=0,
+         )
+ 
+     def test_ignore_path_recursive(self):
+         self._runtest(
+-            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-path=.*ignored.*"],
++            [
++                join(HERE, "regrtest_data", "directory"),
++                "--recursive=y",
++                "--ignore-path=.*ignored.*",
++            ],
+             code=0,
+         )
+ 
+         self._runtest(
+-            [join(HERE, "regrtest_data", "directory"), "--recursive=y", "--ignore-path=.*failing.*"],
++            [
++                join(HERE, "regrtest_data", "directory"),
++                "--recursive=y",
++                "--ignore-path=.*failing.*",
++            ],
+             code=0,
+         )
+ 
+
+From a90568dab36b53d8f8c1ad5b708dd3e694add468 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Fri, 6 May 2022 23:05:30 +0200
+Subject: [PATCH 03/13] Update Changelog
+
+---
+ ChangeLog | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/ChangeLog b/ChangeLog
+index 405d85f4ef..cf57289260 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -302,6 +302,9 @@ What's New in Pylint 2.13.9?
+ ============================
+ Release date: TBA
+ 
++* Respect ignore configuration options during when --recursive=y.
++
++  Closes #6471
+ 
+ 
+ What's New in Pylint 2.13.8?
+
+From caa9c440b60973b24bbcef837ded717e774eecf3 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Fri, 6 May 2022 23:07:05 +0200
+Subject: [PATCH 04/13] Fix typo in Changelog
+
+---
+ ChangeLog | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ChangeLog b/ChangeLog
+index cf57289260..523c7b96bd 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -302,7 +302,7 @@ What's New in Pylint 2.13.9?
+ ============================
+ Release date: TBA
+ 
+-* Respect ignore configuration options during when --recursive=y.
++* Respect ignore configuration options when --recursive=y.
+ 
+   Closes #6471
+ 
+
+From 3ffc50198c3db39a7a57d8a56a4c00bb6aad7e52 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Fri, 6 May 2022 23:29:22 +0200
+Subject: [PATCH 05/13] Fix typo in comment
+
+---
+ pylint/lint/pylinter.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index fe59d98854..d07f747d77 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -691,11 +691,11 @@ def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+                         pattern.match(os.path.basename(root))
+                         for pattern in self.config.ignore_patterns
+                     ):
+-                        # Skip if mathes ignore-patterns list
++                        # Skip if matches ignore-patterns list
+                         skip_subtrees.append(root)
+                         continue
+                     if any(pattern.match(root) for pattern in self.config.ignore_paths):
+-                        # Skip if mathes ignore-paths list
++                        # Skip if matches ignore-paths list
+                         skip_subtrees.append(root)
+                         continue
+                     if os.path.basename(root) in self.config.ignore:
+
+From 55debfc12755a6e371437c7431ea18934d50626f Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Sat, 7 May 2022 19:46:09 +0200
+Subject: [PATCH 06/13] Add missing regrtest data directory
+
+---
+ tests/regrtest_data/directory/ignored_subdirectory/failing.py | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 tests/regrtest_data/directory/ignored_subdirectory/failing.py
+
+diff --git a/tests/regrtest_data/directory/ignored_subdirectory/failing.py b/tests/regrtest_data/directory/ignored_subdirectory/failing.py
+new file mode 100644
+index 0000000000..b199df5420
+--- /dev/null
++++ b/tests/regrtest_data/directory/ignored_subdirectory/failing.py
+@@ -0,0 +1 @@
++import re
+
+From 3de9e5b754e779e0e81f6e5bcd783f61da5732e4 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Sun, 8 May 2022 22:21:55 +0200
+Subject: [PATCH 07/13] Improved unittests
+
+---
+ tests/lint/unittest_lint.py | 43 +++++++++++++++++++++++++++++++++++++
+ tests/test_self.py          | 17 +++++++++++++++
+ 2 files changed, 60 insertions(+)
+
+diff --git a/tests/lint/unittest_lint.py b/tests/lint/unittest_lint.py
+index 37c912c7bb..3a84612068 100644
+--- a/tests/lint/unittest_lint.py
++++ b/tests/lint/unittest_lint.py
+@@ -861,3 +861,46 @@ def test_by_module_statement_value(initialized_linter: PyLinter) -> None:
+         # Check that the by_module "statement" is equal to the global "statement"
+         # computed for that module
+         assert module_stats["statement"] == linter2.stats.statement
++
++
++@pytest.mark.parametrize(
++    "ignore_parameter,ignore_parameter_value",
++    [
++        ("--ignore", "failing.py"),
++        ("--ignore", "ignored_subdirectory"),
++        ("--ignore-patterns", "failing.*"),
++        ("--ignore-patterns", "ignored_*"),
++        ("--ignore-paths", ".*directory/ignored.*"),
++        ("--ignore-paths", ".*ignored.*/failing.*"),
++    ],
++)
++def test_recursive_ignore(ignore_parameter, ignore_parameter_value) -> None:
++    run = Run(
++        [
++            "--recursive",
++            "y",
++            ignore_parameter,
++            ignore_parameter_value,
++            join(REGRTEST_DATA_DIR, "directory"),
++        ],
++        exit=False,
++    )
++
++    linted_files = run.linter._iterate_file_descrs(
++        tuple(run.linter._discover_files([join(REGRTEST_DATA_DIR, "directory")]))
++    )
++    linted_file_paths = [file_item.filepath for file_item in linted_files]
++
++    ignored_file = os.path.abspath(
++        join(REGRTEST_DATA_DIR, "directory", "ignored_subdirectory", "failing.py")
++    )
++    assert ignored_file not in linted_file_paths
++
++    for regrtest_data_module in (
++        ("directory", "subdirectory", "subsubdirectory", "module.py"),
++        ("directory", "subdirectory", "module.py"),
++        ("directory", "package", "module.py"),
++        ("directory", "package", "subpackage", "module.py"),
++    ):
++        module = os.path.abspath(join(REGRTEST_DATA_DIR, *regrtest_data_module))
++    assert module in linted_file_paths
+diff --git a/tests/test_self.py b/tests/test_self.py
+index e5cfb7c97e..143c06f6b1 100644
+--- a/tests/test_self.py
++++ b/tests/test_self.py
+@@ -1228,18 +1228,25 @@ def test_max_inferred_for_complicated_class_hierarchy() -> None:
+         assert not ex.value.code % 2
+ 
+     def test_regression_recursive(self):
++        """Tests if error is raised when linter is executed over directory not using --recursive=y"""
+         self._test_output(
+             [join(HERE, "regrtest_data", "directory", "subdirectory"), "--recursive=n"],
+             expected_output="No such file or directory",
+         )
+ 
+     def test_recursive(self):
++        """Tests if running linter over directory using --recursive=y"""
+         self._runtest(
+             [join(HERE, "regrtest_data", "directory", "subdirectory"), "--recursive=y"],
+             code=0,
+         )
+ 
+     def test_ignore_recursive(self):
++        """Tests recursive run of linter ignoring directory using --ignore parameter.
++
++        Ignored directory contains files yielding lint errors. If directory is not ignored
++        test would fail due these errors.
++        """
+         self._runtest(
+             [
+                 join(HERE, "regrtest_data", "directory"),
+@@ -1259,6 +1266,11 @@ def test_ignore_recursive(self):
+         )
+ 
+     def test_ignore_pattern_recursive(self):
++        """Tests recursive run of linter ignoring directory using --ignore-parameter parameter.
++
++        Ignored directory contains files yielding lint errors. If directory is not ignored
++        test would fail due these errors.
++        """
+         self._runtest(
+             [
+                 join(HERE, "regrtest_data", "directory"),
+@@ -1278,6 +1290,11 @@ def test_ignore_pattern_recursive(self):
+         )
+ 
+     def test_ignore_path_recursive(self):
++        """Tests recursive run of linter ignoring directory using --ignore-path parameter.
++
++        Ignored directory contains files yielding lint errors. If directory is not ignored
++        test would fail due these errors.
++        """
+         self._runtest(
+             [
+                 join(HERE, "regrtest_data", "directory"),
+
+From 1e8d7c2026c26d3a963420006a1e4b1ef5733d14 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@gmail.com>
+Date: Sun, 8 May 2022 22:39:00 +0200
+Subject: [PATCH 08/13] Move common code of checking if file is ignored to
+ separate function
+
+---
+ pylint/lint/expand_modules.py | 20 ++++++++++++++++----
+ pylint/lint/pylinter.py       | 21 ++++++++-------------
+ 2 files changed, 24 insertions(+), 17 deletions(-)
+
+diff --git a/pylint/lint/expand_modules.py b/pylint/lint/expand_modules.py
+index b20cd873c0..1d3c00338d 100644
+--- a/pylint/lint/expand_modules.py
++++ b/pylint/lint/expand_modules.py
+@@ -46,6 +46,20 @@ def _is_in_ignore_list_re(element: str, ignore_list_re: list[Pattern[str]]) -> b
+     return any(file_pattern.match(element) for file_pattern in ignore_list_re)
+ 
+ 
++def is_ignored_file(
++    element: str,
++    ignore_list: list[str],
++    ignore_list_re: list[Pattern[str]],
++    ignore_list_paths_re: list[Pattern[str]],
++) -> bool:
++    basename = os.path.basename(element)
++    return (
++        basename in ignore_list
++        or _is_in_ignore_list_re(basename, ignore_list_re)
++        or _is_in_ignore_list_re(element, ignore_list_paths_re)
++    )
++
++
+ def expand_modules(
+     files_or_modules: Sequence[str],
+     ignore_list: list[str],
+@@ -61,10 +75,8 @@ def expand_modules(
+ 
+     for something in files_or_modules:
+         basename = os.path.basename(something)
+-        if (
+-            basename in ignore_list
+-            or _is_in_ignore_list_re(os.path.basename(something), ignore_list_re)
+-            or _is_in_ignore_list_re(something, ignore_list_paths_re)
++        if is_ignored_file(
++            something, ignore_list, ignore_list_re, ignore_list_paths_re
+         ):
+             continue
+         module_path = get_python_path(something)
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 4266993c03..4506b0e574 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -35,7 +35,7 @@
+ )
+ from pylint.lint.base_options import _make_linter_options
+ from pylint.lint.caching import load_results, save_results
+-from pylint.lint.expand_modules import expand_modules
++from pylint.lint.expand_modules import expand_modules, is_ignored_file
+ from pylint.lint.parallel import check_parallel
+ from pylint.lint.report_functions import (
+     report_messages_by_module_stats,
+@@ -712,21 +712,16 @@ def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+                     if any(root.startswith(s) for s in skip_subtrees):
+                         # Skip subtree of already discovered package.
+                         continue
+-                    if any(
+-                        pattern.match(os.path.basename(root))
+-                        for pattern in self.config.ignore_patterns
++
++                    if is_ignored_file(
++                        root,
++                        self.config.ignore,
++                        self.config.ignore_patterns,
++                        self.config.ignore_paths,
+                     ):
+-                        # Skip if matches ignore-patterns list
+-                        skip_subtrees.append(root)
+-                        continue
+-                    if any(pattern.match(root) for pattern in self.config.ignore_paths):
+-                        # Skip if matches ignore-paths list
+-                        skip_subtrees.append(root)
+-                        continue
+-                    if os.path.basename(root) in self.config.ignore:
+-                        # Skip if in ignore list
+                         skip_subtrees.append(root)
+                         continue
++
+                     if "__init__.py" in files:
+                         skip_subtrees.append(root)
+                         yield root
+
+From a89226a421a6dd0b2f81971e641c3953c92d94b9 Mon Sep 17 00:00:00 2001
+From: "pre-commit-ci[bot]"
+ <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+Date: Mon, 9 May 2022 15:20:44 +0000
+Subject: [PATCH 09/13] [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+for more information, see https://pre-commit.ci
+---
+ tests/lint/unittest_lint.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tests/lint/unittest_lint.py b/tests/lint/unittest_lint.py
+index 15e3ffc357..d83e1cf6bf 100644
+--- a/tests/lint/unittest_lint.py
++++ b/tests/lint/unittest_lint.py
+@@ -863,6 +863,7 @@ def test_by_module_statement_value(initialized_linter: PyLinter) -> None:
+         # computed for that module
+         assert module_stats["statement"] == linter2.stats.statement
+ 
++
+ @pytest.mark.parametrize(
+     "ignore_parameter,ignore_parameter_value",
+     [
+@@ -905,7 +906,7 @@ def test_recursive_ignore(ignore_parameter, ignore_parameter_value) -> None:
+         module = os.path.abspath(join(REGRTEST_DATA_DIR, *regrtest_data_module))
+     assert module in linted_file_paths
+ 
+-    
++
+ def test_import_sibling_module_from_namespace(initialized_linter: PyLinter) -> None:
+     """If the parent directory above `namespace` is on sys.path, ensure that
+     modules under `namespace` can import each other without raising `import-error`."""
+
+From b9043cfcefdbb1572fbd688cb4925600b324eb8c Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@users.noreply.github.com>
+Date: Tue, 10 May 2022 16:57:09 +0200
+Subject: [PATCH 10/13] Rename is_ignored_file to _is_ignored_file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-authored-by: Daniël van Noord <13665637+DanielNoord@users.noreply.github.com>
+---
+ pylint/lint/expand_modules.py | 4 ++--
+ pylint/lint/pylinter.py       | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/pylint/lint/expand_modules.py b/pylint/lint/expand_modules.py
+index 1d3c00338d..5cacc0371e 100644
+--- a/pylint/lint/expand_modules.py
++++ b/pylint/lint/expand_modules.py
+@@ -46,7 +46,7 @@ def _is_in_ignore_list_re(element: str, ignore_list_re: list[Pattern[str]]) -> b
+     return any(file_pattern.match(element) for file_pattern in ignore_list_re)
+ 
+ 
+-def is_ignored_file(
++def _is_ignored_file(
+     element: str,
+     ignore_list: list[str],
+     ignore_list_re: list[Pattern[str]],
+@@ -75,7 +75,7 @@ def expand_modules(
+ 
+     for something in files_or_modules:
+         basename = os.path.basename(something)
+-        if is_ignored_file(
++        if _is_ignored_file(
+             something, ignore_list, ignore_list_re, ignore_list_paths_re
+         ):
+             continue
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 1bcc1df72f..85d530c888 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -31,7 +31,7 @@
+ )
+ from pylint.lint.base_options import _make_linter_options
+ from pylint.lint.caching import load_results, save_results
+-from pylint.lint.expand_modules import expand_modules, is_ignored_file
++from pylint.lint.expand_modules import expand_modules, _is_ignored_file
+ from pylint.lint.message_state_handler import _MessageStateHandler
+ from pylint.lint.parallel import check_parallel
+ from pylint.lint.report_functions import (
+@@ -580,7 +580,7 @@ def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+                         # Skip subtree of already discovered package.
+                         continue
+ 
+-                    if is_ignored_file(
++                    if _is_ignored_file(
+                         root,
+                         self.config.ignore,
+                         self.config.ignore_patterns,
+
+From de78e2f8261f50604fea033468c74705d5e29b8d Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@users.noreply.github.com>
+Date: Tue, 10 May 2022 16:57:33 +0200
+Subject: [PATCH 11/13] Apply suggestions from code review
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-authored-by: Daniël van Noord <13665637+DanielNoord@users.noreply.github.com>
+---
+ ChangeLog               | 2 +-
+ pylint/lint/pylinter.py | 1 -
+ 2 files changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/ChangeLog b/ChangeLog
+index f5d71cc322..90db2075a0 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -308,7 +308,7 @@ What's New in Pylint 2.13.9?
+ Release date: TBA
+ 
+ 
+-* Respect ignore configuration options when --recursive=y.
++* Respect ignore configuration options when ``--recursive=y``.
+ 
+   Closes #6471
+ 
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 85d530c888..2904a417f5 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -573,7 +573,6 @@ def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+             if os.path.isdir(something) and not os.path.isfile(
+                 os.path.join(something, "__init__.py")
+             ):
+-
+                 skip_subtrees: list[str] = []
+                 for root, _, files in os.walk(something):
+                     if any(root.startswith(s) for s in skip_subtrees):
+
+From ce539c4a9e800e644b2f48a6ce8857c3d9960f20 Mon Sep 17 00:00:00 2001
+From: "pre-commit-ci[bot]"
+ <66853113+pre-commit-ci[bot]@users.noreply.github.com>
+Date: Tue, 10 May 2022 14:58:02 +0000
+Subject: [PATCH 12/13] [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+for more information, see https://pre-commit.ci
+---
+ pylint/lint/pylinter.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 2904a417f5..c76e8770fa 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -31,7 +31,7 @@
+ )
+ from pylint.lint.base_options import _make_linter_options
+ from pylint.lint.caching import load_results, save_results
+-from pylint.lint.expand_modules import expand_modules, _is_ignored_file
++from pylint.lint.expand_modules import _is_ignored_file, expand_modules
+ from pylint.lint.message_state_handler import _MessageStateHandler
+ from pylint.lint.parallel import check_parallel
+ from pylint.lint.report_functions import (
+
+From b8c5053ca75b3625abd1e8e242f3ce8cc8a5d9c3 Mon Sep 17 00:00:00 2001
+From: Matus Valo <matusvalo@users.noreply.github.com>
+Date: Fri, 13 May 2022 07:40:31 +0200
+Subject: [PATCH 13/13] Update ChangeLog
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-authored-by: Daniël van Noord <13665637+DanielNoord@users.noreply.github.com>
+---
+ ChangeLog | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ChangeLog b/ChangeLog
+index 90db2075a0..940d71e5e2 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -308,7 +308,7 @@ What's New in Pylint 2.13.9?
+ Release date: TBA
+ 
+ 
+-* Respect ignore configuration options when ``--recursive=y``.
++* Respect ignore configuration options with ``--recursive=y``.
+ 
+   Closes #6471
+ 

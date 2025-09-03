@@ -1,0 +1,41 @@
+diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py
+index 7a5b28d159..8c66f97695 100644
+--- a/django/template/defaultfilters.py
++++ b/django/template/defaultfilters.py
+@@ -95,9 +95,9 @@ def json_script(value, element_id=None):
+ @register.filter(is_safe=True)
+ def floatformat(text, arg=-1):
+     """
+-    Display a float to a specified number of decimal places.
++    Display a float or Decimal to a specified number of decimal places.
+ 
+-    If called without an argument, display the floating point number with one
++    If called without an argument, display the number with one
+     decimal place -- but only if there's a decimal place to be displayed:
+ 
+     * num1 = 34.23234
+@@ -133,6 +133,10 @@ def floatformat(text, arg=-1):
+     * {{ 66666.6666|floatformat:"2" }} displays "66666,67"
+     * {{ 66666.6666|floatformat:"2u" }} displays "66666.67"
+ 
++    If the input is a Decimal, the full precision is preserved:
++
++    * {{ Decimal('42.12345678901234567890')|floatformat:20 }} displays "42.12345678901234567890"
++
+     If the input float is infinity or NaN, display the string representation
+     of that value.
+     """
+@@ -151,8 +155,11 @@ def floatformat(text, arg=-1):
+             use_l10n = False
+             arg = arg[:-1] or -1
+     try:
+-        input_val = repr(text)
+-        d = Decimal(input_val)
++        if isinstance(text, Decimal):
++            d = text
++        else:
++            input_val = repr(text)
++            d = Decimal(input_val)
+     except InvalidOperation:
+         try:
+             d = Decimal(str(float(text)))

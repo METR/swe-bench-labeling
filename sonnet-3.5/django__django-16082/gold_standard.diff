@@ -1,0 +1,42 @@
+From c9545c8d8dd1186d6ca4c933e4f1d51442faaca0 Mon Sep 17 00:00:00 2001
+From: David Wobrock <david.wobrock@gmail.com>
+Date: Wed, 21 Sep 2022 20:46:31 +0200
+Subject: [PATCH] Fixed #33464 -- Defined MOD operator output_field for
+ combined numeric expressions.
+
+---
+ django/db/models/expressions.py | 1 +
+ tests/expressions/tests.py      | 8 +++++++-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 5e3c7cab8251..cbf4fd8296ae 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -533,6 +533,7 @@ def __hash__(self):
+             Combinable.SUB,
+             Combinable.MUL,
+             Combinable.DIV,
++            Combinable.MOD,
+         )
+     },
+     # Bitwise operators.
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index 39e6c18b1a12..d63415ae7233 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -2416,7 +2416,13 @@ def test_resolve_output_field_number(self):
+             (IntegerField, FloatField, FloatField),
+             (FloatField, IntegerField, FloatField),
+         ]
+-        connectors = [Combinable.ADD, Combinable.SUB, Combinable.MUL, Combinable.DIV]
++        connectors = [
++            Combinable.ADD,
++            Combinable.SUB,
++            Combinable.MUL,
++            Combinable.DIV,
++            Combinable.MOD,
++        ]
+         for lhs, rhs, combined in tests:
+             for connector in connectors:
+                 with self.subTest(

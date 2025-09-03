@@ -1,0 +1,37 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index ce2787b6c0..046fc44c2e 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -947,6 +947,7 @@ class SQLCompiler:
+         """
+         result = []
+         params = []
++        processed_aliases = set()
+         for alias in tuple(self.query.alias_map):
+             if not self.query.alias_refcount[alias]:
+                 continue
+@@ -956,9 +957,21 @@ class SQLCompiler:
+                 # Extra tables can end up in self.tables, but not in the
+                 # alias_map if they aren't in a join. That's OK. We skip them.
+                 continue
+-            clause_sql, clause_params = self.compile(from_clause)
+-            result.append(clause_sql)
+-            params.extend(clause_params)
++            
++            if hasattr(from_clause, 'filtered_relation'):
++                # Handle FilteredRelation separately
++                filtered_relation = from_clause.filtered_relation
++                relation_alias = filtered_relation.alias
++                if relation_alias not in processed_aliases:
++                    clause_sql, clause_params = self.compile(from_clause)
++                    result.append(clause_sql)
++                    params.extend(clause_params)
++                    processed_aliases.add(relation_alias)
++            else:
++                clause_sql, clause_params = self.compile(from_clause)
++                result.append(clause_sql)
++                params.extend(clause_params)
++        
+         for t in self.query.extra_tables:
+             alias, _ = self.query.table_alias(t)
+             # Only add the alias if it's not already present (the table_alias()

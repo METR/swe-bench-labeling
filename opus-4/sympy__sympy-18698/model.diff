@@ -1,0 +1,282 @@
+diff --git a/fix_sqf.py b/fix_sqf.py
+new file mode 100644
+index 0000000000..21fcecff87
+--- /dev/null
++++ b/fix_sqf.py
+@@ -0,0 +1,37 @@
++def combine_same_multiplicity_factors(factors):
++    """
++    Combine factors with the same multiplicity.
++    
++    Input: [(f1, k1), (f2, k2), ...]
++    Output: [(g1, k1), (g2, k2), ...] where factors with same ki are multiplied
++    """
++    from collections import defaultdict
++    
++    # Group factors by their multiplicity
++    multiplicity_groups = defaultdict(list)
++    for factor, mult in factors:
++        multiplicity_groups[mult].append(factor)
++    
++    # Combine factors within each multiplicity group
++    combined_factors = []
++    for mult in sorted(multiplicity_groups.keys()):
++        factors_list = multiplicity_groups[mult]
++        if len(factors_list) == 1:
++            combined_factors.append((factors_list[0], mult))
++        else:
++            # Multiply all factors with the same multiplicity
++            combined = factors_list[0]
++            for f in factors_list[1:]:
++                combined = combined * f
++            combined_factors.append((combined, mult))
++    
++    return combined_factors
++
++# Test the function
++from sympy import symbols, Poly
++x = symbols('x')
++
++# Test case from the issue
++factors = [(Poly(x**2 + 1, x), 1), (Poly(x - 1, x), 2), (Poly(x - 3, x), 3), (Poly(x - 2, x), 3)]
++print("Original factors:", factors)
++print("Combined factors:", combine_same_multiplicity_factors(factors))
+diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
+index c9e77a901f..f0bcd8eb98 100644
+--- a/sympy/polys/polytools.py
++++ b/sympy/polys/polytools.py
+@@ -5874,6 +5874,35 @@ def sqf_part(f, *gens, **args):
+         return result
+ 
+ 
++def _combine_same_multiplicity_factors(factors):
++    """Combine factors with the same multiplicity for square-free decomposition.
++    
++    Input: [(f1, k1), (f2, k2), ...]
++    Output: [(g1, k1), (g2, k2), ...] where factors with same ki are multiplied
++    """
++    from collections import defaultdict
++    
++    # Group factors by their multiplicity
++    multiplicity_groups = defaultdict(list)
++    for factor, mult in factors:
++        multiplicity_groups[mult].append(factor)
++    
++    # Combine factors within each multiplicity group
++    combined_factors = []
++    for mult in sorted(multiplicity_groups.keys()):
++        factors_list = multiplicity_groups[mult]
++        if len(factors_list) == 1:
++            combined_factors.append((factors_list[0], mult))
++        else:
++            # Multiply all factors with the same multiplicity
++            combined = factors_list[0]
++            for f in factors_list[1:]:
++                combined = combined * f
++            combined_factors.append((combined, mult))
++    
++    return combined_factors
++
++
+ def _sorted_factors(factors, method):
+     """Sort a list of ``(expr, exp)`` pairs. """
+     if method == 'sqf':
+@@ -5959,6 +5988,26 @@ def _symbolic_factor(expr, opt, method):
+         if hasattr(expr,'_eval_factor'):
+             return expr._eval_factor()
+         coeff, factors = _symbolic_factor_list(together(expr, fraction=opt['fraction']), opt, method)
++        
++        # For square-free decomposition, combine factors with the same multiplicity
++        if method == 'sqf' and factors:
++            # Convert to Poly if needed for combination
++            poly_factors = []
++            for f, k in factors:
++                if not hasattr(f, 'is_Poly') or not f.is_Poly:
++                    try:
++                        from sympy.polys import Poly
++                        poly_f = Poly(f)
++                        poly_factors.append((poly_f, k))
++                    except:
++                        poly_factors.append((f, k))
++                else:
++                    poly_factors.append((f, k))
++            
++            # Combine factors with same multiplicity
++            combined_factors = _combine_same_multiplicity_factors(poly_factors)
++            factors = combined_factors
++        
+         return _keep_coeff(coeff, _factors_product(factors))
+     elif hasattr(expr, 'args'):
+         return expr.func(*[_symbolic_factor(arg, opt, method) for arg in expr.args])
+@@ -5997,6 +6046,11 @@ def _generic_factor_list(expr, gens, args, method):
+ 
+         fp = _sorted_factors(fp, method)
+         fq = _sorted_factors(fq, method)
++        
++        # For square-free decomposition, combine factors with the same multiplicity
++        if method == 'sqf':
++            fp = _combine_same_multiplicity_factors(fp)
++            fq = _combine_same_multiplicity_factors(fq)
+ 
+         if not opt.polys:
+             fp = [(f.as_expr(), k) for f, k in fp]
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..94b6d94f1a
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,69 @@
++from sympy import symbols, sqf_list, expand, Poly
++
++x = symbols('x')
++
++# Test various cases
++test_cases = [
++    # Original issue test case
++    ((x**2 + 1) * (x - 1)**2 * (x - 2)**3 * (x - 3)**3,
++     (1, [(x**2 + 1, 1), (x - 1, 2), (x**2 - 5*x + 6, 3)])),
++    
++    # Test case with more factors of same multiplicity
++    ((x - 1)**2 * (x - 2)**2 * (x - 3)**2,
++     (1, [(x**3 - 6*x**2 + 11*x - 6, 2)])),
++    
++    # Test case with 3 factors of same multiplicity  
++    ((x - 1)**3 * (x - 2)**3 * (x - 3)**3,
++     (1, [(x**3 - 6*x**2 + 11*x - 6, 3)])),
++    
++    # Mixed multiplicities
++    ((x - 1) * (x - 2)**2 * (x - 3)**2 * (x - 4)**3,
++     (1, [(x - 1, 1), (x**2 - 5*x + 6, 2), (x - 4, 3)])),
++    
++    # No repeated multiplicities (should not change)
++    ((x - 1) * (x - 2)**2 * (x - 3)**3,
++     (1, [(x - 1, 1), (x - 2, 2), (x - 3, 3)])),
++    
++    # Edge case: single factor
++    ((x - 1)**3,
++     (1, [(x - 1, 3)])),
++    
++    # Edge case: no factors
++    (x**0,
++     (1, [])),
++    
++    # Test with leading coefficient
++    (6 * (x - 1)**2 * (x - 2)**2,
++     (6, [(x**2 - 3*x + 2, 2)])),
++]
++
++print("Testing square-free decomposition with combined factors:\n")
++for i, (expr, expected) in enumerate(test_cases):
++    result = sqf_list(expr)
++    print(f"Test {i+1}:")
++    print(f"  Input: {expr}")
++    print(f"  Result: {result}")
++    print(f"  Expected: {expected}")
++    
++    # Check if coefficient matches
++    if result[0] != expected[0]:
++        print(f"  ERROR: Coefficient mismatch! Got {result[0]}, expected {expected[0]}")
++    
++    # Check factors
++    result_factors = result[1]
++    expected_factors = expected[1]
++    
++    if len(result_factors) != len(expected_factors):
++        print(f"  ERROR: Number of factors mismatch! Got {len(result_factors)}, expected {len(expected_factors)}")
++    else:
++        for j, ((rf, rm), (ef, em)) in enumerate(zip(result_factors, expected_factors)):
++            # Expand and compare factors
++            rf_expanded = expand(rf)
++            ef_expanded = expand(ef)
++            if rf_expanded != ef_expanded or rm != em:
++                print(f"  ERROR: Factor {j} mismatch!")
++                print(f"    Got: ({rf_expanded}, {rm})")
++                print(f"    Expected: ({ef_expanded}, {em})")
++            else:
++                print(f"  Factor {j} OK: ({rf_expanded}, {rm})")
++    print()
+diff --git a/test_sqf.py b/test_sqf.py
+new file mode 100644
+index 0000000000..1e5092df85
+--- /dev/null
++++ b/test_sqf.py
+@@ -0,0 +1,25 @@
++from sympy import symbols, sqf, expand
++
++x = symbols('x')
++
++# Test the sqf function which should return the factored form
++test_cases = [
++    # Original issue test case
++    (x**2 + 1) * (x - 1)**2 * (x - 2)**3 * (x - 3)**3,
++    
++    # Test case with more factors of same multiplicity
++    (x - 1)**2 * (x - 2)**2 * (x - 3)**2,
++    
++    # Test case with 3 factors of same multiplicity  
++    (x - 1)**3 * (x - 2)**3 * (x - 3)**3,
++]
++
++print("Testing sqf function:\n")
++for expr in test_cases:
++    result = sqf(expr)
++    print(f"Input: {expr}")
++    print(f"Result: {result}")
++    print(f"Expanded result: {expand(result)}")
++    print(f"Original expanded: {expand(expr)}")
++    print(f"Equal? {expand(result) == expand(expr)}")
++    print()
+diff --git a/test_sqf_include.py b/test_sqf_include.py
+new file mode 100644
+index 0000000000..86f523a4d4
+--- /dev/null
++++ b/test_sqf_include.py
+@@ -0,0 +1,22 @@
++from sympy import symbols, sqf_list_include
++
++x = symbols('x')
++
++# Test sqf_list_include which should also work with combined factors
++test_cases = [
++    # Original issue test case
++    (x**2 + 1) * (x - 1)**2 * (x - 2)**3 * (x - 3)**3,
++    
++    # Test case with more factors of same multiplicity
++    (x - 1)**2 * (x - 2)**2 * (x - 3)**2,
++    
++    # Test with leading coefficient
++    6 * (x - 1)**2 * (x - 2)**2,
++]
++
++print("Testing sqf_list_include function:\n")
++for expr in test_cases:
++    result = sqf_list_include(expr)
++    print(f"Input: {expr}")
++    print(f"Result: {result}")
++    print()
+diff --git a/test_sqf_issue.py b/test_sqf_issue.py
+new file mode 100644
+index 0000000000..73dc09feaa
+--- /dev/null
++++ b/test_sqf_issue.py
+@@ -0,0 +1,20 @@
++from sympy import symbols, sqf_list, expand
++
++x = symbols('x')
++
++# Test case 1: The problematic case from the issue
++f1 = (x**2 + 1) * (x - 1)**2 * (x - 2)**3 * (x - 3)**3
++print("Test 1: f =", f1)
++print("sqf_list(f) =", sqf_list(f1))
++print("Expected: (1, [(x**2 + 1, 1), (x - 1, 2), (x**2 - 5*x + 6, 3)])")
++print()
++
++# Test case 2: The correct case from the issue  
++f2 = x**5 - 2*x**4 - 2*x**3 + 4*x**2 + x - 2
++print("Test 2: f =", f2)
++print("sqf_list(f) =", sqf_list(f2))
++print("Expected: (1, [(x - 2, 1), (x**2 - 1, 2)])")
++print()
++
++# Let's also expand (x - 2) * (x - 3) to see what it should be
++print("(x - 2) * (x - 3) =", expand((x - 2) * (x - 3)))

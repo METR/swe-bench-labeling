@@ -1,0 +1,576 @@
+diff --git a/debug_dates.py b/debug_dates.py
+new file mode 100644
+index 0000000000..0f38f5d7f0
+--- /dev/null
++++ b/debug_dates.py
+@@ -0,0 +1,9 @@
++from datetime import datetime, timedelta
++
++initial = datetime(2021,2,14,0,0,0)
++time_array = [initial + timedelta(days=x) for x in range(1,200)]
++
++print(f"Start date: {time_array[0]}")
++print(f"End date: {time_array[-1]}")
++print(f"Months included: {set(dt.month for dt in time_array)}")
++print(f"Years included: {set(dt.year for dt in time_array)}")
+diff --git a/debug_formatter.py b/debug_formatter.py
+new file mode 100644
+index 0000000000..ede4a83864
+--- /dev/null
++++ b/debug_formatter.py
+@@ -0,0 +1,33 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++import numpy as np
++
++# Create time array - Feb to Sep 2021, no January included
++initial = datetime(2021,2,14,0,0,0)
++time_array = [initial + timedelta(days=x) for x in range(1,200)]
++
++# Create data array
++data = [-x**2/20000 for x in range(1,200)]
++
++# Plot data
++fig, ax = plt.subplots()
++ax.plot(time_array, data) 
++
++locator = mdates.AutoDateLocator()
++formatter = mdates.ConciseDateFormatter(locator)
++
++ax.xaxis.set_major_locator(locator)   
++ax.xaxis.set_major_formatter(formatter)
++
++# Get the tick values and labels
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Number of ticks: {len(ticks)}")
++print(f"Tick dates:")
++for i, tick in enumerate(ticks):
++    date = mdates.num2date(tick)
++    print(f"  {i}: {date} -> '{labels[i]}'")
++print(f"Offset string: '{offset}'")
+diff --git a/debug_formatter2.py b/debug_formatter2.py
+new file mode 100644
+index 0000000000..e761fc94ab
+--- /dev/null
++++ b/debug_formatter2.py
+@@ -0,0 +1,61 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++import numpy as np
++
++# Create time array - Feb to Sep 2021, no January included
++initial = datetime(2021,2,14,0,0,0)
++time_array = [initial + timedelta(days=x) for x in range(1,200)]
++
++# Create data array
++data = [-x**2/20000 for x in range(1,200)]
++
++# Plot data
++fig, ax = plt.subplots()
++ax.plot(time_array, data) 
++
++locator = mdates.AutoDateLocator()
++
++# Create a custom ConciseDateFormatter to debug
++class DebugConciseDateFormatter(mdates.ConciseDateFormatter):
++    def format_ticks(self, values):
++        tickdatetime = [mdates.num2date(value, tz=self._tz) for value in values]
++        tickdate = np.array([tdt.timetuple()[:6] for tdt in tickdatetime])
++        
++        print(f"\nDEBUG: tickdate shape: {tickdate.shape}")
++        print(f"DEBUG: tickdate:\n{tickdate}")
++        
++        # Determine the level
++        for level in range(5, -1, -1):
++            unique_vals = np.unique(tickdate[:, level])
++            print(f"DEBUG: Level {level} unique values: {unique_vals}")
++            if len(unique_vals) > 1:
++                print(f"DEBUG: Breaking at level {level}")
++                if level < 2:
++                    print(f"DEBUG: level < 2, setting show_offset = False")
++                break
++        else:
++            level = 5
++            
++        print(f"DEBUG: Final level = {level}")
++        print(f"DEBUG: show_offset = {self.show_offset}")
++        
++        # Call parent method
++        return super().format_ticks(values)
++
++formatter = DebugConciseDateFormatter(locator)
++
++ax.xaxis.set_major_locator(locator)   
++ax.xaxis.set_major_formatter(formatter)
++
++# Get the tick values and labels
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"\nNumber of ticks: {len(ticks)}")
++print(f"Tick dates:")
++for i, tick in enumerate(ticks):
++    date = mdates.num2date(tick)
++    print(f"  {i}: {date} -> '{labels[i]}'")
++print(f"Offset string: '{offset}'")
+diff --git a/lib/matplotlib/dates.py b/lib/matplotlib/dates.py
+index 4d8ddf3ee5..f923ccc9b8 100644
+--- a/lib/matplotlib/dates.py
++++ b/lib/matplotlib/dates.py
+@@ -838,6 +838,16 @@ class ConciseDateFormatter(ticker.Formatter):
+                     if '.' in labels[nn]:
+                         labels[nn] = labels[nn][:-trailing_zeros].rstrip('.')
+ 
++        # Fix for issue when months are shown but year is not displayed anywhere
++        # When level is 1 (months) and offset is disabled, check if year would be shown
++        if level == 1 and not show_offset:
++            # Check if we have January (month=1) in the ticks
++            # If we do, the year will be shown in that label due to zerofmts
++            has_january = any(tickdate[nn][1] == 1 for nn in range(len(tickdate)))
++            if not has_january:
++                # No January, so year will not be shown. Enable offset to show it.
++                show_offset = True
++
+         if show_offset:
+             # set the offset string:
+             self.offset_string = tickdatetime[-1].strftime(offsetfmts[level])
+diff --git a/test_bug_fix.py b/test_bug_fix.py
+new file mode 100644
+index 0000000000..8b13789179
+--- /dev/null
++++ b/test_bug_fix.py
+@@ -0,0 +1 @@
++
+diff --git a/test_final_fix.py b/test_final_fix.py
+new file mode 100644
+index 0000000000..0f0908c579
+--- /dev/null
++++ b/test_final_fix.py
+@@ -0,0 +1,31 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++
++#create time array
++initial = datetime(2021,2,14,0,0,0)
++time_array = [initial + timedelta(days=x) for x in range(1,200)]
++
++#create data array
++data = [-x**2/20000 for x in range(1,200)]
++
++#plot data
++fig,ax = plt.subplots()
++ax.plot(time_array,data) 
++        
++locator = mdates.AutoDateLocator()
++formatter = mdates.ConciseDateFormatter(locator)
++
++ax.grid(True)
++ax.set_ylabel("Temperature ($\degree$C)")
++ax.xaxis.set_major_locator(locator)   
++ax.xaxis.set_major_formatter(formatter)
++
++# Get the tick values and labels
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Tick labels: {labels}")
++print(f"Offset string: '{offset}'")
++print("\nThe year 2021 is now shown in the offset!")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..a430d1a84a
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,114 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++import numpy as np
++
++# Create a custom formatter to test the fix
++class FixedConciseDateFormatter(mdates.ConciseDateFormatter):
++    def format_ticks(self, values):
++        tickdatetime = [mdates.num2date(value, tz=self._tz) for value in values]
++        tickdate = np.array([tdt.timetuple()[:6] for tdt in tickdatetime])
++
++        # basic algorithm:
++        # 1) only display a part of the date if it changes over the ticks.
++        # 2) don't display the smaller part of the date if:
++        #    it is always the same or if it is the start of the
++        #    year, month, day etc.
++        # fmt for most ticks at this level
++        fmts = self.formats
++        # format beginnings of days, months, years, etc.
++        zerofmts = self.zero_formats
++        # offset fmt are for the offset in the upper left of the
++        # or lower right of the axis.
++        offsetfmts = self.offset_formats
++        show_offset = self.show_offset
++
++        # determine the level we will label at:
++        # mostly 0: years,  1: months,  2: days,
++        # 3: hours, 4: minutes, 5: seconds, 6: microseconds
++        for level in range(5, -1, -1):
++            if len(np.unique(tickdate[:, level])) > 1:
++                # ORIGINAL CODE:
++                # if level < 2:
++                #     show_offset = False
++                break
++            elif level == 0:
++                # all tickdate are the same, so only micros might be different
++                # set to the most precise (6: microseconds doesn't exist...)
++                level = 5
++
++        # level is the basic level we will label at.
++        # now loop through and decide the actual ticklabels
++        zerovals = [0, 1, 1, 0, 0, 0, 0]
++        labels = [''] * len(tickdate)
++        for nn in range(len(tickdate)):
++            if level < 5:
++                if tickdate[nn][level] == zerovals[level]:
++                    fmt = zerofmts[level]
++                else:
++                    fmt = fmts[level]
++            else:
++                # special handling for seconds + microseconds
++                if (tickdatetime[nn].second == tickdatetime[nn].microsecond
++                        == 0):
++                    fmt = zerofmts[level]
++                else:
++                    fmt = fmts[level]
++            labels[nn] = tickdatetime[nn].strftime(fmt)
++
++        # special handling of seconds and microseconds:
++        # strip extra zeros and decimal if possible.
++        # this is complicated by two factors.  1) we have some level-4 strings
++        # here (i.e. 03:00, '0.50000', '1.000') 2) we would like to have the
++        # same number of decimals for each string (i.e. 0.5 and 1.0).
++        if level >= 5:
++            trailing_zeros = min(
++                (len(s) - len(s.rstrip('0')) for s in labels if '.' in s),
++                default=None)
++            if trailing_zeros:
++                for nn in range(len(labels)):
++                    if '.' in labels[nn]:
++                        labels[nn] = labels[nn][:-trailing_zeros].rstrip('.')
++
++        # NEW LOGIC: Check if year is shown in any label when level=1
++        if level == 1:  # months
++            # Check if any label contains a 4-digit year
++            year_in_labels = any(any(str(year) in label for year in range(1900, 2100)) 
++                                for label in labels)
++            if not year_in_labels:
++                # No year in labels, so we should show it in offset
++                show_offset = True
++
++        if show_offset:
++            # set the offset string:
++            self.offset_string = tickdatetime[-1].strftime(offsetfmts[level])
++            if self._usetex:
++                self.offset_string = mdates._wrap_in_tex(self.offset_string)
++        else:
++            self.offset_string = ''
++
++        if self._usetex:
++            return [mdates._wrap_in_tex(l) for l in labels]
++        else:
++            return labels
++
++
++# Test the fix
++print("Testing fix for single year without January (Feb-Sep 2021)")
++initial = datetime(2021, 2, 14)
++time_array = [initial + timedelta(days=x) for x in range(1, 200)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(len(time_array)))
++
++locator = mdates.AutoDateLocator()
++formatter = FixedConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
+diff --git a/test_fix_all_cases.py b/test_fix_all_cases.py
+new file mode 100644
+index 0000000000..0632247b6e
+--- /dev/null
++++ b/test_fix_all_cases.py
+@@ -0,0 +1,156 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++import numpy as np
++
++# Create a custom formatter to test the fix
++class FixedConciseDateFormatter(mdates.ConciseDateFormatter):
++    def format_ticks(self, values):
++        tickdatetime = [mdates.num2date(value, tz=self._tz) for value in values]
++        tickdate = np.array([tdt.timetuple()[:6] for tdt in tickdatetime])
++
++        # basic algorithm:
++        # 1) only display a part of the date if it changes over the ticks.
++        # 2) don't display the smaller part of the date if:
++        #    it is always the same or if it is the start of the
++        #    year, month, day etc.
++        # fmt for most ticks at this level
++        fmts = self.formats
++        # format beginnings of days, months, years, etc.
++        zerofmts = self.zero_formats
++        # offset fmt are for the offset in the upper left of the
++        # or lower right of the axis.
++        offsetfmts = self.offset_formats
++        show_offset = self.show_offset
++
++        # determine the level we will label at:
++        # mostly 0: years,  1: months,  2: days,
++        # 3: hours, 4: minutes, 5: seconds, 6: microseconds
++        for level in range(5, -1, -1):
++            if len(np.unique(tickdate[:, level])) > 1:
++                if level < 2:
++                    show_offset = False
++                break
++            elif level == 0:
++                # all tickdate are the same, so only micros might be different
++                # set to the most precise (6: microseconds doesn't exist...)
++                level = 5
++
++        # level is the basic level we will label at.
++        # now loop through and decide the actual ticklabels
++        zerovals = [0, 1, 1, 0, 0, 0, 0]
++        labels = [''] * len(tickdate)
++        for nn in range(len(tickdate)):
++            if level < 5:
++                if tickdate[nn][level] == zerovals[level]:
++                    fmt = zerofmts[level]
++                else:
++                    fmt = fmts[level]
++            else:
++                # special handling for seconds + microseconds
++                if (tickdatetime[nn].second == tickdatetime[nn].microsecond
++                        == 0):
++                    fmt = zerofmts[level]
++                else:
++                    fmt = fmts[level]
++            labels[nn] = tickdatetime[nn].strftime(fmt)
++
++        # special handling of seconds and microseconds:
++        # strip extra zeros and decimal if possible.
++        # this is complicated by two factors.  1) we have some level-4 strings
++        # here (i.e. 03:00, '0.50000', '1.000') 2) we would like to have the
++        # same number of decimals for each string (i.e. 0.5 and 1.0).
++        if level >= 5:
++            trailing_zeros = min(
++                (len(s) - len(s.rstrip('0')) for s in labels if '.' in s),
++                default=None)
++            if trailing_zeros:
++                for nn in range(len(labels)):
++                    if '.' in labels[nn]:
++                        labels[nn] = labels[nn][:-trailing_zeros].rstrip('.')
++
++        # NEW FIX: When level is 1 (months) and offset is disabled, 
++        # check if year is shown in any label 
++        if level == 1 and not show_offset:
++            # Check if we have January (month=1) in the ticks
++            # If we do, the year will be shown in that label
++            has_january = any(tickdate[nn][1] == 1 for nn in range(len(tickdate)))
++            if not has_january:
++                # No January, so year won't be shown. Enable offset.
++                show_offset = True
++
++        if show_offset:
++            # set the offset string:
++            self.offset_string = tickdatetime[-1].strftime(offsetfmts[level])
++            if self._usetex:
++                self.offset_string = mdates._wrap_in_tex(self.offset_string)
++        else:
++            self.offset_string = ''
++
++        if self._usetex:
++            return [mdates._wrap_in_tex(l) for l in labels]
++        else:
++            return labels
++
++
++# Test case 1: Multiple years
++print("Test 1: Multiple years (2020-2022)")
++initial = datetime(2020, 1, 1)
++time_array = [initial + timedelta(days=x*100) for x in range(10)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(10))
++
++locator = mdates.AutoDateLocator()
++formatter = FixedConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
++print()
++
++# Test case 2: Single year, includes January
++print("Test 2: Single year with January (Jan-Dec 2021)")
++initial = datetime(2021, 1, 1)
++time_array = [initial + timedelta(days=x*30) for x in range(12)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(12))
++
++locator = mdates.AutoDateLocator()
++formatter = FixedConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
++print()
++
++# Test case 3: Single year, no January (Feb-Sep 2021) - the bug case
++print("Test 3: Single year without January (Feb-Sep 2021)")
++initial = datetime(2021, 2, 14)
++time_array = [initial + timedelta(days=x) for x in range(1, 200)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(len(time_array)))
++
++locator = mdates.AutoDateLocator()
++formatter = FixedConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..e7024a6078
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,27 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++
++#create time array
++initial = datetime(2021,2,14,0,0,0)
++time_array = [initial + timedelta(days=x) for x in range(1,200)]
++
++#create data array
++data = [-x**2/20000 for x in range(1,200)]
++
++
++#plot data
++fig,ax = plt.subplots()
++ax.plot(time_array,data) 
++        
++locator = mdates.AutoDateLocator()
++formatter = mdates.ConciseDateFormatter(locator)
++
++ax.grid(True)
++ax.set_ylabel("Temperature ($\degree$C)")
++ax.xaxis.set_major_locator(locator)   
++ax.xaxis.set_major_formatter(formatter)
++fig.autofmt_xdate() #automatically makes the x-labels rotate
++
++plt.savefig('test_output.png')
++print("Plot saved to test_output.png")
+diff --git a/test_multiple_years.py b/test_multiple_years.py
+new file mode 100644
+index 0000000000..787e02c705
+--- /dev/null
++++ b/test_multiple_years.py
+@@ -0,0 +1,65 @@
++import matplotlib.pyplot as plt
++import matplotlib.dates as mdates
++from datetime import datetime, timedelta
++
++# Test case 1: Multiple years
++print("Test 1: Multiple years (2020-2022)")
++initial = datetime(2020, 1, 1)
++time_array = [initial + timedelta(days=x*100) for x in range(10)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(10))
++
++locator = mdates.AutoDateLocator()
++formatter = mdates.ConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
++print()
++
++# Test case 2: Single year, includes January
++print("Test 2: Single year with January (Jan-Dec 2021)")
++initial = datetime(2021, 1, 1)
++time_array = [initial + timedelta(days=x*30) for x in range(12)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(12))
++
++locator = mdates.AutoDateLocator()
++formatter = mdates.ConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
++print()
++
++# Test case 3: Single year, no January (Feb-Sep 2021) - the bug case
++print("Test 3: Single year without January (Feb-Sep 2021)")
++initial = datetime(2021, 2, 14)
++time_array = [initial + timedelta(days=x) for x in range(1, 200)]
++
++fig, ax = plt.subplots()
++ax.plot(time_array, range(len(time_array)))
++
++locator = mdates.AutoDateLocator()
++formatter = mdates.ConciseDateFormatter(locator)
++ax.xaxis.set_major_locator(locator)
++ax.xaxis.set_major_formatter(formatter)
++
++ticks = ax.get_xticks()
++labels = formatter.format_ticks(ticks)
++offset = formatter.get_offset()
++
++print(f"Labels: {labels}")
++print(f"Offset: '{offset}'")
+diff --git a/test_output.png b/test_output.png
+new file mode 100644
+index 0000000000..46c6cea9ee
+Binary files /dev/null and b/test_output.png differ

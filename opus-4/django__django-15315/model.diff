@@ -1,0 +1,425 @@
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index 88c9ca9f28..fcea1597ef 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -542,11 +542,7 @@ class Field(RegisterLookupMixin):
+         return NotImplemented
+ 
+     def __hash__(self):
+-        return hash((
+-            self.creation_counter,
+-            self.model._meta.app_label if hasattr(self, 'model') else None,
+-            self.model._meta.model_name if hasattr(self, 'model') else None,
+-        ))
++        return hash(self.creation_counter)
+ 
+     def __deepcopy__(self, memodict):
+         # We don't have to deepcopy very much here, since most things are not
+diff --git a/test_abstract_fields.py b/test_abstract_fields.py
+new file mode 100644
+index 0000000000..48ebad1875
+--- /dev/null
++++ b/test_abstract_fields.py
+@@ -0,0 +1,61 @@
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django.db import models
++
++class AbstractModel(models.Model):
++    field = models.IntegerField()
++
++    class Meta:
++        abstract = True
++
++class InheritAbstractModel1(AbstractModel):
++    class Meta:
++        app_label = 'test1'
++
++class InheritAbstractModel2(AbstractModel):
++    class Meta:
++        app_label = 'test2'
++
++abstract_model_field = AbstractModel._meta.get_field('field')
++inherit1_model_field = InheritAbstractModel1._meta.get_field('field')
++inherit2_model_field = InheritAbstractModel2._meta.get_field('field')
++
++print(f"abstract_model_field id: {id(abstract_model_field)}")
++print(f"inherit1_model_field id: {id(inherit1_model_field)}")
++print(f"inherit2_model_field id: {id(inherit2_model_field)}")
++
++print(f"\nabstract_model_field.creation_counter: {abstract_model_field.creation_counter}")
++print(f"inherit1_model_field.creation_counter: {inherit1_model_field.creation_counter}")
++print(f"inherit2_model_field.creation_counter: {inherit2_model_field.creation_counter}")
++
++print(f"\nabstract_model_field.model: {getattr(abstract_model_field, 'model', None)}")
++print(f"inherit1_model_field.model: {getattr(inherit1_model_field, 'model', None)}")
++print(f"inherit2_model_field.model: {getattr(inherit2_model_field, 'model', None)}")
++
++print(f"\nAre they equal?")
++print(f"abstract == inherit1: {abstract_model_field == inherit1_model_field}")
++print(f"abstract == inherit2: {abstract_model_field == inherit2_model_field}")
++print(f"inherit1 == inherit2: {inherit1_model_field == inherit2_model_field}")
++
++print(f"\nHashes:")
++print(f"hash(abstract_model_field): {hash(abstract_model_field)}")
++print(f"hash(inherit1_model_field): {hash(inherit1_model_field)}")
++print(f"hash(inherit2_model_field): {hash(inherit2_model_field)}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..5051a70834
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,85 @@
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django.db import models
++
++# Test 1: Multiple fields in a set before assignment
++print("Test 1: Multiple fields in a set before assignment")
++f1 = models.CharField(max_length=200)
++f2 = models.IntegerField()
++f3 = models.BooleanField()
++
++field_set = {f1, f2, f3}
++print(f"Fields in set before: {len(field_set)}")
++
++class Book(models.Model):
++    title = f1
++    pages = f2
++    published = f3
++    
++    class Meta:
++        app_label = 'test'
++
++print(f"Fields in set after: {len(field_set)}")
++print(f"All fields still in set: {all(f in field_set for f in [f1, f2, f3])}")
++
++# Test 2: Field used as dict key with complex operations
++print("\nTest 2: Field as dict key with updates")
++f4 = models.TextField()
++field_data = {f4: {"initial": "value"}}
++
++class Article(models.Model):
++    content = f4
++    
++    class Meta:
++        app_label = 'test'
++
++# Update the dict value
++field_data[f4]["updated"] = "new_value"
++print(f"Dict access works: {f4 in field_data}")
++print(f"Dict value: {field_data[f4]}")
++
++# Test 3: Hash consistency across field types
++print("\nTest 3: Hash consistency for different field types")
++fields = [
++    models.CharField(max_length=100),
++    models.IntegerField(),
++    models.BooleanField(),
++    models.DateField(),
++    models.ForeignKey('auth.User', on_delete=models.CASCADE),
++]
++
++hashes_before = [hash(f) for f in fields]
++
++class MultiFieldModel(models.Model):
++    char_field = fields[0]
++    int_field = fields[1]
++    bool_field = fields[2]
++    date_field = fields[3]
++    fk_field = fields[4]
++    
++    class Meta:
++        app_label = 'test'
++
++hashes_after = [hash(f) for f in fields]
++
++print(f"All hashes unchanged: {hashes_before == hashes_after}")
++
++print("\nAll edge case tests passed!")
+diff --git a/test_field_equality.py b/test_field_equality.py
+new file mode 100644
+index 0000000000..17094c268b
+--- /dev/null
++++ b/test_field_equality.py
+@@ -0,0 +1,66 @@
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django.db import models
++
++# Test that fields with same creation_counter but different models are not equal
++f1 = models.CharField(max_length=200)
++f2 = models.CharField(max_length=200)
++
++# Reset f2's creation counter to match f1's
++f2.creation_counter = f1.creation_counter
++
++print(f"f1 creation_counter: {f1.creation_counter}")
++print(f"f2 creation_counter: {f2.creation_counter}")
++print(f"f1 == f2 (before model assignment): {f1 == f2}")
++
++class Book1(models.Model):
++    title = f1
++    
++    class Meta:
++        app_label = 'test1'
++
++class Book2(models.Model):
++    title = f2
++    
++    class Meta:
++        app_label = 'test2'
++
++print(f"\nAfter model assignment:")
++print(f"f1.model: {f1.model}")
++print(f"f2.model: {f2.model}")
++print(f"f1 == f2 (after model assignment): {f1 == f2}")
++
++# Test that fields with same creation_counter and same model are equal
++f3 = models.CharField(max_length=200)
++f4 = models.CharField(max_length=200)
++f4.creation_counter = f3.creation_counter
++
++class Book3(models.Model):
++    title = f3
++    other = f4
++    
++    class Meta:
++        app_label = 'test3'
++
++print(f"\nBoth fields in same model:")
++print(f"f3.model: {f3.model}")
++print(f"f4.model: {f4.model}")
++print(f"f3 == f4 (same model): {f3 == f4}")
+diff --git a/test_field_hash.py b/test_field_hash.py
+new file mode 100644
+index 0000000000..727e641bdb
+--- /dev/null
++++ b/test_field_hash.py
+@@ -0,0 +1,39 @@
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django.db import models
++
++# Test case from the issue
++f = models.CharField(max_length=200)
++hash_before = hash(f)
++d = {f: 1}
++
++class Book(models.Model):
++    title = f
++    
++    class Meta:
++        app_label = 'test'
++
++hash_after = hash(f)
++
++print(f"Hash before assignment: {hash_before}")
++print(f"Hash after assignment: {hash_after}")
++print(f"Hashes equal: {hash_before == hash_after}")
++print(f"Field in dict: {f in d}")
+diff --git a/test_field_hash_immutable.py b/test_field_hash_immutable.py
+new file mode 100644
+index 0000000000..3183c0cd14
+--- /dev/null
++++ b/test_field_hash_immutable.py
+@@ -0,0 +1,91 @@
++"""Test that field hash is immutable when assigned to a model."""
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++)
++django.setup()
++
++from django.db import models
++
++def test_field_hash_immutable():
++    """Field.__hash__ should not change when field is assigned to a model."""
++    f = models.CharField(max_length=200)
++    hash_before = hash(f)
++    d = {f: 1}
++    
++    class Book(models.Model):
++        title = f
++        
++        class Meta:
++            app_label = 'test'
++    
++    hash_after = hash(f)
++    
++    assert hash_before == hash_after, f"Hash changed from {hash_before} to {hash_after}"
++    assert f in d, "Field not found in dict after model assignment"
++    assert d[f] == 1, "Dict value incorrect after model assignment"
++    print("✓ Field hash remains immutable after model assignment")
++
++def test_field_equality_with_models():
++    """Fields with same creation_counter but different models should not be equal."""
++    f1 = models.CharField(max_length=200)
++    f2 = models.CharField(max_length=200)
++    
++    # Make them have the same creation counter
++    f2.creation_counter = f1.creation_counter
++    
++    # Before model assignment, they should be equal
++    assert f1 == f2, "Fields with same creation_counter should be equal before model assignment"
++    
++    class Book1(models.Model):
++        title = f1
++        class Meta:
++            app_label = 'test1'
++    
++    class Book2(models.Model):
++        title = f2
++        class Meta:
++            app_label = 'test2'
++    
++    # After model assignment to different models, they should not be equal
++    assert f1 != f2, "Fields with same creation_counter but different models should not be equal"
++    print("✓ Field equality correctly considers model assignment")
++
++def test_hash_consistency_with_equality():
++    """Test that hash and equality are consistent."""
++    f1 = models.CharField(max_length=200)
++    f2 = models.CharField(max_length=200)
++    f3 = models.CharField(max_length=200)
++    
++    # Make f1 and f2 have same creation counter
++    f2.creation_counter = f1.creation_counter
++    
++    # f1 and f2 should be equal and have same hash
++    assert f1 == f2, "Fields with same creation_counter should be equal"
++    assert hash(f1) == hash(f2), "Equal fields should have same hash"
++    
++    # f1 and f3 should not be equal and may have different hashes
++    assert f1 != f3, "Fields with different creation_counter should not be equal"
++    # Note: different objects CAN have the same hash, so we don't test hash inequality
++    
++    print("✓ Hash and equality are consistent")
++
++if __name__ == "__main__":
++    test_field_hash_immutable()
++    test_field_equality_with_models()
++    test_hash_consistency_with_equality()
++    print("\nAll tests passed!")
+diff --git a/tests/model_fields/tests.py b/tests/model_fields/tests.py
+index 5208b40dc9..487f224cfb 100644
+--- a/tests/model_fields/tests.py
++++ b/tests/model_fields/tests.py
+@@ -128,9 +128,28 @@ class BasicFieldTests(SimpleTestCase):
+         self.assertLess(abstract_model_field, inherit2_model_field)
+         self.assertLess(inherit1_model_field, inherit2_model_field)
+ 
+-        self.assertNotEqual(hash(abstract_model_field), hash(inherit1_model_field))
+-        self.assertNotEqual(hash(abstract_model_field), hash(inherit2_model_field))
+-        self.assertNotEqual(hash(inherit1_model_field), hash(inherit2_model_field))
++        # Fields with the same creation_counter should have the same hash,
++        # regardless of which model they're assigned to. This is important
++        # for hash stability - a field's hash should not change when assigned
++        # to a model.
++        
++    def test_field_hash_immutable(self):
++        """Field.__hash__ should remain constant when assigned to a model."""
++        f = models.CharField(max_length=200)
++        hash_before = hash(f)
++        d = {f: 1}
++        
++        class TestModel(models.Model):
++            title = f
++            
++            class Meta:
++                app_label = 'test'
++        
++        hash_after = hash(f)
++        
++        self.assertEqual(hash_before, hash_after)
++        self.assertIn(f, d)
++        self.assertEqual(d[f], 1)
+ 
+ 
+ class ChoicesTests(SimpleTestCase):

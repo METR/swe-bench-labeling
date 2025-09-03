@@ -1,0 +1,58 @@
+diff --git a/sklearn/ensemble/voting.py b/sklearn/ensemble/voting.py
+index 7afa7180c..4374cf43b 100644
+--- a/sklearn/ensemble/voting.py
++++ b/sklearn/ensemble/voting.py
+@@ -53,8 +53,7 @@ class _BaseVoting(_BaseComposition, TransformerMixin):
+         """Get the weights of not `None` estimators"""
+         if self.weights is None:
+             return None
+-        return [w for est, w in zip(self.estimators,
+-                                    self.weights) if est[1] is not None]
++        return [w for (_, est), w in zip(self.estimators, self.weights) if est is not None]
+ 
+     def _predict(self, X):
+         """Collect results from clf.predict calls. """
+@@ -70,6 +69,9 @@ class _BaseVoting(_BaseComposition, TransformerMixin):
+                                  ' should be a list of (string, estimator)'
+                                  ' tuples')
+ 
++        # Filter out None estimators
++        self.estimators = [(name, est) for name, est in self.estimators if est is not None]
++
+         if (self.weights is not None and
+                 len(self.weights) != len(self.estimators)):
+             raise ValueError('Number of `estimators` and weights must be equal'
+@@ -85,19 +87,18 @@ class _BaseVoting(_BaseComposition, TransformerMixin):
+         names, clfs = zip(*self.estimators)
+         self._validate_names(names)
+ 
+-        n_isnone = np.sum([clf is None for _, clf in self.estimators])
+-        if n_isnone == len(self.estimators):
++        if len(self.estimators) == 0:
+             raise ValueError('All estimators are None. At least one is '
+                              'required!')
+ 
+         self.estimators_ = Parallel(n_jobs=self.n_jobs)(
+                 delayed(_parallel_fit_estimator)(clone(clf), X, y,
+                                                  sample_weight=sample_weight)
+-                for clf in clfs if clf is not None)
++                for _, clf in self.estimators)
+ 
+         self.named_estimators_ = Bunch()
+-        for k, e in zip(self.estimators, self.estimators_):
+-            self.named_estimators_[k[0]] = e
++        for (name, _), fitted_est in zip(self.estimators, self.estimators_):
++            self.named_estimators_[name] = fitted_est
+         return self
+ 
+     def set_params(self, **params):
+@@ -270,6 +271,9 @@ class VotingClassifier(_BaseVoting, ClassifierMixin):
+         self.classes_ = self.le_.classes_
+         transformed_y = self.le_.transform(y)
+ 
++        # Filter out None estimators
++        self.estimators = [(name, est) for name, est in self.estimators if est is not None]
++
+         return super().fit(X, transformed_y, sample_weight)
+ 
+     def predict(self, X):

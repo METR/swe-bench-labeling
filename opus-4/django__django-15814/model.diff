@@ -1,0 +1,559 @@
+diff --git a/debug_proxy_bug.py b/debug_proxy_bug.py
+new file mode 100644
+index 0000000000..fd8af1c665
+--- /dev/null
++++ b/debug_proxy_bug.py
+@@ -0,0 +1,90 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++    SECRET_KEY='secret',
++)
++
++django.setup()
++
++# Import after Django setup
++from django.db import connection
++from django.db.models import query
++
++# Define models
++class CustomModel(models.Model):
++    name = models.CharField(max_length=16)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyCustomModel(CustomModel):
++    class Meta:
++        proxy = True
++        app_label = 'test_app'
++
++class AnotherModel(models.Model):
++    custom = models.ForeignKey(
++        ProxyCustomModel,
++        on_delete=models.SET_NULL,
++        null=True,
++        blank=True,
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(CustomModel)
++    schema_editor.create_model(AnotherModel)
++
++# Create test data
++custom = ProxyCustomModel.objects.create(name="Test Name")
++another = AnotherModel.objects.create(custom=custom)
++
++# Monkey patch to debug
++original_init = query.RelatedPopulator.__init__
++
++def debug_init(self, klass_info, select, db):
++    print(f"\nRelatedPopulator.__init__ called")
++    print(f"klass_info['model']: {klass_info['model']}")
++    print(f"klass_info['model']._meta: {klass_info['model']._meta}")
++    print(f"klass_info['model']._meta.concrete_model: {klass_info['model']._meta.concrete_model}")
++    
++    # Call original
++    try:
++        original_init(self, klass_info, select, db)
++    except ValueError as e:
++        print(f"\nError in RelatedPopulator.__init__: {e}")
++        print(f"self.model_cls: {self.model_cls}")
++        print(f"self.model_cls._meta.pk.attname: {self.model_cls._meta.pk.attname}")
++        print(f"self.init_list: {self.init_list}")
++        raise
++
++query.RelatedPopulator.__init__ = debug_init
++
++print("Testing the issue...")
++try:
++    # This should trigger the error
++    objs = list(AnotherModel.objects.select_related("custom").only("custom__name").all())
++    print("No error occurred - unexpected!")
++except ValueError as e:
++    print(f"\nFinal error: {e}")
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 33cc636b22..5036335bec 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -748,7 +748,7 @@ class Query(BaseExpression):
+                     cur_model = source.related_model
+                 else:
+                     cur_model = source.remote_field.model
+-                opts = cur_model._meta
++                opts = cur_model._meta.concrete_model._meta
+                 # Even if we're "just passing through" this model, we must add
+                 # both the current model's pk and the related reference field
+                 # (if it's not a reverse relation) to the things we select.
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..e676db1e87
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,148 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++    SECRET_KEY='secret',
++)
++
++django.setup()
++
++# Import after Django setup
++from django.db import connection
++
++# Define models
++class CustomModel(models.Model):
++    name = models.CharField(max_length=16)
++    description = models.TextField(blank=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyCustomModel(CustomModel):
++    class Meta:
++        proxy = True
++        app_label = 'test_app'
++
++class AnotherModel(models.Model):
++    custom = models.ForeignKey(
++        ProxyCustomModel,
++        on_delete=models.SET_NULL,
++        null=True,
++        blank=True,
++    )
++    value = models.IntegerField(default=0)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Non-proxy ForeignKey for comparison
++class RegularModel(models.Model):
++    name = models.CharField(max_length=16)
++    description = models.TextField(blank=True)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class AnotherRegularModel(models.Model):
++    regular = models.ForeignKey(
++        RegularModel,
++        on_delete=models.SET_NULL,
++        null=True,
++        blank=True,
++    )
++    value = models.IntegerField(default=0)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(CustomModel)
++    schema_editor.create_model(AnotherModel)
++    schema_editor.create_model(RegularModel)
++    schema_editor.create_model(AnotherRegularModel)
++
++# Create test data
++custom = ProxyCustomModel.objects.create(name="Test Name", description="Test Description")
++another = AnotherModel.objects.create(custom=custom, value=42)
++
++regular = RegularModel.objects.create(name="Regular Name", description="Regular Description") 
++another_regular = AnotherRegularModel.objects.create(regular=regular, value=84)
++
++print("=== Testing proxy model with select_related and only ===")
++
++# Test 1: The original issue - select_related with only on proxy model
++print("\nTest 1: select_related('custom').only('custom__name')")
++try:
++    objs = list(AnotherModel.objects.select_related("custom").only("custom__name").all())
++    print(f"✓ Success! Retrieved {len(objs)} objects")
++    obj = objs[0]
++    print(f"  - custom.name: {obj.custom.name}")
++    print(f"  - custom.id: {obj.custom.id}")
++except Exception as e:
++    print(f"✗ Failed: {e}")
++
++# Test 2: Multiple fields with only
++print("\nTest 2: select_related('custom').only('custom__name', 'custom__description', 'value')")
++try:
++    objs = list(AnotherModel.objects.select_related("custom").only("custom__name", "custom__description", "value").all())
++    print(f"✓ Success! Retrieved {len(objs)} objects")
++    obj = objs[0]
++    print(f"  - custom.name: {obj.custom.name}")
++    print(f"  - custom.description: {obj.custom.description}")
++    print(f"  - value: {obj.value}")
++except Exception as e:
++    print(f"✗ Failed: {e}")
++
++# Test 3: select_related without only (should work normally)
++print("\nTest 3: select_related('custom') without only()")
++try:
++    objs = list(AnotherModel.objects.select_related("custom").all())
++    print(f"✓ Success! Retrieved {len(objs)} objects")
++    obj = objs[0]
++    print(f"  - custom.name: {obj.custom.name}")
++    print(f"  - custom.description: {obj.custom.description}")
++except Exception as e:
++    print(f"✗ Failed: {e}")
++
++# Test 4: only without select_related
++print("\nTest 4: only('value') without select_related")
++try:
++    objs = list(AnotherModel.objects.only("value").all())
++    print(f"✓ Success! Retrieved {len(objs)} objects")
++    obj = objs[0]
++    print(f"  - value: {obj.value}")
++except Exception as e:
++    print(f"✗ Failed: {e}")
++
++print("\n=== Testing regular (non-proxy) model for comparison ===")
++
++# Test 5: Regular model with select_related and only (should work)
++print("\nTest 5: Regular model - select_related('regular').only('regular__name')")
++try:
++    objs = list(AnotherRegularModel.objects.select_related("regular").only("regular__name").all())
++    print(f"✓ Success! Retrieved {len(objs)} objects")
++    obj = objs[0]
++    print(f"  - regular.name: {obj.regular.name}")
++    print(f"  - regular.id: {obj.regular.id}")
++except Exception as e:
++    print(f"✗ Failed: {e}")
++
++print("\n=== All tests completed ===")
+diff --git a/test_proxy_bug.py b/test_proxy_bug.py
+new file mode 100644
+index 0000000000..47aafdc41a
+--- /dev/null
++++ b/test_proxy_bug.py
+@@ -0,0 +1,82 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=True,
++    SECRET_KEY='secret',
++)
++
++django.setup()
++
++# Import after Django setup
++from django.db import connection
++from django.db.migrations.executor import MigrationExecutor
++from django.db.migrations.migration import Migration
++from django.db.migrations import operations
++
++# Create the app for models
++class TestApp:
++    label = 'test_app'
++
++# Define models
++class CustomModel(models.Model):
++    name = models.CharField(max_length=16)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyCustomModel(CustomModel):
++    class Meta:
++        proxy = True
++        app_label = 'test_app'
++
++class AnotherModel(models.Model):
++    custom = models.ForeignKey(
++        ProxyCustomModel,
++        on_delete=models.SET_NULL,
++        null=True,
++        blank=True,
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(CustomModel)
++    schema_editor.create_model(AnotherModel)
++
++# Create test data
++custom = ProxyCustomModel.objects.create(name="Test Name")
++another = AnotherModel.objects.create(custom=custom)
++
++print("Testing the issue...")
++try:
++    # This should trigger the error
++    objs = list(AnotherModel.objects.select_related("custom").only("custom__name").all())
++    print("No error occurred - unexpected!")
++except ValueError as e:
++    print(f"Error occurred as expected: {e}")
++    import traceback
++    traceback.print_exc()
++
++print("\nDebugging info:")
++print(f"ProxyCustomModel._meta.pk.attname: {ProxyCustomModel._meta.pk.attname}")
++print(f"ProxyCustomModel._meta.concrete_model: {ProxyCustomModel._meta.concrete_model}")
++print(f"ProxyCustomModel._meta.concrete_model._meta.pk.attname: {ProxyCustomModel._meta.concrete_model._meta.pk.attname}")
+diff --git a/test_proxy_issue.py b/test_proxy_issue.py
+new file mode 100644
+index 0000000000..78e8ac223d
+--- /dev/null
++++ b/test_proxy_issue.py
+@@ -0,0 +1,40 @@
++import os
++import django
++from django.db import models
++
++# Setup Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Define models
++class CustomModel(models.Model):
++    name = models.CharField(max_length=16)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyCustomModel(CustomModel):
++    class Meta:
++        proxy = True
++        app_label = 'test_app'
++
++class AnotherModel(models.Model):
++    custom = models.ForeignKey(
++        ProxyCustomModel,
++        on_delete=models.SET_NULL,
++        null=True,
++        blank=True,
++    )
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Test the issue
++try:
++    # This should trigger the error
++    objs = list(AnotherModel.objects.select_related("custom").only("custom__name").all())
++    print("No error occurred - unexpected!")
++except ValueError as e:
++    print(f"Error occurred as expected: {e}")
++    import traceback
++    traceback.print_exc()
+diff --git a/test_proxy_only_select_related.patch b/test_proxy_only_select_related.patch
+new file mode 100644
+index 0000000000..6b9d53c2ff
+--- /dev/null
++++ b/test_proxy_only_select_related.patch
+@@ -0,0 +1,33 @@
++diff --git a/tests/proxy_models/tests.py b/tests/proxy_models/tests.py
++index test1..test2 100644
++--- a/tests/proxy_models/tests.py
+++++ b/tests/proxy_models/tests.py
++@@ -300,3 +300,27 @@ class ProxyModelTests(TestCase):
++         self.assertEqual(resp.status_code, 200)
++         self.assertContains(resp, '<h1>Select proxy_models_myperson to change</h1>')
++         self.assertContains(resp, 'Bruce')
+++
+++    def test_proxy_select_related_only(self):
+++        """
+++        Test that select_related() with only() works correctly on proxy models.
+++        This is a regression test for a bug where using only() after
+++        select_related() on proxy models caused a ValueError.
+++        """
+++        # Create a model with ForeignKey to proxy model for testing
+++        from django.db import models
+++        
+++        class TestModel(models.Model):
+++            proxy_person = models.ForeignKey(MyPerson, on_delete=models.CASCADE)
+++            value = models.IntegerField(default=0)
+++            
+++            class Meta:
+++                app_label = 'proxy_models'
+++        
+++        # Create test data
+++        person = MyPerson.objects.create(name="Test Person")
+++        test_obj = TestModel.objects.create(proxy_person=person, value=42)
+++        
+++        # This should not raise ValueError
+++        result = list(TestModel.objects.select_related("proxy_person").only("proxy_person__name"))
+++        self.assertEqual(len(result), 1)
+++        self.assertEqual(result[0].proxy_person.name, "Test Person")
+diff --git a/test_proxy_select_related_only.py b/test_proxy_select_related_only.py
+new file mode 100644
+index 0000000000..a59b5056c8
+--- /dev/null
++++ b/test_proxy_select_related_only.py
+@@ -0,0 +1,117 @@
++"""
++Test for the fix to QuerySet.only() after select_related() crash on proxy models.
++This test ensures that using only() with select_related() on proxy models works correctly.
++"""
++from django.test import TestCase
++from django.db import models
++
++
++class ProxySelectRelatedOnlyTest(TestCase):
++    @classmethod
++    def setUpTestData(cls):
++        """Set up test models and data."""
++        # Create the base model
++        class CustomModel(models.Model):
++            name = models.CharField(max_length=16)
++            description = models.TextField(blank=True)
++            
++            class Meta:
++                app_label = 'test_proxy_select_related'
++        
++        # Create proxy model
++        class ProxyCustomModel(CustomModel):
++            class Meta:
++                proxy = True
++                app_label = 'test_proxy_select_related'
++        
++        # Create model with ForeignKey to proxy
++        class AnotherModel(models.Model):
++            custom = models.ForeignKey(
++                ProxyCustomModel,
++                on_delete=models.SET_NULL,
++                null=True,
++                blank=True,
++            )
++            value = models.IntegerField(default=0)
++            
++            class Meta:
++                app_label = 'test_proxy_select_related'
++        
++        cls.CustomModel = CustomModel
++        cls.ProxyCustomModel = ProxyCustomModel
++        cls.AnotherModel = AnotherModel
++        
++        # Create test data
++        cls.custom = cls.ProxyCustomModel.objects.create(
++            name="Test Name",
++            description="Test Description"
++        )
++        cls.another = cls.AnotherModel.objects.create(
++            custom=cls.custom,
++            value=42
++        )
++
++    def test_select_related_only_single_field(self):
++        """Test select_related with only() on a single field of proxy model."""
++        objs = list(self.AnotherModel.objects.select_related("custom").only("custom__name"))
++        self.assertEqual(len(objs), 1)
++        obj = objs[0]
++        self.assertEqual(obj.custom.name, "Test Name")
++        self.assertEqual(obj.custom.pk, self.custom.pk)
++    
++    def test_select_related_only_multiple_fields(self):
++        """Test select_related with only() on multiple fields including proxy model fields."""
++        objs = list(self.AnotherModel.objects.select_related("custom").only(
++            "custom__name", "custom__description", "value"
++        ))
++        self.assertEqual(len(objs), 1)
++        obj = objs[0]
++        self.assertEqual(obj.custom.name, "Test Name")
++        self.assertEqual(obj.custom.description, "Test Description")
++        self.assertEqual(obj.value, 42)
++    
++    def test_select_related_without_only(self):
++        """Test that select_related without only() still works on proxy models."""
++        objs = list(self.AnotherModel.objects.select_related("custom"))
++        self.assertEqual(len(objs), 1)
++        obj = objs[0]
++        self.assertEqual(obj.custom.name, "Test Name")
++        self.assertEqual(obj.custom.description, "Test Description")
++    
++    def test_only_without_select_related(self):
++        """Test that only() without select_related works normally."""
++        objs = list(self.AnotherModel.objects.only("value"))
++        self.assertEqual(len(objs), 1)
++        obj = objs[0]
++        self.assertEqual(obj.value, 42)
++
++
++if __name__ == '__main__':
++    # Simple test runner
++    import django
++    from django.conf import settings
++    from django.test.utils import get_runner
++    
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        SECRET_KEY='test',
++    )
++    
++    django.setup()
++    TestRunner = get_runner(settings)
++    test_runner = TestRunner()
++    failures = test_runner.run_tests(["__main__"])
++    if failures:
++        print("Tests failed!")
++    else:
++        print("All tests passed!")

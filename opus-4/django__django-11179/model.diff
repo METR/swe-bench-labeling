@@ -1,0 +1,56 @@
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+index 92fe4affb9..3a462f1c4c 100644
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -277,6 +277,7 @@ class Collector:
+             if self.can_fast_delete(instance):
+                 with transaction.mark_for_rollback_on_error():
+                     count = sql.DeleteQuery(model).delete_batch([instance.pk], self.using)
++                setattr(instance, model._meta.pk.attname, None)
+                 return count, {model._meta.label: count}
+ 
+         with transaction.atomic(using=self.using, savepoint=False):
+diff --git a/tests/delete/tests.py b/tests/delete/tests.py
+index 55eeb226ea..25763d838a 100644
+--- a/tests/delete/tests.py
++++ b/tests/delete/tests.py
+@@ -208,6 +208,39 @@ class DeletionTests(TestCase):
+ 
+         models.signals.pre_delete.disconnect(pre_delete)
+ 
++    def test_fast_delete_pk_cleared(self):
++        """
++        Test that the primary key is cleared when using the fast delete path
++        (single object with no dependencies).
++        """
++        # Create a simple object with no dependencies
++        r = R.objects.create()
++        r_pk = r.pk
++        self.assertIsNotNone(r_pk)
++        
++        # Delete it - this should use the fast delete path
++        r.delete()
++        
++        # PK should be None after deletion
++        self.assertIsNone(r.pk, "PK should be None after fast delete")
++        
++    def test_regular_delete_pk_cleared(self):
++        """
++        Test that the primary key is cleared when using the regular delete path
++        (object with dependencies).
++        """
++        # Create an object with dependencies
++        r = R.objects.create()
++        s = S.objects.create(r=r)
++        r_pk = r.pk
++        self.assertIsNotNone(r_pk)
++        
++        # Delete it - this should use the regular delete path
++        r.delete()
++        
++        # PK should be None after deletion
++        self.assertIsNone(r.pk, "PK should be None after regular delete")
++
+     def test_deletion_order(self):
+         pre_delete_order = []
+         post_delete_order = []

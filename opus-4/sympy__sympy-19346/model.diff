@@ -1,0 +1,190 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..1490eadfa0
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,52 @@
++from sympy import srepr, Symbol, symbols, cos, sin, Integer
++from sympy.abc import x, y, z
++
++# Test that existing functionality still works
++print("Testing existing functionality:")
++print(f"srepr(x) = {srepr(x)}")
++print(f"srepr([x, y]) = {srepr([x, y])}")
++print(f"srepr((x, y)) = {srepr((x, y))}")
++print()
++
++# Test the new functionality
++print("Testing new dict functionality:")
++print(f"srepr({{x: y}}) = {srepr({x: y})}")
++print(f"srepr({{x: 1}}) = {srepr({x: 1})}")
++print(f"srepr({{x: y, y: z}}) = {srepr({x: y, y: z})}")
++print(f"srepr({{}}) = {srepr({})}")
++print()
++
++print("Testing new set functionality:")
++print(f"srepr({{x}}) = {srepr({x})}")
++print(f"srepr({{x, y}}) = {srepr({x, y})}")
++print(f"srepr({{x, y, z}}) = {srepr({x, y, z})}")
++print(f"srepr(set()) = {srepr(set())}")
++print()
++
++# Test with complex expressions
++expr1 = cos(x) + sin(y)
++expr2 = x**2 + y**2
++print("Testing with complex expressions:")
++print(f"srepr({{expr1: expr2}}) = {srepr({expr1: expr2})}")
++print(f"srepr({{expr1, expr2}}) = {srepr({expr1, expr2})}")
++print()
++
++# Test that the reproduced objects are equal
++print("Testing eval(srepr(obj)) == obj:")
++test_dict = {x: y, y: z}
++test_set = {x, y, z}
++test_list = [x, y, z]
++test_tuple = (x, y, z)
++
++# For dict and set, we need to be careful about ordering
++from sympy import sympify
++print(f"eval(srepr([x, y, z])) == [x, y, z]: {eval(srepr(test_list)) == test_list}")
++print(f"eval(srepr((x, y, z))) == (x, y, z): {eval(srepr(test_tuple)) == test_tuple}")
++
++# For sets, the order might change but the content should be the same
++eval_set = eval(srepr(test_set))
++print(f"eval(srepr({{x, y, z}})) == {{x, y, z}}: {eval_set == test_set}")
++
++# For dicts, both keys and values should match
++eval_dict = eval(srepr(test_dict))
++print(f"eval(srepr({{x: y, y: z}})) == {{x: y, y: z}}: {eval_dict == test_dict}")
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 0000000000..8735e79907
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,39 @@
++#!/usr/bin/env python
++"""
++Test script to demonstrate that the srepr issue with dict and set has been fixed.
++"""
++
++from sympy import srepr, Symbol
++from sympy.abc import x, y
++
++print("=== Demonstrating the fix for srepr not printing dict and set properly ===\n")
++
++print("Before the fix (expected behavior):")
++print("srepr([x, y]) would return: [Symbol('x'), Symbol('y')]")
++print("srepr((x, y)) would return: (Symbol('x'), Symbol('y'))")
++print("srepr({x, y}) would return: {x, y}  # This was wrong!")
++print("srepr({x: y}) would return: {x: y}  # This was wrong!")
++
++print("\nAfter the fix (actual behavior):")
++print(f"srepr([x, y]) returns: {srepr([x, y])}")
++print(f"srepr((x, y)) returns: {srepr((x, y))}")
++print(f"srepr({{x, y}}) returns: {srepr({x, y})}")
++print(f"srepr({{x: y}}) returns: {srepr({x: y})}")
++
++print("\nThe fix ensures that:")
++print("1. Elements in sets are printed with their symbolic representation")
++print("2. Both keys and values in dicts are printed with their symbolic representation")
++print("3. Empty sets are handled correctly")
++print("4. The behavior is now consistent with lists and tuples")
++
++print("\nAdditional test cases:")
++print(f"srepr(set()) returns: {srepr(set())}")
++print(f"srepr({{}}) returns: {srepr({})}")
++
++# Test with more complex expressions
++z = Symbol('z')
++expr = x**2 + y*z
++print(f"srepr({{x, expr}}) returns: {srepr({x, expr})}")
++print(f"srepr({{x: expr}}) returns: {srepr({x: expr})}")
++
++print("\n✓ The issue has been successfully fixed!")
+diff --git a/sympy/printing/repr.py b/sympy/printing/repr.py
+index c936a692c0..9210dc1593 100644
+--- a/sympy/printing/repr.py
++++ b/sympy/printing/repr.py
+@@ -250,6 +250,18 @@ def _print_tuple(self, expr):
+         else:
+             return "(%s)" % self.reprify(expr, ", ")
+ 
++    def _print_dict(self, expr):
++        items = []
++        for key, value in expr.items():
++            items.append("%s: %s" % (self._print(key), self._print(value)))
++        return "{%s}" % ", ".join(items)
++
++    def _print_set(self, expr):
++        if len(expr) == 0:
++            return "set()"
++        else:
++            return "{%s}" % self.reprify(sorted(expr, key=str), ", ")
++
+     def _print_WildFunction(self, expr):
+         return "%s('%s')" % (expr.__class__.__name__, expr.name)
+ 
+diff --git a/sympy/printing/tests/test_repr.py b/sympy/printing/tests/test_repr.py
+index f749683ff7..32dbc2371a 100644
+--- a/sympy/printing/tests/test_repr.py
++++ b/sympy/printing/tests/test_repr.py
+@@ -193,6 +193,23 @@ def test_tuple():
+     sT((x, y), "(Symbol('x'), Symbol('y'))")
+ 
+ 
++def test_dict():
++    sT({x: y}, "{Symbol('x'): Symbol('y')}")
++    # Dictionary order might vary, so check both possibilities
++    result = srepr({x: y, y: x})
++    assert result in [
++        "{Symbol('x'): Symbol('y'), Symbol('y'): Symbol('x')}",
++        "{Symbol('y'): Symbol('x'), Symbol('x'): Symbol('y')}"
++    ]
++    sT({}, "{}")
++
++
++def test_set():
++    sT({x}, "{Symbol('x')}")
++    sT({x, y}, "{Symbol('x'), Symbol('y')}")
++    sT(set(), "set()")
++
++
+ def test_WildFunction():
+     sT(WildFunction('w'), "WildFunction('w')")
+ 
+diff --git a/test_srepr_issue.py b/test_srepr_issue.py
+new file mode 100644
+index 0000000000..749448afc5
+--- /dev/null
++++ b/test_srepr_issue.py
+@@ -0,0 +1,30 @@
++from sympy import srepr, Symbol
++from sympy.abc import x, y
++
++# Test cases showing the issue
++print("Testing list:")
++print(f"srepr([x, y]) = {srepr([x, y])}")
++print()
++
++print("Testing tuple:")
++print(f"srepr((x, y)) = {srepr((x, y))}")
++print()
++
++print("Testing set:")
++print(f"srepr({{x, y}}) = {srepr({x, y})}")
++print()
++
++print("Testing dict:")
++print(f"srepr({{x: y}}) = {srepr({x: y})}")
++print()
++
++# Test with more complex expressions
++z = Symbol('z')
++expr = x**2 + y*z
++
++print("Testing set with complex expression:")
++print(f"srepr({{expr, x}}) = {srepr({expr, x})}")
++print()
++
++print("Testing dict with complex expression:")
++print(f"srepr({{x: expr}}) = {srepr({x: expr})}")

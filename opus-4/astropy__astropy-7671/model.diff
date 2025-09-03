@@ -1,0 +1,182 @@
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc3..1b61272801 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -13,6 +13,9 @@ __all__ = ['resolve_name', 'minversion', 'find_current_module',
+            'isinstancemethod']
+ 
+ 
++
++
++
+ __doctest_skip__ = ['find_current_module']
+ 
+ 
+@@ -139,10 +142,54 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+     else:
+         have_version = resolve_name(module.__name__, version_path)
+ 
+-    if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
+-    else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++    try:
++        # First try with LooseVersion as it's more standard
++        if inclusive:
++            return LooseVersion(have_version) >= LooseVersion(version)
++        else:
++            return LooseVersion(have_version) > LooseVersion(version)
++    except TypeError:
++        # LooseVersion fails with mixed types (e.g., '1.14.3' vs '1.14dev')
++        # Try packaging.version if available (lightweight compared to pkg_resources)
++        try:
++            from packaging.version import Version
++            if inclusive:
++                return Version(have_version) >= Version(version)
++            else:
++                return Version(have_version) > Version(version)
++        except ImportError:
++            # Fall back to pkg_resources as it handles dev versions correctly
++            try:
++                from pkg_resources import parse_version
++                if inclusive:
++                    return parse_version(have_version) >= parse_version(version)
++                else:
++                    return parse_version(have_version) > parse_version(version)
++            except ImportError:
++                # Last resort: treat dev versions as less than release versions
++                # This is a simple heuristic that may not be perfect but handles common cases
++                import re
++                
++                def normalize_version(v):
++                    # Strip dev/rc/alpha/beta suffixes for comparison
++                    # Dev versions are treated as less than the base version
++                    match = re.match(r'^(\d+(?:\.\d+)*)', str(v))
++                    if match:
++                        base = match.group(1)
++                        if 'dev' in str(v).lower() or 'rc' in str(v).lower() or 'alpha' in str(v).lower() or 'beta' in str(v).lower():
++                            # Append .0 to make dev versions sort before x.y.z versions
++                            return base + '.0'
++                        return base
++                    return str(v)
++                
++                norm_have = normalize_version(have_version)
++                norm_version = normalize_version(version)
++                
++                # Now both should be numeric-only and comparable with LooseVersion
++                if inclusive:
++                    return LooseVersion(norm_have) >= LooseVersion(norm_version)
++                else:
++                    return LooseVersion(norm_have) > LooseVersion(norm_version)
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+diff --git a/debug_version.py b/debug_version.py
+new file mode 100644
+index 0000000000..cb5ca62acd
+--- /dev/null
++++ b/debug_version.py
+@@ -0,0 +1,22 @@
++from astropy.utils.introspection import _version_to_tuple
++
++# Test the tuple conversion
++print("Testing _version_to_tuple:")
++versions = ['1.14.3', '1.14dev', '1.14', '1.14rc1']
++
++for v in versions:
++    t = _version_to_tuple(v)
++    print("  '{}' -> {}".format(v, t))
++
++# Test comparisons
++print("\nTesting comparisons:")
++v1_tuple = _version_to_tuple('1.14.3')
++v2_tuple = _version_to_tuple('1.14dev')
++print("  '1.14.3' tuple: {}".format(v1_tuple))
++print("  '1.14dev' tuple: {}".format(v2_tuple))
++
++try:
++    result = v1_tuple >= v2_tuple
++    print("  '1.14.3' >= '1.14dev': {}".format(result))
++except Exception as e:
++    print("  Comparison failed: {} - {}".format(type(e).__name__, e))
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..eccb960c2c
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,47 @@
++#!/usr/bin/env python
++from astropy.utils import minversion
++from types import ModuleType
++
++def test_case(module_version, required_version, expected, test_name):
++    test_module = ModuleType(str("test_module"))
++    test_module.__version__ = module_version
++    
++    try:
++        result = minversion(test_module, required_version)
++        status = "PASS" if result == expected else "FAIL"
++        print("{}: {} (module='{}', required='{}') -> {} (expected: {})".format(
++            status, test_name, module_version, required_version, result, expected))
++    except Exception as e:
++        print("FAIL: {} - {} - {}".format(test_name, type(e).__name__, e))
++
++print("Testing minversion with various version combinations...")
++print()
++
++# Test cases from the issue
++test_case('1.14.3', '1.14dev', True, "Issue case: release > dev")
++test_case('1.14', '1.14dev', True, "Issue case without patch: release >= dev")
++
++# Original test cases from test_introspection.py 
++test_case('0.12.2', '0.12', True, "Basic: 0.12.2 >= 0.12")
++test_case('0.12.2', '0.12.1', True, "Basic: 0.12.2 >= 0.12.1")
++test_case('0.12.2', '0.12.0.dev', True, "Basic: 0.12.2 >= 0.12.0.dev")
++test_case('0.12.2', '1', False, "Basic: 0.12.2 < 1")
++test_case('0.12.2', '1.2rc1', False, "Basic: 0.12.2 < 1.2rc1")
++
++# Additional edge cases
++test_case('1.14dev', '1.14', False, "Dev version: dev < release")
++test_case('1.14rc1', '1.14', False, "RC version: rc < release")
++test_case('1.14.0', '1.14', True, "Patch zero: 1.14.0 >= 1.14")
++test_case('2.0', '1.14.3', True, "Major version: 2.0 > 1.14.3")
++test_case('1.14.3', '1.14.3', True, "Equal versions")
++test_case('1.14.3', '1.14.4', False, "Patch version comparison")
++
++# Test numpy if available
++print("\nTesting with numpy...")
++try:
++    import numpy
++    print("numpy version: {}".format(numpy.__version__))
++    result = minversion('numpy', '1.14dev')
++    print("minversion('numpy', '1.14dev'): {}".format(result))
++except Exception as e:
++    print("Error testing numpy: {} - {}".format(type(e).__name__, e))
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..0857b3de0a
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,19 @@
++#!/usr/bin/env python
++from astropy.utils import minversion
++from types import ModuleType
++
++# Test case from the issue
++test_module = ModuleType(str("test_module"))
++test_module.__version__ = '1.14.3'
++
++print("Testing minversion fix...")
++print("Test case: module version='1.14.3', required version='1.14dev'")
++
++try:
++    result = minversion(test_module, '1.14dev')
++    print("Result: {}".format(result))
++    print("SUCCESS: No TypeError!")
++except TypeError as e:
++    print("FAILED: TypeError - {}".format(e))
++except Exception as e:
++    print("FAILED: {} - {}".format(type(e).__name__, e))
+diff --git a/test_minversion_fix.py b/test_minversion_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2

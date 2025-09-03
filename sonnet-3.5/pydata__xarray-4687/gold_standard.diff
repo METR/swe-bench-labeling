@@ -1,0 +1,478 @@
+From acda14ea6255f16bb660fb4a9cc16b94f3a6904b Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Sun, 13 Dec 2020 21:24:03 +0100
+Subject: [PATCH 01/14] allow controlling xarray.where using the keep_attrs
+ option
+
+---
+ xarray/core/computation.py       |  5 ++++-
+ xarray/tests/test_computation.py | 14 ++++++++++++++
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index c332ecb0d00..62fed32746a 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -28,7 +28,7 @@
+ from . import dtypes, duck_array_ops, utils
+ from .alignment import align, deep_align
+ from .merge import merge_coordinates_without_align
+-from .options import OPTIONS
++from .options import OPTIONS, _get_keep_attrs
+ from .pycompat import is_duck_dask_array
+ from .utils import is_dict_like
+ from .variable import Variable
+@@ -1571,6 +1571,8 @@ def where(cond, x, y):
+     numpy.where : corresponding numpy function
+     Dataset.where, DataArray.where : equivalent methods
+     """
++    keep_attrs = _get_keep_attrs(default=False)
++
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(
+         duck_array_ops.where,
+@@ -1580,6 +1582,7 @@ def where(cond, x, y):
+         join="exact",
+         dataset_join="exact",
+         dask="allowed",
++        keep_attrs=keep_attrs,
+     )
+ 
+ 
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index 1922977fdeb..8421291111c 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -1468,6 +1468,20 @@ def test_where():
+     assert_identical(expected, actual)
+ 
+ 
++def test_where_attrs():
++    cond = xr.DataArray([True, False], dims="x", attrs={"attr": "value"})
++
++    with xr.set_options(keep_attrs=False):
++        actual = xr.where(cond, 1, 0)
++        expected = xr.DataArray([1, 0], dims="x")
++        assert_identical(expected, actual)
++
++    with xr.set_options(keep_attrs=True):
++        actual = xr.where(cond, 1, 0)
++        expected = xr.DataArray([1, 0], dims="x", attrs={"attr": "value"})
++        assert_identical(expected, actual)
++
++
+ @pytest.mark.parametrize("use_dask", [True, False])
+ @pytest.mark.parametrize("use_datetime", [True, False])
+ def test_polyval(use_dask, use_datetime):
+
+From 386bcd3c38346ad6b24133390bea455547e8dda6 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Mon, 14 Dec 2020 20:08:00 +0100
+Subject: [PATCH 02/14] black
+
+---
+ xarray/tests/test_units.py | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/xarray/tests/test_units.py b/xarray/tests/test_units.py
+index bb3127e90b5..8afe83f7af9 100644
+--- a/xarray/tests/test_units.py
++++ b/xarray/tests/test_units.py
+@@ -2417,10 +2417,7 @@ def test_binary_operations(self, func, dtype):
+         (
+             pytest.param(operator.lt, id="less_than"),
+             pytest.param(operator.ge, id="greater_equal"),
+-            pytest.param(
+-                operator.eq,
+-                id="equal",
+-            ),
++            pytest.param(operator.eq, id="equal"),
+         ),
+     )
+     @pytest.mark.parametrize(
+
+From b60447a2710e344f46c40dcaec5f579e0b5a0b5e Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Mon, 14 Dec 2020 20:09:35 +0100
+Subject: [PATCH 03/14] document that the attributes of x and y will be ignored
+
+---
+ xarray/core/computation.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 62fed32746a..4b71e834ea2 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1512,6 +1512,10 @@ def where(cond, x, y):
+         In priority order: Dataset, DataArray, Variable or array, whichever
+         type appears as an input argument.
+ 
++    Notes
++    -----
++    Only the attrs on `cond` will be kept.
++
+     Examples
+     --------
+     >>> import xarray as xr
+
+From 1db163b455c71f57b8dab9b56283ba74815fd0f8 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Mon, 14 Dec 2020 20:10:50 +0100
+Subject: [PATCH 04/14] always keep the attrs
+
+---
+ xarray/core/computation.py | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 4b71e834ea2..f6c36c8e70e 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -28,7 +28,7 @@
+ from . import dtypes, duck_array_ops, utils
+ from .alignment import align, deep_align
+ from .merge import merge_coordinates_without_align
+-from .options import OPTIONS, _get_keep_attrs
++from .options import OPTIONS
+ from .pycompat import is_duck_dask_array
+ from .utils import is_dict_like
+ from .variable import Variable
+@@ -1575,8 +1575,6 @@ def where(cond, x, y):
+     numpy.where : corresponding numpy function
+     Dataset.where, DataArray.where : equivalent methods
+     """
+-    keep_attrs = _get_keep_attrs(default=False)
+-
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(
+         duck_array_ops.where,
+@@ -1586,7 +1584,7 @@ def where(cond, x, y):
+         join="exact",
+         dataset_join="exact",
+         dask="allowed",
+-        keep_attrs=keep_attrs,
++        keep_attrs=True,
+     )
+ 
+ 
+
+From e62eb6daa23485d522fb667a50c22fdab81209a9 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Mon, 14 Dec 2020 20:12:50 +0100
+Subject: [PATCH 05/14] add a entry to whats-new.rst
+
+---
+ doc/whats-new.rst | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 94a38757851..ee2b99cd55e 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -22,7 +22,8 @@ v0.16.3 (unreleased)
+ 
+ Breaking changes
+ ~~~~~~~~~~~~~~~~
+-
++- keep attrs for :py:func:`where` (:issue:`4141`, :issue:`4682`, :pull:`4687`).
++  By `Justus Magin <https://github.com/keewis>`_.
+ 
+ New Features
+ ~~~~~~~~~~~~
+
+From 667adc896ff7b4dd6a41d732c45fbebe24584d11 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Mon, 14 Dec 2020 20:19:55 +0100
+Subject: [PATCH 06/14] update the tests
+
+---
+ xarray/tests/test_computation.py | 13 +++----------
+ 1 file changed, 3 insertions(+), 10 deletions(-)
+
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index 8421291111c..6a0dd5c4908 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -1470,16 +1470,9 @@ def test_where():
+ 
+ def test_where_attrs():
+     cond = xr.DataArray([True, False], dims="x", attrs={"attr": "value"})
+-
+-    with xr.set_options(keep_attrs=False):
+-        actual = xr.where(cond, 1, 0)
+-        expected = xr.DataArray([1, 0], dims="x")
+-        assert_identical(expected, actual)
+-
+-    with xr.set_options(keep_attrs=True):
+-        actual = xr.where(cond, 1, 0)
+-        expected = xr.DataArray([1, 0], dims="x", attrs={"attr": "value"})
+-        assert_identical(expected, actual)
++    actual = xr.where(cond, 1, 0)
++    expected = xr.DataArray([1, 0], dims="x", attrs={"attr": "value"})
++    assert_identical(expected, actual)
+ 
+ 
+ @pytest.mark.parametrize("use_dask", [True, False])
+
+From 259bf82743d5b0ada4c418b2f11ae98679fc3f0f Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Sat, 1 Jan 2022 12:03:05 +0100
+Subject: [PATCH 07/14] add a keep_attrs parameter to xr.where
+
+---
+ xarray/core/computation.py | 17 +++++++++++------
+ 1 file changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 6c84aa1ae0b..18927f74f21 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1727,7 +1727,7 @@ def dot(*arrays, dims=None, **kwargs):
+     return result.transpose(*all_dims, missing_dims="ignore")
+ 
+ 
+-def where(cond, x, y):
++def where(cond, x, y, keep_attrs=None):
+     """Return elements from `x` or `y` depending on `cond`.
+ 
+     Performs xarray-like broadcasting across input arguments.
+@@ -1743,6 +1743,8 @@ def where(cond, x, y):
+         values to choose from where `cond` is True
+     y : scalar, array, Variable, DataArray or Dataset
+         values to choose from where `cond` is False
++    keep_attrs : bool or str or callable, optional
++        How to treat attrs. If True, keep the attrs of `x`.
+ 
+     Returns
+     -------
+@@ -1750,10 +1752,6 @@ def where(cond, x, y):
+         In priority order: Dataset, DataArray, Variable or array, whichever
+         type appears as an input argument.
+ 
+-    Notes
+-    -----
+-    Only the attrs on `cond` will be kept.
+-
+     Examples
+     --------
+     >>> x = xr.DataArray(
+@@ -1812,6 +1810,13 @@ def where(cond, x, y):
+     Dataset.where, DataArray.where :
+         equivalent methods
+     """
++    if keep_attrs is None:
++        keep_attrs = _get_keep_attrs(default=False)
++
++    if isinstance(keep_attrs, bool) and keep_attrs:
++        # keep the attributes of x by default
++        keep_attrs = lambda attrs: attrs[1]
++
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(
+         duck_array_ops.where,
+@@ -1821,7 +1826,7 @@ def where(cond, x, y):
+         join="exact",
+         dataset_join="exact",
+         dask="allowed",
+-        keep_attrs=True,
++        keep_attrs=keep_attrs,
+     )
+ 
+ 
+
+From 83907200af6bfb72568ca962e2332b8c9066da41 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Sat, 1 Jan 2022 12:07:55 +0100
+Subject: [PATCH 08/14] rewrite the test to demonstrate keep_attrs
+
+---
+ xarray/core/computation.py       | 2 +-
+ xarray/tests/test_computation.py | 8 +++++---
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 18927f74f21..8d45ae3507e 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1815,7 +1815,7 @@ def where(cond, x, y, keep_attrs=None):
+ 
+     if isinstance(keep_attrs, bool) and keep_attrs:
+         # keep the attributes of x by default
+-        keep_attrs = lambda attrs: attrs[1]
++        keep_attrs = lambda attrs, context: attrs[1]
+ 
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index bcf065a93b8..b5efb48fc20 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -1923,9 +1923,11 @@ def test_where() -> None:
+ 
+ 
+ def test_where_attrs():
+-    cond = xr.DataArray([True, False], dims="x", attrs={"attr": "value"})
+-    actual = xr.where(cond, 1, 0)
+-    expected = xr.DataArray([1, 0], dims="x", attrs={"attr": "value"})
++    cond = xr.DataArray([True, False], dims="x", attrs={"attr": "cond"})
++    x = xr.DataArray([1, 1], dims="x", attrs={"attr": "x"})
++    y = xr.DataArray([0, 0], dims="x", attrs={"attr": "y"})
++    actual = xr.where(cond, x, y, keep_attrs=True)
++    expected = xr.DataArray([1, 0], dims="x", attrs={"attr": "x"})
+     assert_identical(expected, actual)
+ 
+ 
+
+From edf99275c55625dda856ee9094f961271eabfff5 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Sat, 1 Jan 2022 12:10:00 +0100
+Subject: [PATCH 09/14] make mypy check the test
+
+---
+ xarray/tests/test_computation.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index b5efb48fc20..be1e93a1506 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -1922,7 +1922,7 @@ def test_where() -> None:
+     assert_identical(expected, actual)
+ 
+ 
+-def test_where_attrs():
++def test_where_attrs() -> None:
+     cond = xr.DataArray([True, False], dims="x", attrs={"attr": "cond"})
+     x = xr.DataArray([1, 1], dims="x", attrs={"attr": "x"})
+     y = xr.DataArray([0, 0], dims="x", attrs={"attr": "y"})
+
+From 883af0612bc1c6ef1039e1ba44aad08d67113fd8 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Tue, 4 Jan 2022 12:02:53 +0100
+Subject: [PATCH 10/14] fix whats-new.rst
+
+---
+ doc/whats-new.rst | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 255018194d0..296718fdf71 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -23,7 +23,8 @@ New Features
+ ~~~~~~~~~~~~
+ - New top-level function :py:func:`cross`. (:issue:`3279`, :pull:`5365`).
+   By `Jimmy Westling <https://github.com/illviljan>`_.
+-
++- ``keep_attrs`` support for :py:func:`where` (:issue:`4141`, :issue:`4682`, :pull:`4687`).
++  By `Justus Magin <https://github.com/keewis>`_.
+ 
+ Breaking changes
+ ~~~~~~~~~~~~~~~~
+@@ -764,11 +765,6 @@ Deprecations
+ New Features
+ ~~~~~~~~~~~~
+ 
+-- ``keep_attrs`` support for :py:func:`where` (:issue:`4141`, :issue:`4682`, :pull:`4687`).
+-  By `Justus Magin <https://github.com/keewis>`_.
+-- Xarray now leverages updates as of cftime version 1.4.1, which enable exact I/O
+-  roundtripping of ``cftime.datetime`` objects (:pull:`4758`).
+-  By `Spencer Clark <https://github.com/spencerkclark>`_.
+ - Deprecated ``autoclose`` kwargs from :py:func:`open_dataset` are removed (:pull:`4725`).
+   By `Aureliana Barghini <https://github.com/aurghs>`_.
+ - the return value of :py:meth:`Dataset.update` is being deprecated to make it work more
+
+From 72addb3ea300fb0798a464571672cadf670a52a7 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Tue, 4 Jan 2022 12:06:38 +0100
+Subject: [PATCH 11/14] remove a merge artifact
+
+---
+ doc/whats-new.rst | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 296718fdf71..f89d0b04055 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -761,10 +761,6 @@ Deprecations
+   For now using ``dim`` issues a ``FutureWarning``. It will be removed in
+   version 0.19.0 (:pull:`3993`).
+   By `Tom Nicholas <https://github.com/TomNicholas>`_.
+-
+-New Features
+-~~~~~~~~~~~~
+-
+ - Deprecated ``autoclose`` kwargs from :py:func:`open_dataset` are removed (:pull:`4725`).
+   By `Aureliana Barghini <https://github.com/aurghs>`_.
+ - the return value of :py:meth:`Dataset.update` is being deprecated to make it work more
+
+From a03a82e86154c24f2a1c2afec5eb26585e968c9b Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Tue, 4 Jan 2022 12:07:17 +0100
+Subject: [PATCH 12/14] more merge artifacts
+
+---
+ doc/whats-new.rst | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index f89d0b04055..c9a42044434 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -710,7 +710,6 @@ alexamici, aurghs, crusaderky, dcherian, ghislainp, keewis, rhkleijn
+ 
+ Breaking changes
+ ~~~~~~~~~~~~~~~~
+-
+ - xarray no longer supports python 3.6
+ 
+   The minimum version policy was changed to also apply to projects with irregular
+
+From 6ae1339751b3c6a753d484f4eb22f4611eab2627 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Tue, 4 Jan 2022 12:24:05 +0100
+Subject: [PATCH 13/14] just make sure the value is exactly True
+
+---
+ xarray/core/computation.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 8d45ae3507e..6efdf196ee0 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1813,7 +1813,7 @@ def where(cond, x, y, keep_attrs=None):
+     if keep_attrs is None:
+         keep_attrs = _get_keep_attrs(default=False)
+ 
+-    if isinstance(keep_attrs, bool) and keep_attrs:
++    if keep_attrs is True:
+         # keep the attributes of x by default
+         keep_attrs = lambda attrs, context: attrs[1]
+ 
+
+From 39275b5bae546d2b74083641d7932c20ea38c341 Mon Sep 17 00:00:00 2001
+From: Keewis <keewis@posteo.de>
+Date: Wed, 19 Jan 2022 19:05:27 +0100
+Subject: [PATCH 14/14] extend the comment
+
+---
+ xarray/core/computation.py | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 6efdf196ee0..5e6340feed2 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1814,7 +1814,8 @@ def where(cond, x, y, keep_attrs=None):
+         keep_attrs = _get_keep_attrs(default=False)
+ 
+     if keep_attrs is True:
+-        # keep the attributes of x by default
++        # keep the attributes of x, the second parameter, by default to
++        # be consistent with the `where` method of `DataArray` and `Dataset`
+         keep_attrs = lambda attrs, context: attrs[1]
+ 
+     # alignment for three arguments is complicated, so don't support it yet

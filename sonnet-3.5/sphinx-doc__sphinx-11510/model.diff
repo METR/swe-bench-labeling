@@ -1,0 +1,39 @@
+diff --git a/sphinx/io.py b/sphinx/io.py
+index 4874fdf39..94aff1690 100644
+--- a/sphinx/io.py
++++ b/sphinx/io.py
+@@ -103,8 +103,21 @@ class SphinxStandaloneReader(SphinxBaseReader):
+         self.settings = settings
+         self.input = self.read_source(settings.env)
+         self.parse()
++        self.process_includes(settings.env)
++        self.parse()  # Parse again to process the included content
+         return self.document
+ 
++    def process_includes(self, env: BuildEnvironment) -> None:
++        """Process included files and trigger 'source-read' event for them."""
++        for node in self.document.traverse(nodes.include):
++            if 'source' in node:
++                include_source = node['source']
++                with open(include_source, 'r') as f:
++                    include_content = f.read()
++                arg = [include_content]
++                env.events.emit('source-read', include_source, arg)
++                node.replace_self(nodes.Text(arg[0]))
++
+     def read_source(self, env: BuildEnvironment) -> str:
+         """Read content from source and do post-process."""
+         content = self.source.read()
+diff --git a/tox.ini b/tox.ini
+index a3dc56211..c76147de3 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -24,7 +24,7 @@ setenv =
+     PYTHONWARNINGS = error
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -X warn_default_encoding -m pytest --durations 25 {posargs}
++    python -X dev -X warn_default_encoding -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:docs]
+ basepython = python3

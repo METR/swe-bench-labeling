@@ -1,0 +1,54 @@
+From a05f3795225a90d5fa56683695940ff3f0c0c49b Mon Sep 17 00:00:00 2001
+From: Thomas A Caswell <tcaswell@gmail.com>
+Date: Fri, 22 Jul 2022 14:55:38 -0400
+Subject: [PATCH] FIX: reset to original DPI in getstate
+
+There is a bit of extra caution in extracting the original DPI
+just in case there is a canvas class that does something very funny
+and the `_orignial_dpi` attribute does not get set (it is set to the `Figure`
+instance in the `CanvasBase` init, not in the `Figure` init).
+
+closes #23471
+---
+ lib/matplotlib/figure.py            | 3 +++
+ lib/matplotlib/tests/test_figure.py | 9 +++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
+index c55864243a75..6516816ed6f6 100644
+--- a/lib/matplotlib/figure.py
++++ b/lib/matplotlib/figure.py
+@@ -3023,6 +3023,9 @@ def __getstate__(self):
+         # Set cached renderer to None -- it can't be pickled.
+         state["_cachedRenderer"] = None
+ 
++        # discard any changes to the dpi due to pixel ratio changes
++        state["_dpi"] = state.get('_original_dpi', state['_dpi'])
++
+         # add version information to the state
+         state['__mpl_version__'] = mpl.__version__
+ 
+diff --git a/lib/matplotlib/tests/test_figure.py b/lib/matplotlib/tests/test_figure.py
+index ec1a814ebc59..9f3eb68281ca 100644
+--- a/lib/matplotlib/tests/test_figure.py
++++ b/lib/matplotlib/tests/test_figure.py
+@@ -2,6 +2,7 @@
+ from datetime import datetime
+ import io
+ from pathlib import Path
++import pickle
+ import platform
+ from threading import Timer
+ from types import SimpleNamespace
+@@ -1380,3 +1381,11 @@ def test_deepcopy():
+ 
+     assert ax.get_xlim() == (1e-1, 1e2)
+     assert fig2.axes[0].get_xlim() == (0, 1)
++
++
++def test_unpickle_with_device_pixel_ratio():
++    fig = Figure(dpi=42)
++    fig.canvas._set_device_pixel_ratio(7)
++    assert fig.dpi == 42*7
++    fig2 = pickle.loads(pickle.dumps(fig))
++    assert fig2.dpi == 42

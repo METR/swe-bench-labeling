@@ -1,0 +1,70 @@
+From d1c039406ffc89d06aa89188be4c0b7a853a49dd Mon Sep 17 00:00:00 2001
+From: eward <eward@sunbelt-medical.com>
+Date: Mon, 1 Jul 2019 12:13:50 -0700
+Subject: [PATCH 1/3] _TR56 test exp is real
+
+---
+ sympy/simplify/fu.py | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/sympy/simplify/fu.py b/sympy/simplify/fu.py
+index ad1130ef96ea..612bc0bb6900 100644
+--- a/sympy/simplify/fu.py
++++ b/sympy/simplify/fu.py
+@@ -500,6 +500,8 @@ def _f(rv):
+         # change is not going to allow a simplification as far as I can tell.
+         if not (rv.is_Pow and rv.base.func == f):
+             return rv
++        if not rv.exp.is_real:
++            return rv
+ 
+         if (rv.exp < 0) == True:
+             return rv
+
+From 4e910a730956fc35bbfed226161001de4ea79dd0 Mon Sep 17 00:00:00 2001
+From: eward <eward@sunbelt-medical.com>
+Date: Mon, 1 Jul 2019 12:14:08 -0700
+Subject: [PATCH 2/3] test__TR56 complex exponents
+
+---
+ sympy/simplify/tests/test_fu.py | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/sympy/simplify/tests/test_fu.py b/sympy/simplify/tests/test_fu.py
+index 54be6e1dca48..b2d2604a450b 100644
+--- a/sympy/simplify/tests/test_fu.py
++++ b/sympy/simplify/tests/test_fu.py
+@@ -76,6 +76,10 @@ def test__TR56():
+     assert T(sin(x)**6, sin, cos, h, 6, True) == sin(x)**6
+     assert T(sin(x)**8, sin, cos, h, 10, True) == (-cos(x)**2 + 1)**4
+ 
++    # issue 17137
++    assert T(sin(x)**I, sin, cos, h, 4, True) == sin(x)**I
++    assert T(sin(x)**(2*I + 1), sin, cos, h, 4, True) == sin(x)**(2*I + 1)
++
+ 
+ def test_TR5():
+     assert TR5(sin(x)**2) == -cos(x)**2 + 1
+
+From 4729a80f0b89acd542f6c1b461fe6ec245000a75 Mon Sep 17 00:00:00 2001
+From: eward <eward@sunbelt-medical.com>
+Date: Mon, 1 Jul 2019 13:15:22 -0700
+Subject: [PATCH 3/3] test_issue_17137
+
+---
+ sympy/simplify/tests/test_simplify.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/sympy/simplify/tests/test_simplify.py b/sympy/simplify/tests/test_simplify.py
+index a8611ec385af..1794c453c572 100644
+--- a/sympy/simplify/tests/test_simplify.py
++++ b/sympy/simplify/tests/test_simplify.py
+@@ -806,3 +806,8 @@ def test_issue_15965():
+     assert simplify(A + B) == anew + bnew
+     assert simplify(A) == anew
+     assert simplify(B) == bnew
++
++
++def test_issue_17137():
++    assert simplify(cos(x)**I) == cos(x)**I
++    assert simplify(cos(x)**(2 + 3*I)) == cos(x)**(2 + 3*I)

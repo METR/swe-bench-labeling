@@ -1,0 +1,189 @@
+diff --git a/run_kerns_test.py b/run_kerns_test.py
+new file mode 100644
+index 0000000000..a4a042c32e
+--- /dev/null
++++ b/run_kerns_test.py
+@@ -0,0 +1,46 @@
++from sympy.core.sympify import kernS
++from sympy import Symbol, Interval, Add, Mul, exp, sin, cos, Rational, S, Matrix
++from sympy.abc import x, y
++
++# Test from test_kernS
++s = '-1 - 2*(-(-x + 1/x)/(x*(x - 1/x)**2) - 1/(x*(x - 1/x)))'
++ss = kernS(s)
++print(f"Test 1: {ss != -1 and ss.simplify() == -1}")
++
++s = '-1 - 2*(-(-x + 1/x)/(x*(x - 1/x)**2) - 1/(x*(x - 1/x)))'.replace('x', '_kern')
++ss = kernS(s)
++print(f"Test 2: {ss != -1 and ss.simplify() == -1}")
++
++# issue 6687
++result = kernS('Interval(-1,-2 - 4*(-3))')
++expected = Interval(-1, Add(-2, Mul(12, 1, evaluate=False), evaluate=False))
++print(f"Test 3: {result == expected}")
++
++print(f"Test 4: {kernS('_kern') == Symbol('_kern')}")
++print(f"Test 5: {kernS('E**-(x)') == exp(-x)}")
++
++e = 2*(x + y)*y
++result = kernS(['2*(x + y)*y', ('2*(x + y)*y',)])
++print(f"Test 6: {result == [e, (e,)]}")
++
++result = kernS('-(2*sin(x)**2 + 2*sin(x)*cos(x))*y/2')
++expected = -y*(2*sin(x)**2 + 2*sin(x)*cos(x))/2
++print(f"Test 7: {result == expected}")
++
++# issue 15132
++print(f"Test 8: {kernS('(1 - x)/(1 - x*(1-y))') == kernS('(1-x)/(1-(1-y)*x)')}")
++print(f"Test 9: {kernS('(1-2**-(4+1)*(1-y)*x)') == (1 - x*(1 - y)/32)}")
++print(f"Test 10: {kernS('(1-2**(4+1)*(1-y)*x)') == (1 - 32*x*(1 - y))}")
++print(f"Test 11: {kernS('(1-2.*(1-y)*x)') == 1 - 2.*x*(1 - y)}")
++
++one = kernS('x - (x - 1)')
++print(f"Test 12: {one != 1 and one.expand() == 1}")
++
++# Test the original issue  
++print("\nOriginal issue test:")
++text = "(2*x)/(x-1)"
++try:
++    expr = kernS(text)
++    print(f"SUCCESS: kernS('{text}') = {expr}")
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")
+diff --git a/sympy/core/sympify.py b/sympy/core/sympify.py
+index a3f1ce2851..cc76b36915 100644
+--- a/sympy/core/sympify.py
++++ b/sympy/core/sympify.py
+@@ -513,7 +513,9 @@ def kernS(s):
+             while kern in s:
+                 kern += choice(string.ascii_letters + string.digits)
+             s = s.replace(' ', kern)
+-        hit = kern in s
++            hit = kern in s
++        else:
++            hit = False
+ 
+     for i in range(2):
+         try:
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..c82bfa82bb
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,23 @@
++from sympy.core.sympify import kernS
++
++# Test edge cases where no parentheses exist (hit should remain False)
++test_cases = [
++    "x + y",
++    "2*x",
++    "x/y",
++    "x**2",
++    # Test cases with parentheses but no spaces generated
++    "(x)",
++    "(x+y)",
++    "(2*x)",
++    # Test the original issue case
++    "(2*x)/(x-1)",
++]
++
++print("Testing edge cases:")
++for test in test_cases:
++    try:
++        result = kernS(test)
++        print(f"kernS('{test}') = {result} - SUCCESS")
++    except Exception as e:
++        print(f"kernS('{test}') - FAILED: {type(e).__name__}: {e}")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..151a261021
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,8 @@
++from sympy.core.sympify import kernS
++
++text = "(2*x)/(x-1)"
++try:
++    expr = kernS(text)
++    print(f"Success: {expr}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+diff --git a/test_kerns_comprehensive.py b/test_kerns_comprehensive.py
+new file mode 100644
+index 0000000000..99521f6cc8
+--- /dev/null
++++ b/test_kerns_comprehensive.py
+@@ -0,0 +1,41 @@
++from sympy.core.sympify import kernS
++from sympy.abc import x, y
++
++test_cases = [
++    # Original failing case
++    "(2*x)/(x-1)",
++    # Examples from docstring
++    "2*(x + y)",
++    "-(x + 1)",
++    # Other test cases
++    "x + y",
++    "2*x",
++    "-x",
++    "(x + y)*2",
++    "3*(a + b + c)",
++    # Edge cases
++    "()",
++    "(x)",
++    "x",
++    "",
++    # Cases with quotes
++    '"hello"',
++    "'world'",
++    # Cases that should trigger the kern logic
++    "2*(x+y)",
++    "-(x+y)",
++    "-( x + y )",
++]
++
++print("Testing kernS function:")
++print("-" * 50)
++
++for test in test_cases:
++    try:
++        result = kernS(test)
++        print(f"kernS('{test}') = {result}")
++    except Exception as e:
++        print(f"kernS('{test}') FAILED: {type(e).__name__}: {e}")
++
++print("-" * 50)
++print("All tests completed!")
+diff --git a/test_with_spaces.py b/test_with_spaces.py
+new file mode 100644
+index 0000000000..c87801c5a9
+--- /dev/null
++++ b/test_with_spaces.py
+@@ -0,0 +1,26 @@
++from sympy.core.sympify import kernS
++from sympy.abc import x, y
++
++# Test cases that should trigger the kern logic (spaces will be inserted)
++test_cases = [
++    "2*(x + y)",      # Should preserve structure
++    "-(x + 1)",       # Should preserve structure  
++    "3*(a + b + c)",  # Should preserve structure
++    "-(x+y)",         # Should preserve structure
++    "-( x + y )",     # Should preserve structure
++]
++
++print("Testing cases with kern logic:")
++for test in test_cases:
++    try:
++        result = kernS(test)
++        # Check if the structure is preserved (no distribution)
++        print(f"kernS('{test}') = {result}")
++        
++        # For comparison, show what plain sympify would do
++        from sympy import sympify
++        plain_result = sympify(test)
++        if str(result) != str(plain_result):
++            print(f"  (plain sympify would give: {plain_result})")
++    except Exception as e:
++        print(f"kernS('{test}') - FAILED: {type(e).__name__}: {e}")

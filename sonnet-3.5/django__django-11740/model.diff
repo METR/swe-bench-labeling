@@ -1,0 +1,49 @@
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+index 0dc1c77c53..4ad22fb0a9 100644
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -33,6 +33,12 @@ class MigrationAutodetector:
+         self.to_state = to_state
+         self.questioner = questioner or MigrationQuestioner()
+         self.existing_apps = {app for app, model in from_state.models}
++        self.dependencies = {}
++
++    def add_dependency(self, app_label, dependency_app_label, dependency_model_name):
++        if app_label not in self.dependencies:
++            self.dependencies[app_label] = set()
++        self.dependencies[app_label].add((dependency_app_label, dependency_model_name))
+ 
+     def changes(self, graph, trim_to_apps=None, convert_apps=None, migration_name=None):
+         """
+@@ -963,6 +969,14 @@ class MigrationAutodetector:
+                             preserve_default = False
+                     else:
+                         field = new_field
++                    
++                    # Check if we're changing from UUIDField to ForeignKey
++                    if isinstance(old_field, models.UUIDField) and isinstance(new_field, models.ForeignKey):
++                        # Add a dependency on the related model
++                        related_app_label = new_field.remote_field.model._meta.app_label
++                        related_model_name = new_field.remote_field.model._meta.model_name
++                        self.add_dependency(app_label, related_app_label, related_model_name)
++                    
+                     self.add_operation(
+                         app_label,
+                         operations.AlterField(
+@@ -1257,9 +1271,15 @@ class MigrationAutodetector:
+                 next_number += 1
+                 migration.name = new_name
+         # Now fix dependencies
+-        for migrations in changes.values():
++        for app_label, migrations in changes.items():
+             for migration in migrations:
+                 migration.dependencies = [name_map.get(d, d) for d in migration.dependencies]
++                # Add our collected dependencies
++                if app_label in self.dependencies:
++                    for dep_app_label, dep_model_name in self.dependencies[app_label]:
++                        dep_leaf = graph.leaf_nodes(dep_app_label)
++                        if dep_leaf:
++                            migration.dependencies.append(dep_leaf[0])
+         return changes
+ 
+     def _trim_to_apps(self, changes, app_labels):

@@ -1,0 +1,223 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..0fce5c1e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,21 @@
++import xarray as xr
++import numpy as np
++
++good_indexed, bad_indexed = xr.DataArray([None]), xr.DataArray([None])
++
++class HasValues(object):
++    values = 5
++    
++good_indexed.loc[{'dim_0': 0}] = set()
++bad_indexed.loc[{'dim_0': 0}] = HasValues()
++
++print("good_indexed.values =>", good_indexed.values)
++print("bad_indexed.values =>", bad_indexed.values)
++
++# Test with another object that has values attribute
++class AnotherHasValues(object):
++    values = [1, 2, 3]
++
++test_indexed = xr.DataArray([None])
++test_indexed.loc[{'dim_0': 0}] = AnotherHasValues()
++print("test_indexed.values =>", test_indexed.values)
+diff --git a/test_pandas_compat.py b/test_pandas_compat.py
+new file mode 100644
+index 00000000..07ca92fb
+--- /dev/null
++++ b/test_pandas_compat.py
+@@ -0,0 +1,31 @@
++import xarray as xr
++import pandas as pd
++import numpy as np
++
++# Test that pandas objects still work correctly
++arr = xr.DataArray([1, 2, 3])
++
++# Test with pandas Series
++s = pd.Series([10, 20, 30])
++arr.loc[{'dim_0': 0}] = s[0]
++print("After assigning pandas Series element:", arr.values)
++
++# Test with pandas DataFrame  
++df = pd.DataFrame({'a': [100, 200, 300]})
++arr2 = xr.DataArray([[1, 2], [3, 4]])
++try:
++    # This should work if dimensions match
++    arr2.loc[{'dim_0': 0}] = df.iloc[0].values
++    print("After assigning DataFrame row values:", arr2.values)
++except Exception as e:
++    print("Error with DataFrame:", e)
++
++# Test direct pandas Series assignment
++arr3 = xr.DataArray([None, None, None])
++arr3[:] = pd.Series([1, 2, 3])
++print("After assigning full pandas Series:", arr3.values)
++
++# Test that the fix doesn't affect numpy arrays
++arr4 = xr.DataArray([None])
++arr4.loc[{'dim_0': 0}] = np.array(42)
++print("After assigning numpy scalar:", arr4.values)
+diff --git a/test_values_attribute_fix.py b/test_values_attribute_fix.py
+new file mode 100644
+index 00000000..d19ae7b0
+--- /dev/null
++++ b/test_values_attribute_fix.py
+@@ -0,0 +1,52 @@
++import xarray as xr
++import numpy as np
++import pandas as pd
++
++
++def test_setitem_object_with_values_attribute():
++    """Test that objects with .values attribute are not coerced when assigned to DataArray"""
++    
++    # Test case 1: Object with scalar .values attribute
++    class HasScalarValues:
++        values = 5
++    
++    arr = xr.DataArray([None])
++    obj = HasScalarValues()
++    arr.loc[{'dim_0': 0}] = obj
++    
++    # Should store the object itself, not extract .values
++    assert isinstance(arr.values[0], HasScalarValues)
++    assert arr.values[0] is obj
++    
++    # Test case 2: Object with array .values attribute
++    class HasArrayValues:
++        values = [1, 2, 3]
++    
++    arr2 = xr.DataArray([None])
++    obj2 = HasArrayValues()
++    arr2.loc[{'dim_0': 0}] = obj2
++    
++    # Should store the object itself
++    assert isinstance(arr2.values[0], HasArrayValues)
++    assert arr2.values[0] is obj2
++    
++    # Test case 3: Ensure pandas objects still work correctly
++    arr3 = xr.DataArray([1, 2, 3])
++    series = pd.Series([10, 20, 30])
++    arr3[:] = series
++    np.testing.assert_array_equal(arr3.values, [10, 20, 30])
++    
++    # Test case 4: Multiple objects with values
++    arr4 = xr.DataArray([None, None])
++    obj3 = HasScalarValues()
++    obj4 = HasScalarValues()
++    arr4[0] = obj3
++    arr4[1] = obj4
++    
++    assert isinstance(arr4.values[0], HasScalarValues)
++    assert isinstance(arr4.values[1], HasScalarValues)
++    
++
++if __name__ == "__main__":
++    test_setitem_object_with_values_attribute()
++    print("All tests passed!")
+diff --git a/test_values_extraction.py b/test_values_extraction.py
+new file mode 100644
+index 00000000..94377faa
+--- /dev/null
++++ b/test_values_extraction.py
+@@ -0,0 +1,19 @@
++import pandas as pd
++import numpy as np
++
++# Test what types have .values that should be extracted
++df = pd.DataFrame([[1, 2], [3, 4]])
++series = pd.Series([1, 2, 3])
++
++print("DataFrame type:", type(df))
++print("Series type:", type(series))
++print("DataFrame.values type:", type(df.values))
++print("Series.values type:", type(series.values))
++
++# Check inheritance
++print("\nDataFrame bases:", pd.DataFrame.__bases__)
++print("Series bases:", pd.Series.__bases__)
++
++# Check if they have a common base that we can use
++print("\nIs DataFrame a pd.core.generic.NDFrame?", isinstance(df, pd.core.generic.NDFrame))
++print("Is Series a pd.core.generic.NDFrame?", isinstance(series, pd.core.generic.NDFrame))
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index 45553eb9..8e9df1aa 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -218,7 +218,14 @@ def as_compatible_data(data, fastpath=False):
+         data = np.timedelta64(getattr(data, "value", data), "ns")
+ 
+     # we don't want nested self-described arrays
+-    data = getattr(data, "values", data)
++    # only extract .values from pandas objects (DataFrame/Series)
++    # this check uses pandas' internal structure to avoid extracting .values
++    # from arbitrary objects that happen to have a .values attribute
++    if hasattr(pd.core.generic, 'NDFrame') and isinstance(data, pd.core.generic.NDFrame):
++        data = data.values
++    elif isinstance(data, (pd.DataFrame, pd.Series)):
++        # fallback for older pandas versions or if internal structure changes
++        data = data.values
+ 
+     if isinstance(data, np.ma.MaskedArray):
+         mask = np.ma.getmaskarray(data)
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index e1ae3e1f..50526d1c 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -1872,6 +1872,51 @@ class TestVariable(VariableSubclassobjects):
+         expected = Variable(["x", "y"], [[2, 3], [3, 4], [4, 5]])
+         assert_identical(v, expected)
+ 
++    def test_setitem_object_with_values_attribute(self):
++        """Test that objects with .values attribute are not coerced when assigned"""
++        # Regression test for GH issue - objects with .values should be stored as-is
++        # and not have their .values attribute extracted
++        
++        # Test with scalar .values attribute
++        class HasScalarValues:
++            values = 5
++        
++        v = Variable(["x"], [None])
++        obj = HasScalarValues()
++        v[0] = obj
++        
++        # Should store the object itself, not extract .values
++        assert isinstance(v.values[0], HasScalarValues)
++        assert v.values[0] is obj
++        
++        # Test with array .values attribute
++        class HasArrayValues:
++            values = [1, 2, 3]
++        
++        v2 = Variable(["x"], [None])
++        obj2 = HasArrayValues()
++        v2[0] = obj2
++        
++        # Should store the object itself
++        assert isinstance(v2.values[0], HasArrayValues)
++        assert v2.values[0] is obj2
++        
++        # Test with multiple objects
++        v3 = Variable(["x"], [None, None])
++        obj3 = HasScalarValues()
++        obj4 = HasScalarValues()
++        v3[0] = obj3
++        v3[1] = obj4
++        
++        assert isinstance(v3.values[0], HasScalarValues)
++        assert isinstance(v3.values[1], HasScalarValues)
++        
++        # Ensure pandas objects still work correctly (extract .values)
++        v4 = Variable(["x"], [1, 2, 3])
++        series = pd.Series([10, 20, 30])
++        v4[:] = series
++        assert_array_equal(v4.values, [10, 20, 30])
++
+     def test_coarsen(self):
+         v = self.cls(["x"], [0, 1, 2, 3, 4])
+         actual = v.coarsen({"x": 2}, boundary="pad", func="mean")

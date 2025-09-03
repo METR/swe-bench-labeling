@@ -1,0 +1,77 @@
+From 8779f99166eae65e124330b66fc4086700fd5334 Mon Sep 17 00:00:00 2001
+From: Alexander Dunlap <alexander.dunlap@gmail.com>
+Date: Thu, 4 Oct 2018 22:56:36 -0700
+Subject: [PATCH 1/2] Mathematica code printing of Max and Min
+
+---
+ sympy/printing/mathematica.py            | 5 ++++-
+ sympy/printing/tests/test_mathematica.py | 3 ++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/sympy/printing/mathematica.py b/sympy/printing/mathematica.py
+index ea7e3a2d9478..eaf90d7512f8 100644
+--- a/sympy/printing/mathematica.py
++++ b/sympy/printing/mathematica.py
+@@ -31,7 +31,8 @@
+     "asech": [(lambda x: True, "ArcSech")],
+     "acsch": [(lambda x: True, "ArcCsch")],
+     "conjugate": [(lambda x: True, "Conjugate")],
+-
++    "Max": [(lambda *x: True, "Max")],
++    "Min": [(lambda *x: True, "Min")],
+ }
+ 
+ 
+@@ -101,6 +102,8 @@ def _print_Function(self, expr):
+                     return "%s[%s]" % (mfunc, self.stringify(expr.args, ", "))
+         return expr.func.__name__ + "[%s]" % self.stringify(expr.args, ", ")
+ 
++    _print_Expr = _print_Function
++
+     def _print_Integral(self, expr):
+         if len(expr.variables) == 1 and not expr.limits[0][1:]:
+             args = [expr.args[0], expr.variables[0]]
+diff --git a/sympy/printing/tests/test_mathematica.py b/sympy/printing/tests/test_mathematica.py
+index dd636d0623aa..1a49cb1fccde 100644
+--- a/sympy/printing/tests/test_mathematica.py
++++ b/sympy/printing/tests/test_mathematica.py
+@@ -2,7 +2,7 @@
+                         Rational, Integer, Tuple, Derivative)
+ from sympy.integrals import Integral
+ from sympy.concrete import Sum
+-from sympy.functions import exp, sin, cos, conjugate
++from sympy.functions import exp, sin, cos, conjugate, Max, Min
+ 
+ from sympy import mathematica_code as mcode
+ 
+@@ -28,6 +28,7 @@ def test_Function():
+     assert mcode(f(x, y, z)) == "f[x, y, z]"
+     assert mcode(sin(x) ** cos(x)) == "Sin[x]^Cos[x]"
+     assert mcode(conjugate(x)) == "Conjugate[x]"
++    assert mcode(Max(x,y,z)*Min(y,z)) == "Max[x, y, z]*Min[y, z]"
+ 
+ 
+ def test_Pow():
+
+From 311b75f48fcea27bb4f97f64523fd595dcd4706b Mon Sep 17 00:00:00 2001
+From: Alexander Dunlap <alexander.dunlap@gmail.com>
+Date: Fri, 5 Oct 2018 08:58:09 -0700
+Subject: [PATCH 2/2] just changing _print_MinMaxBase instead of _print_Expr
+
+---
+ sympy/printing/mathematica.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/printing/mathematica.py b/sympy/printing/mathematica.py
+index eaf90d7512f8..9505e008dc31 100644
+--- a/sympy/printing/mathematica.py
++++ b/sympy/printing/mathematica.py
+@@ -102,7 +102,7 @@ def _print_Function(self, expr):
+                     return "%s[%s]" % (mfunc, self.stringify(expr.args, ", "))
+         return expr.func.__name__ + "[%s]" % self.stringify(expr.args, ", ")
+ 
+-    _print_Expr = _print_Function
++    _print_MinMaxBase = _print_Function
+ 
+     def _print_Integral(self, expr):
+         if len(expr.variables) == 1 and not expr.limits[0][1:]:

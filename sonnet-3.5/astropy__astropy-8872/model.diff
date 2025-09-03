@@ -1,0 +1,54 @@
+diff --git a/astropy/units/quantity.py b/astropy/units/quantity.py
+index ded609cbe9..9f7ff73c77 100644
+--- a/astropy/units/quantity.py
++++ b/astropy/units/quantity.py
+@@ -296,9 +296,9 @@ class Quantity(np.ndarray, metaclass=InheritDocstrings):
+                 if not copy:
+                     return value
+ 
+-                if not (np.can_cast(np.float32, value.dtype) or
++                if not (np.can_cast(np.float16, value.dtype) or
+                         value.dtype.fields):
+-                    dtype = float
++                    dtype = value.dtype
+ 
+             return np.array(value, dtype=dtype, copy=copy, order=order,
+                             subok=True, ndmin=ndmin)
+diff --git a/astropy/units/tests/test_float16_quantity.py b/astropy/units/tests/test_float16_quantity.py
+new file mode 100644
+index 0000000000..bf752febee
+--- /dev/null
++++ b/astropy/units/tests/test_float16_quantity.py
+@@ -0,0 +1,31 @@
++
++import numpy as np
++from astropy import units as u
++
++def test_float16_quantity():
++    # Create a float16 value
++    float16_value = np.float16(1)
++
++    # Create a Quantity with the float16 value
++    quantity = float16_value * u.km
++
++    # Check that the dtype is preserved
++    assert quantity.dtype == np.float16
++
++    # Check that the value is correct
++    assert quantity.value == 1.0
++
++    # Check that the unit is correct
++    assert quantity.unit == u.km
++
++    # Test with other float types for comparison
++    assert (np.float32(1) * u.km).dtype == np.float32
++    assert (np.float64(1) * u.km).dtype == np.float64
++
++    # Test with a float16 array
++    float16_array = np.array([1, 2, 3], dtype=np.float16)
++    quantity_array = float16_array * u.km
++
++    assert quantity_array.dtype == np.float16
++    np.testing.assert_array_equal(quantity_array.value, float16_array)
++    assert quantity_array.unit == u.km
+\ No newline at end of file

@@ -1,0 +1,123 @@
+diff --git a/sympy/printing/str.py b/sympy/printing/str.py
+index cc1d19fcce..a8c2996756 100644
+--- a/sympy/printing/str.py
++++ b/sympy/printing/str.py
+@@ -22,6 +22,7 @@ class StrPrinter(Printer):
+         "full_prec": "auto",
+         "sympy_integers": False,
+         "abbrev": False,
++        "printmethod": "_sympystr",
+     }
+ 
+     _relationals = dict()
+@@ -215,10 +216,13 @@ def _print_LatticeOp(self, expr):
+ 
+     def _print_Limit(self, expr):
+         e, z, z0, dir = expr.args
++        e_str = self._print(e)
++        z_str = self._print(z)
++        z0_str = self._print(z0)
+         if str(dir) == "+":
+-            return "Limit(%s, %s, %s)" % (e, z, z0)
++            return "Limit(%s, %s, %s)" % (e_str, z_str, z0_str)
+         else:
+-            return "Limit(%s, %s, %s, dir='%s')" % (e, z, z0, dir)
++            return "Limit(%s, %s, %s, dir='%s')" % (e_str, z_str, z0_str, dir)
+ 
+     def _print_list(self, expr):
+         return "[%s]" % self.stringify(expr, ", ")
+@@ -582,6 +586,33 @@ def _print_PythonRational(self, expr):
+         else:
+             return "%d/%d" % (expr.p, expr.q)
+ 
++    def _print(self, expr, **kwargs):
++        """
++        Internal dispatcher
++        """
++        # If the object has a custom printer defined, use it.
++        if hasattr(expr, self._default_settings['printmethod']):
++            return getattr(expr, self._default_settings['printmethod'])(self, **kwargs)
++
++        # If the expression has a custom print method, use it
++        printmethod = getattr(expr, '_sympyrepr', None)
++        if printmethod is not None:
++            return printmethod(self, **kwargs)
++
++        # Now we proceed with the normal print method resolution, passing along
++        # our settings
++        method = '_print_' + expr.__class__.__name__
++        if hasattr(self, method):
++            return getattr(self, method)(expr, **kwargs)
++        
++        if expr.__class__.__name__ == 'Rational':
++            if self._settings.get("sympy_integers", False):
++                return "S(%s)/%s" % (expr.p, expr.q)
++            else:
++                return "%s/%s" % (expr.p, expr.q)
++        
++        return str(expr)
++
+     def _print_Fraction(self, expr):
+         if expr.denominator == 1:
+             return str(expr.numerator)
+@@ -630,11 +661,11 @@ def _print_Relational(self, expr):
+         }
+ 
+         if expr.rel_op in charmap:
+-            return '%s(%s, %s)' % (charmap[expr.rel_op], expr.lhs, expr.rhs)
++            return '%s(%s, %s)' % (charmap[expr.rel_op], self._print(expr.lhs), self._print(expr.rhs))
+ 
+-        return '%s %s %s' % (self.parenthesize(expr.lhs, precedence(expr)),
++        return '%s %s %s' % (self.parenthesize(self._print(expr.lhs), precedence(expr)),
+                            self._relationals.get(expr.rel_op) or expr.rel_op,
+-                           self.parenthesize(expr.rhs, precedence(expr)))
++                           self.parenthesize(self._print(expr.rhs), precedence(expr)))
+ 
+     def _print_ComplexRootOf(self, expr):
+         return "CRootOf(%s, %d)" % (self._print_Add(expr.expr, order='lex'),
+@@ -809,7 +840,8 @@ def sstr(expr, **settings):
+ 
+     For large expressions where speed is a concern, use the setting
+     order='none'. If abbrev=True setting is used then units are printed in
+-    abbreviated form.
++    abbreviated form. If sympy_integers=True, then rational numbers are printed
++    as S(p)/q instead of p/q.
+ 
+     Examples
+     ========
+@@ -818,6 +850,8 @@ def sstr(expr, **settings):
+     >>> a, b = symbols('a b')
+     >>> sstr(Eq(a + b, 0))
+     'Eq(a + b, 0)'
++    >>> sstr(Eq(a, 1/2), sympy_integers=True)
++    'Eq(a, S(1)/2)'
+     """
+ 
+     p = StrPrinter(settings)
+diff --git a/sympy/printing/tests/test_str.py b/sympy/printing/tests/test_str.py
+index 95e13e70f5..83577485e2 100644
+--- a/sympy/printing/tests/test_str.py
++++ b/sympy/printing/tests/test_str.py
+@@ -773,6 +773,22 @@ def test_UnevaluatedExpr():
+     expr1 = 2*UnevaluatedExpr(a+b)
+     assert str(expr1) == "2*(a + b)"
+ 
++import unittest
++
++class TestSymPyIntegers(unittest.TestCase):
++    def test_sympy_integers(self):
++        from sympy import Rational, Eq, S, Limit, Symbol, sstr
++        x = Symbol('x')
++        self.assertEqual(sstr(Rational(1, 2)), "1/2")
++        self.assertEqual(sstr(Rational(1, 2), sympy_integers=True), "S(1)/2")
++        self.assertEqual(sstr(Eq(x, Rational(1, 2))), "Eq(x, 1/2)")
++        self.assertEqual(sstr(Eq(x, Rational(1, 2)), sympy_integers=True), "Eq(x, S(1)/2)")
++        self.assertEqual(sstr(Eq(x, S.Half), sympy_integers=True), "Eq(x, S(1)/2)")
++        self.assertEqual(sstr(Limit(1/x, x, S.Half), sympy_integers=True), "Limit(1/x, x, S(1)/2)")
++
++if __name__ == '__main__':
++    unittest.main()
++
+ 
+ def test_MatrixElement_printing():
+     # test cases for issue #11821

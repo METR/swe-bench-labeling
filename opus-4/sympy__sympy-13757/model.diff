@@ -1,0 +1,249 @@
+diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
+index d5ac051f63..12ffeb37af 100644
+--- a/sympy/polys/polytools.py
++++ b/sympy/polys/polytools.py
+@@ -4055,7 +4055,7 @@ def __rmul__(f, g):
+             except PolynomialError:
+                 return g*f.as_expr()
+ 
+-        return g.mul(f)
++        return f.mul(g)
+ 
+     @_sympifyit('n', NotImplemented)
+     def __pow__(f, n):
+diff --git a/test_debug_conversion.py b/test_debug_conversion.py
+new file mode 100644
+index 0000000000..35b3371de0
+--- /dev/null
++++ b/test_debug_conversion.py
+@@ -0,0 +1,25 @@
++from sympy import Poly, S, symbols
++from sympy.polys.polyerrors import PolynomialError
++
++x = symbols('x')
++
++# Test conversions that happen in __rmul__
++p = Poly(x)
++
++test_cases = [
++    ("x", x),
++    ("-2", -2),
++    ("S(-2)", S(-2))
++]
++
++for name, expr in test_cases:
++    print(f"\n=== Testing conversion of {name} to Poly ===")
++    try:
++        converted = p.__class__(expr, *p.gens)
++        print(f"Success! Converted to: {converted}")
++        print(f"Type: {type(converted)}")
++        print(f"Is it a Poly? {converted.is_Poly}")
++    except PolynomialError as e:
++        print(f"Failed with PolynomialError: {e}")
++    except Exception as e:
++        print(f"Failed with {type(e).__name__}: {e}")
+diff --git a/test_debug_mul.py b/test_debug_mul.py
+new file mode 100644
+index 0000000000..8073cd3184
+--- /dev/null
++++ b/test_debug_mul.py
+@@ -0,0 +1,50 @@
++from sympy import Poly, S, symbols
++
++x = symbols('x')
++
++# Test what happens inside mul method
++p = Poly(x)
++
++print("Testing p.mul(x):")
++try:
++    result = p.mul(x)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTesting p.mul(-2):")
++try:
++    result = p.mul(-2)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTesting p.mul(S(-2)):")
++try:
++    result = p.mul(S(-2))
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++# Check what happens when we try to create Poly from these expressions
++print("\n\nTesting Poly constructor:")
++print("Poly(x, x):")
++try:
++    result = Poly(x, x)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nPoly(-2, x):")
++try:
++    result = Poly(-2, x)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nPoly(S(-2), x):")
++try:
++    result = Poly(S(-2), x)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+diff --git a/test_mul_behavior.py b/test_mul_behavior.py
+new file mode 100644
+index 0000000000..fed109139c
+--- /dev/null
++++ b/test_mul_behavior.py
+@@ -0,0 +1,27 @@
++from sympy import Poly, S, symbols
++
++x = symbols('x')
++
++# Let's trace what happens step by step
++p = Poly(x)
++
++print("=== Case 1: Poly(x) * x ===")
++print("This calls Poly.__mul__ with g=x")
++print("Poly tries to convert x to Poly(x, x) and succeeds")
++print("Then calls p.mul(Poly(x, x))")
++result1 = p * x
++print(f"Result: {result1}\n")
++
++print("=== Case 2: x * Poly(x) ===")
++print("This calls Poly.__rmul__ with g=x")
++print("Currently: tries to convert x to Poly(x, x), and when that succeeds,")
++print("it should call g.mul(f), but g is the Symbol x, not a Poly!")
++print("That's the bug!\n")
++
++print("=== Case 3: -2 * Poly(x) ===")
++print("This calls Poly.__rmul__ with g=-2")
++print("Tries to convert -2 to Poly(-2, x) and succeeds")
++print("Then should call Poly(-2, x).mul(Poly(x, x))")
++result3 = Poly(-2, x).mul(p)
++print(f"Expected result: {result3}")
++print(f"Actual result: {-2 * p}")
+diff --git a/test_mul_ground.py b/test_mul_ground.py
+new file mode 100644
+index 0000000000..8fe6c0322f
+--- /dev/null
++++ b/test_mul_ground.py
+@@ -0,0 +1,27 @@
++from sympy import Poly, S, symbols
++
++x = symbols('x')
++
++# Test mul_ground directly
++p = Poly(x)
++
++print("Test mul_ground with x:")
++try:
++    result = p.mul_ground(x)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTest mul_ground with -2:")
++try:
++    result = p.mul_ground(-2)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTest mul_ground with S(-2):")
++try:
++    result = p.mul_ground(S(-2))
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+diff --git a/test_poly_mul_issue.py b/test_poly_mul_issue.py
+new file mode 100644
+index 0000000000..47995c94db
+--- /dev/null
++++ b/test_poly_mul_issue.py
+@@ -0,0 +1,33 @@
++from sympy import Poly, S, symbols
++
++x = symbols('x')
++
++# Test cases from the issue
++print("Test 1: Poly(x)*x")
++result1 = Poly(x)*x
++print(f"Result: {result1}")
++print(f"Type: {type(result1)}")
++print()
++
++print("Test 2: x*Poly(x)")
++result2 = x*Poly(x)
++print(f"Result: {result2}")
++print(f"Type: {type(result2)}")
++print()
++
++print("Test 3: -2*Poly(x)")
++result3 = -2*Poly(x)
++print(f"Result: {result3}")
++print(f"Type: {type(result3)}")
++print()
++
++print("Test 4: S(-2)*Poly(x)")
++result4 = S(-2)*Poly(x)
++print(f"Result: {result4}")
++print(f"Type: {type(result4)}")
++print()
++
++print("Test 5: Poly(x)*S(-2)")
++result5 = Poly(x)*S(-2)
++print(f"Result: {result5}")
++print(f"Type: {type(result5)}")
+diff --git a/test_trace_rmul.py b/test_trace_rmul.py
+new file mode 100644
+index 0000000000..eaa4abdda9
+--- /dev/null
++++ b/test_trace_rmul.py
+@@ -0,0 +1,38 @@
++from sympy import Poly, S, symbols
++
++x = symbols('x')
++
++# Let's add some debugging to understand what's happening
++class DebugPoly(Poly):
++    @staticmethod
++    def _from_poly(poly, opt):
++        """Create a DebugPoly from a Poly."""
++        return DebugPoly(poly.as_expr(), *poly.gens, **opt)
++    
++    def __rmul__(f, g):
++        print(f"\n__rmul__ called with:")
++        print(f"  self (f) = {f}")
++        print(f"  other (g) = {g}")
++        print(f"  g.is_Poly = {g.is_Poly if hasattr(g, 'is_Poly') else 'N/A'}")
++        
++        if not g.is_Poly:
++            print("  g is not a Poly, trying to convert...")
++            try:
++                g_converted = f.__class__(g, *f.gens)
++                print(f"  Conversion successful: {g_converted}")
++                print(f"  Type of converted: {type(g_converted)}")
++            except Exception as e:
++                print(f"  Conversion failed: {e}")
++                return g*f.as_expr()
++            
++            g = g_converted
++        
++        print(f"  Calling f.mul(g) with g = {g}")
++        result = f.mul(g)
++        print(f"  Result: {result}")
++        return result
++
++# Test with DebugPoly
++p = DebugPoly(x)
++print("Testing x * DebugPoly(x):")
++result = x * p

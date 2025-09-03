@@ -1,0 +1,28 @@
+diff --git a/tests/admin_views/admin.py b/tests/admin_views/admin.py
+index 3e8df5b7c2..4c05ec89fc 100644
+--- a/tests/admin_views/admin.py
++++ b/tests/admin_views/admin.py
+@@ -1158,3 +1158,22 @@ class ArticleAdmin10(admin.ModelAdmin):
+ 
+ site10 = admin.AdminSite(name='admin10')
+ site10.register(Article, ArticleAdmin10)
++
++class ReportPhotoInline(admin.TabularInline):
++    model = Report.photos.through
++    extra = 1
++    can_delete = False
++    verbose_name = "Photo"
++    verbose_name_plural = "Photos"
++
++    def has_add_permission(self, request, obj):
++        return False
++
++    def has_change_permission(self, request, obj=None):
++        return False
++
++class ReportAdmin(admin.ModelAdmin):
++    inlines = [ReportPhotoInline]
++
++admin.site.register(Report, ReportAdmin)
++admin.site.register(Report, ReportAdmin)
+\ No newline at end of file

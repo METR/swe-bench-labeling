@@ -1,0 +1,52 @@
+diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
+index c9e77a901f..20e32447d2 100644
+--- a/sympy/polys/polytools.py
++++ b/sympy/polys/polytools.py
+@@ -3234,7 +3234,8 @@ def sqf_list(f, all=False):
+         else:  # pragma: no cover
+             raise OperationNotSupported(f, 'sqf_list')
+ 
+-        return f.rep.dom.to_sympy(coeff), [(f.per(g), k) for g, k in factors]
++        factors = [(f.per(g), k) for g, k in factors]
++        return f.rep.dom.to_sympy(coeff), combine_sqf_factors(factors)
+ 
+     def sqf_list_include(f, all=False):
+         """
+@@ -3267,7 +3268,8 @@ def sqf_list_include(f, all=False):
+         else:  # pragma: no cover
+             raise OperationNotSupported(f, 'sqf_list_include')
+ 
+-        return [(f.per(g), k) for g, k in factors]
++        factors = [(f.per(g), k) for g, k in factors]
++        return combine_sqf_factors(factors)
+ 
+     def factor_list(f):
+         """
+@@ -6200,6 +6202,17 @@ def _torational_factor_list(p, x):
+     return (c, a)
+ 
+ 
++def combine_sqf_factors(factors):
++    """
++    Combine square-free factors with the same multiplicity.
++    """
++    from sympy import Mul
++    from collections import defaultdict
++    combined = defaultdict(list)
++    for factor, multiplicity in factors:
++        combined[multiplicity].append(factor)
++    return [(Mul(*factors), multiplicity) for multiplicity, factors in combined.items()]
++
+ @public
+ def sqf_list(f, *gens, **args):
+     """
+@@ -6215,7 +6228,8 @@ def sqf_list(f, *gens, **args):
+     (2, [(x + 1, 2), (x + 2, 3)])
+ 
+     """
+-    return _generic_factor_list(f, gens, args, method='sqf')
++    coeff, factors = _generic_factor_list(f, gens, args, method='sqf')
++    return coeff, combine_sqf_factors(factors)
+ 
+ 
+ @public

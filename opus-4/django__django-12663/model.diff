@@ -1,0 +1,380 @@
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index caa03665ea..e8e89c7fd5 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -21,7 +21,7 @@ from django.utils.dateparse import (
+     parse_date, parse_datetime, parse_duration, parse_time,
+ )
+ from django.utils.duration import duration_microseconds, duration_string
+-from django.utils.functional import Promise, cached_property
++from django.utils.functional import Promise, cached_property, LazyObject
+ from django.utils.ipv6 import clean_ipv6_address
+ from django.utils.itercompat import is_iterable
+ from django.utils.text import capfirst
+@@ -804,6 +804,20 @@ class Field(RegisterLookupMixin):
+         """Perform preliminary non-db specific value checks and conversions."""
+         if isinstance(value, Promise):
+             value = value._proxy____cast()
++        elif isinstance(value, LazyObject):
++            # Evaluate SimpleLazyObject and other LazyObject instances
++            # We need to get the wrapped value. Accessing any attribute triggers evaluation.
++            # We'll use a safe approach by checking if it's been evaluated first.
++            from django.utils.functional import empty
++            if hasattr(value, '_wrapped') and value._wrapped is not empty:
++                # Already evaluated, use the wrapped value
++                value = value._wrapped
++            else:
++                # Not yet evaluated, force evaluation by accessing an attribute
++                # The __class__ attribute access will trigger _setup() for SimpleLazyObject
++                _ = value.__class__
++                # Now get the wrapped value
++                value = value._wrapped
+         return value
+ 
+     def get_db_prep_value(self, value, connection, prepared=False):
+diff --git a/test_exact_issue.py b/test_exact_issue.py
+new file mode 100644
+index 0000000000..c5515736a5
+--- /dev/null
++++ b/test_exact_issue.py
+@@ -0,0 +1,81 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test-key'
++)
++
++# Setup Django
++django.setup()
++
++# Now run the test
++from django.contrib.auth.models import User
++from django.db import models
++from django.db.models import OuterRef, Subquery
++from django.utils.functional import SimpleLazyObject
++from django.test import TestCase
++from django.db import connection
++from django.core.management import call_command
++
++# Create necessary tables
++call_command('migrate', verbosity=0)
++
++class A(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_a'
++
++class B(models.Model):
++    a = models.ForeignKey(A, on_delete=models.CASCADE)
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_b'
++
++class C(models.Model):
++    owner = models.ForeignKey(User, on_delete=models.CASCADE)
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_c'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(A)
++    schema_editor.create_model(B)
++    schema_editor.create_model(C)
++
++# Test reproducing the exact issue from the bug report
++print("Testing the exact scenario from the issue...")
++try:
++    owner_user = (
++        B.objects.filter(a=OuterRef("pk"))
++        .annotate(owner_user=Subquery(C.objects.values("owner")))
++        .values("owner_user")
++    )
++    user = SimpleLazyObject(lambda: User.objects.create_user("testuser"))
++    A.objects.annotate(owner_user=Subquery(owner_user)).filter(
++        owner_user=user
++    )
++    print("FAILED: Expected TypeError but query succeeded!")
++except TypeError as e:
++    if "int() argument must be a string" in str(e) and "SimpleLazyObject" in str(e):
++        print("ERROR: The original bug is still present!")
++        print(f"Error: {e}")
++    else:
++        print(f"Different TypeError occurred: {e}")
++except Exception as e:
++    print(f"Different error occurred: {type(e).__name__}: {e}")
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..b7165c32cf
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,107 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    USE_TZ=False,
++    SECRET_KEY='test-key'
++)
++
++# Setup Django
++django.setup()
++
++# Now run the test
++from django.contrib.auth.models import User
++from django.db import models
++from django.db.models import OuterRef, Subquery
++from django.utils.functional import SimpleLazyObject
++from django.test import TestCase
++from django.db import connection
++from django.core.management import call_command
++
++# Create necessary tables
++call_command('migrate', verbosity=0)
++
++class A(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_a'
++
++class B(models.Model):
++    a = models.ForeignKey(A, on_delete=models.CASCADE)
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_b'
++
++class C(models.Model):
++    owner = models.ForeignKey(User, on_delete=models.CASCADE)
++    class Meta:
++        app_label = 'test_app'
++        db_table = 'test_c'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(A)
++    schema_editor.create_model(B)
++    schema_editor.create_model(C)
++
++# Create test user first
++test_user = User.objects.create_user('testuser')
++
++# Test the original issue
++try:
++    owner_user = (
++        B.objects.filter(a=OuterRef("pk"))
++        .annotate(owner_user=Subquery(C.objects.values("owner")))
++        .values("owner_user")
++    )
++    user = SimpleLazyObject(lambda: test_user.id)
++    result = A.objects.annotate(owner_user=Subquery(owner_user)).filter(
++        owner_user=user
++    )
++    # Force evaluation to trigger any errors
++    list(result)
++    print("SUCCESS: SimpleLazyObject now works with subquery annotations!")
++except Exception as e:
++    print(f"FAILED: {type(e).__name__}: {e}")
++
++# Also test with an unevaluated SimpleLazyObject
++try:
++    owner_user = (
++        B.objects.filter(a=OuterRef("pk"))
++        .annotate(owner_user=Subquery(C.objects.values("owner")))
++        .values("owner_user")
++    )
++    # This time use a lazy object that creates a new user
++    user = SimpleLazyObject(lambda: User.objects.create_user('testuser2').id)
++    result = A.objects.annotate(owner_user=Subquery(owner_user)).filter(
++        owner_user=user
++    )
++    # Force evaluation
++    list(result)
++    print("SUCCESS: Unevaluated SimpleLazyObject also works!")
++except Exception as e:
++    print(f"FAILED with unevaluated: {type(e).__name__}: {e}")
++
++# Test that regular values still work
++try:
++    result = A.objects.annotate(owner_user=Subquery(owner_user)).filter(
++        owner_user=test_user.id
++    )
++    list(result)
++    print("SUCCESS: Regular objects still work!")
++except Exception as e:
++    print(f"FAILED with regular object: {type(e).__name__}: {e}")
+diff --git a/test_simple_case.py b/test_simple_case.py
+new file mode 100644
+index 0000000000..0dddeb8806
+--- /dev/null
++++ b/test_simple_case.py
+@@ -0,0 +1,20 @@
++from django.utils.functional import SimpleLazyObject, LazyObject, empty
++from django.db.models.fields import IntegerField
++
++# Test the fixed get_prep_value
++field = IntegerField()
++
++# Test 1: Direct SimpleLazyObject with integer
++lazy_int = SimpleLazyObject(lambda: 42)
++result = field.get_prep_value(lazy_int)
++print(f"Test 1 - SimpleLazyObject(42): {result} (type: {type(result).__name__})")
++
++# Test 2: Already evaluated SimpleLazyObject
++lazy_int2 = SimpleLazyObject(lambda: 100)
++_ = lazy_int2.__class__  # Force evaluation
++result2 = field.get_prep_value(lazy_int2)
++print(f"Test 2 - Evaluated SimpleLazyObject(100): {result2} (type: {type(result2).__name__})")
++
++# Test 3: Regular integer
++result3 = field.get_prep_value(123)
++print(f"Test 3 - Regular int(123): {result3} (type: {type(result3).__name__})")
+diff --git a/test_simple_lazy_object.py b/test_simple_lazy_object.py
+new file mode 100644
+index 0000000000..1ab293839f
+--- /dev/null
++++ b/test_simple_lazy_object.py
+@@ -0,0 +1,31 @@
++from django.contrib.auth.models import User
++from django.db import models
++from django.db.models import OuterRef, Subquery
++from django.utils.functional import SimpleLazyObject
++from django.test import TestCase
++
++class A(models.Model):
++    class Meta:
++        app_label = 'test_app'
++
++class B(models.Model):
++    a = models.ForeignKey(A, on_delete=models.CASCADE)
++    class Meta:
++        app_label = 'test_app'
++
++class C(models.Model):
++    owner = models.ForeignKey(User, on_delete=models.CASCADE)
++    class Meta:
++        app_label = 'test_app'
++
++class BugTestCase(TestCase):
++    def test_bug(self):
++        owner_user = (
++            B.objects.filter(a=OuterRef("pk"))
++            .annotate(owner_user=Subquery(C.objects.values("owner")))
++            .values("owner_user")
++        )
++        user = SimpleLazyObject(lambda: User.objects.create_user("testuser"))
++        A.objects.annotate(owner_user=Subquery(owner_user)).filter(
++            owner_user=user
++        )
+diff --git a/test_slo_behavior.py b/test_slo_behavior.py
+new file mode 100644
+index 0000000000..56ed4d3ff3
+--- /dev/null
++++ b/test_slo_behavior.py
+@@ -0,0 +1,39 @@
++from django.utils.functional import SimpleLazyObject
++
++# Test how SimpleLazyObject behaves with int()
++lazy_int = SimpleLazyObject(lambda: 42)
++print(f"lazy_int = SimpleLazyObject(lambda: 42)")
++print(f"int(lazy_int) = {int(lazy_int)}")
++print(f"lazy_int._wrapped = {lazy_int._wrapped}")
++
++# Now with a string
++lazy_str = SimpleLazyObject(lambda: "hello")
++print(f"\nlazy_str = SimpleLazyObject(lambda: 'hello')")
++try:
++    print(f"int(lazy_str) = {int(lazy_str)}")
++except Exception as e:
++    print(f"int(lazy_str) raised: {type(e).__name__}: {e}")
++
++# Now with a User object - this is what the issue is about
++import django
++from django.conf import settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
++    INSTALLED_APPS=['django.contrib.auth', 'django.contrib.contenttypes'],
++    USE_TZ=False,
++    SECRET_KEY='test'
++)
++django.setup()
++
++from django.contrib.auth.models import User
++from django.core.management import call_command
++call_command('migrate', verbosity=0)
++
++user = User.objects.create_user('test')
++lazy_user = SimpleLazyObject(lambda: user)
++print(f"\nlazy_user = SimpleLazyObject(lambda: User(username='test'))")
++try:
++    print(f"int(lazy_user) = {int(lazy_user)}")
++except Exception as e:
++    print(f"int(lazy_user) raised: {type(e).__name__}: {e}")
+diff --git a/test_without_fix.py b/test_without_fix.py
+new file mode 100644
+index 0000000000..5d927394fa
+--- /dev/null
++++ b/test_without_fix.py
+@@ -0,0 +1,32 @@
++from django.utils.functional import SimpleLazyObject
++from django.db.models.fields import IntegerField
++
++# Create a version of get_prep_value without our fix
++def old_get_prep_value(self, value):
++    """Perform preliminary non-db specific value checks and conversions."""
++    from django.utils.functional import Promise
++    if isinstance(value, Promise):
++        value = value._proxy____cast()
++    return value
++
++# Override IntegerField's get_prep_value with the old version
++original_get_prep_value = IntegerField.get_prep_value
++IntegerField.get_prep_value = old_get_prep_value
++
++# Test the old behavior
++field = IntegerField()
++
++# This should fail with the original error
++try:
++    lazy_int = SimpleLazyObject(lambda: 42)
++    # Need to call the superclass get_prep_value, then the IntegerField specific one
++    from django.db.models.fields import Field
++    value = Field.get_prep_value(field, lazy_int)  # This returns the SimpleLazyObject
++    if value is not None:
++        result = int(value)  # This is what IntegerField.get_prep_value does
++    print(f"ERROR: Should have failed but got: {result}")
++except TypeError as e:
++    print(f"SUCCESS: Got expected TypeError with old code: {e}")
++
++# Restore the fix
++IntegerField.get_prep_value = original_get_prep_value

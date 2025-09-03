@@ -1,0 +1,334 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index e3b14a41a0..8d7b89c122 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -847,8 +847,10 @@ class Model(metaclass=ModelBase):
+         if not pk_set and (force_update or update_fields):
+             raise ValueError("Cannot force an update in save() with no primary key.")
+         updated = False
+-        # Skip an UPDATE when adding an instance and primary key has a default.
++        # Skip an UPDATE when adding an instance and primary key has a default,
++        # but only if a primary key value hasn't been explicitly set.
+         if (
++            not pk_set and
+             not force_insert and
+             self._state.adding and
+             self._meta.pk.default and
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..f7f4a8a28b
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,129 @@
++from uuid import uuid4
++import django
++from django.conf import settings
++
++# Set up Django first
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models
++from django.db import connection
++from django.test.utils import CaptureQueriesContext
++
++# Define test models
++class SampleWithDefault(models.Model):
++    id = models.UUIDField(primary_key=True, default=uuid4)
++    name = models.CharField(blank=True, max_length=100)
++
++    class Meta:
++        app_label = 'testapp'
++
++class SampleNoDefault(models.Model):
++    id = models.UUIDField(primary_key=True)
++    name = models.CharField(blank=True, max_length=100)
++
++    class Meta:
++        app_label = 'testapp'
++
++class SampleAutoField(models.Model):
++    # Using default AutoField
++    name = models.CharField(blank=True, max_length=100)
++
++    class Meta:
++        app_label = 'testapp'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(SampleWithDefault)
++    schema_editor.create_model(SampleNoDefault) 
++    schema_editor.create_model(SampleAutoField)
++
++def get_query_type(queries):
++    """Extract INSERT/UPDATE from query list"""
++    for q in queries:
++        sql = q['sql'].upper()
++        if 'INSERT' in sql:
++            return 'INSERT'
++        elif 'UPDATE' in sql:
++            return 'UPDATE'
++    return 'UNKNOWN'
++
++print("Comprehensive test of save() behavior")
++print("="*60)
++
++# Test 1: Creating new instance with pk field having default - should INSERT
++print("\n1. Creating new instance with pk field having default")
++with CaptureQueriesContext(connection) as context:
++    s1 = SampleWithDefault.objects.create(name='Test 1')
++print(f"   Query type: {get_query_type(context.captured_queries)}")
++print(f"   Created with id: {s1.pk}")
++
++# Test 2: Creating new instance without explicit pk but field has default - should INSERT
++print("\n2. Creating new instance (save) without explicit pk but field has default")
++s2 = SampleWithDefault(name='Test 2')
++with CaptureQueriesContext(connection) as context:
++    s2.save()
++print(f"   Query type: {get_query_type(context.captured_queries)}")
++print(f"   Created with id: {s2.pk}")
++
++# Test 3: Save existing instance with explicit pk (our bug fix) - should UPDATE
++print("\n3. Save new instance with explicit existing pk (bug fix test)")
++s3 = SampleWithDefault(pk=s1.pk, name='Test 3 Updated')
++print(f"   s3._state.adding = {s3._state.adding}")
++with CaptureQueriesContext(connection) as context:
++    s3.save()
++print(f"   Query type: {get_query_type(context.captured_queries)}")
++updated = SampleWithDefault.objects.get(pk=s1.pk)
++print(f"   Name after save: {updated.name}")
++
++# Test 4: Save loaded instance - should UPDATE
++print("\n4. Save loaded instance")
++s4 = SampleWithDefault.objects.get(pk=s1.pk)
++s4.name = 'Test 4 Updated'
++print(f"   s4._state.adding = {s4._state.adding}")
++with CaptureQueriesContext(connection) as context:
++    s4.save()
++print(f"   Query type: {get_query_type(context.captured_queries)}")
++
++# Test 5: Model with no default on pk - existing behavior should be preserved
++print("\n5. Model with no default on pk - save with explicit existing pk")
++snd1 = SampleNoDefault.objects.create(id=uuid4(), name='No Default 1')
++snd2 = SampleNoDefault(pk=snd1.pk, name='No Default Updated')
++print(f"   snd2._state.adding = {snd2._state.adding}")
++with CaptureQueriesContext(connection) as context:
++    snd2.save()
++print(f"   Query type: {get_query_type(context.captured_queries)}")
++
++# Test 6: AutoField model - existing behavior  
++print("\n6. AutoField model - save with explicit existing pk")
++sa1 = SampleAutoField.objects.create(name='Auto 1')
++sa2 = SampleAutoField(pk=sa1.pk, name='Auto Updated')
++print(f"   sa2._state.adding = {sa2._state.adding}")
++with CaptureQueriesContext(connection) as context:
++    sa2.save()
++print(f"   Query type: {get_query_type(context.captured_queries)}")
++
++# Test 7: force_insert=True should still force INSERT
++print("\n7. Force insert with explicit existing pk (should fail)")
++s5 = SampleWithDefault(pk=s1.pk, name='Force Insert')
++try:
++    s5.save(force_insert=True)
++    print("   ERROR: force_insert=True didn't raise exception!")
++except Exception as e:
++    print(f"   Expected error: {e}")
++
++print("\nAll tests completed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..a1b2c4844c
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,102 @@
++from uuid import uuid4
++import django
++from django.conf import settings
++
++# Set up Django first
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models
++from django.test import TestCase, TransactionTestCase
++from django.db import connection
++from django.test.utils import CaptureQueriesContext
++
++# Define our test model
++class Sample(models.Model):
++    id = models.UUIDField(primary_key=True, default=uuid4)
++    name = models.CharField(blank=True, max_length=100)
++
++    class Meta:
++        app_label = 'testapp'
++
++# Test the issue
++def test_save_with_explicit_pk():
++    # Create initial object
++    s0 = Sample.objects.create()
++    print(f"Created s0 with id: {s0.pk}")
++    
++    # Try to save with same pk - this should UPDATE not INSERT
++    s1 = Sample(pk=s0.pk, name='Test 1')
++    
++    with CaptureQueriesContext(connection) as context:
++        s1.save()
++    
++    # Print the queries
++    for query in context.captured_queries:
++        print(f"Query: {query['sql']}")
++        
++    # Verify the result
++    saved = Sample.objects.get(pk=s0.pk)
++    print(f"Saved object name: {saved.name}")
++    
++    # Also test without default on pk field
++    class SampleNoDefault(models.Model):
++        id = models.UUIDField(primary_key=True)
++        name = models.CharField(blank=True, max_length=100)
++        
++        class Meta:
++            app_label = 'testapp'
++    
++    print("\nNow testing without default on pk field...")
++    s2 = SampleNoDefault.objects.create(id=uuid4())
++    print(f"Created s2 with id: {s2.pk}")
++    
++    s3 = SampleNoDefault(pk=s2.pk, name='Test 2')
++    with CaptureQueriesContext(connection) as context:
++        s3.save()
++    
++    for query in context.captured_queries:
++        print(f"Query: {query['sql']}")
++
++if __name__ == "__main__":
++    # Set up Django
++    import django
++    from django.conf import settings
++    
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        USE_TZ=False,
++    )
++    
++    django.setup()
++    
++    # Create tables
++    from django.db import connection
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(Sample)
++        
++    test_save_with_explicit_pk()
+diff --git a/test_issue_simple.py b/test_issue_simple.py
+new file mode 100644
+index 0000000000..85b122b09b
+--- /dev/null
++++ b/test_issue_simple.py
+@@ -0,0 +1,66 @@
++from uuid import uuid4
++import django
++from django.conf import settings
++
++# Set up Django first
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    USE_TZ=False,
++)
++
++django.setup()
++
++from django.db import models
++from django.db import connection
++from django.test.utils import CaptureQueriesContext
++
++# Define our test model
++class Sample(models.Model):
++    id = models.UUIDField(primary_key=True, default=uuid4)
++    name = models.CharField(blank=True, max_length=100)
++
++    class Meta:
++        app_label = 'testapp'
++
++# Create tables
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(Sample)
++
++print("Testing issue with explicit pk and default field...")
++print("=" * 50)
++
++# Create initial object
++s0 = Sample.objects.create()
++print(f"Created s0 with id: {s0.pk}")
++
++# Try to save with same pk - this should UPDATE not INSERT
++print("\nAttempting to save a new instance with existing pk...")
++s1 = Sample(pk=s0.pk, name='Test 1')
++print(f"s1._state.adding = {s1._state.adding}")
++
++try:
++    with CaptureQueriesContext(connection) as context:
++        s1.save()
++    
++    # Print the queries
++    print("\nQueries executed:")
++    for query in context.captured_queries:
++        print(f"  {query['sql']}")
++        
++    # Verify the result
++    saved = Sample.objects.get(pk=s0.pk)
++    print(f"\nResult: Object saved successfully!")
++    print(f"Saved object name: {saved.name}")
++except Exception as e:
++    print(f"\nError: {e}")
++    print("This confirms the bug - it's trying to INSERT instead of UPDATE")
+diff --git a/test_loaddata.py b/test_loaddata.py
+new file mode 100644
+index 0000000000..e69de29bb2

@@ -1,0 +1,1360 @@
+From ec433b1a583445053330fee1e089afb15914c495 Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Mon, 8 Jan 2018 11:28:36 +0530
+Subject: [PATCH 01/11] _cdf method and corresponding tests added for Arcsin
+ and Dagnum
+
+---
+ sympy/stats/crv_types.py                | 26 ++++++++++++++++++++++++-
+ sympy/stats/tests/test_continuous_rv.py |  6 ++++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index e636d67940f8..c0de5896d010 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -153,6 +153,15 @@ class ArcsinDistribution(SingleContinuousDistribution):
+     def pdf(self, x):
+         return 1/(pi*sqrt((x - self.a)*(self.b - x)))
+ 
++    def _cdf(self, x):
++        from sympy import asin
++        a, b = self.a, self.b
++        return Piecewise(
++            (S.Zero, x < a),
++            (2*asin( sqrt((x - a)/(b - a)))/pi, x <= b),
++            (S.One, True))
++
++
+ def Arcsin(name, a=0, b=1):
+     r"""
+     Create a Continuous Random Variable with an arcsin distribution.
+@@ -190,6 +199,12 @@ def Arcsin(name, a=0, b=1):
+     >>> density(X)(z)
+     1/(pi*sqrt((-a + z)*(b - z)))
+ 
++    >>> cdf(X)(z)
++    Piecewise((0, a > z),
++            (2*asin(sqrt((-a + z)/(-a + b)))/pi, b >= z),
++            (1, True))
++
++
+     References
+     ==========
+ 
+@@ -670,6 +685,11 @@ def pdf(self, x):
+         p, a, b = self.p, self.a, self.b
+         return a*p/x*((x/b)**(a*p)/(((x/b)**a + 1)**(p + 1)))
+ 
++    def _cdf(self, x):
++        #from sympy import power
++        p, a, b = self.p, self.a, self.b
++        return (S.One + (x/b)**(-a))**(-p)
++
+ 
+ def Dagum(name, p, a, b):
+     r"""
+@@ -698,7 +718,7 @@ def Dagum(name, p, a, b):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Dagum, density
++    >>> from sympy.stats import Dagum, density, cdf
+     >>> from sympy import Symbol, simplify
+ 
+     >>> p = Symbol("p", positive=True)
+@@ -711,6 +731,10 @@ def Dagum(name, p, a, b):
+     >>> density(X)(z)
+     a*p*(z/b)**(a*p)*((z/b)**a + 1)**(-p - 1)/z
+ 
++    >>> cdf(X)(z)
++    (1 + (z/b)**(-a))**(-p)
++
++
+     References
+     ==========
+ 
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index edbcb743407d..b10f805f2246 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -160,11 +160,16 @@ def test_ContinuousRV():
+ 
+ 
+ def test_arcsin():
++    from sympy import asin
++
+     a = Symbol("a", real=True)
+     b = Symbol("b", real=True)
+ 
+     X = Arcsin('x', a, b)
+     assert density(X)(x) == 1/(pi*sqrt((-x + b)*(x - a)))
++    assert cdf(X)(x) == Piecewise((0, a > x),
++                            (2*asin(sqrt((-a + x)/(-a + b)))/pi, b >= x),
++                            (1, True))
+ 
+ 
+ def test_benini():
+@@ -242,6 +247,7 @@ def test_dagum():
+ 
+     X = Dagum('x', p, a, b)
+     assert density(X)(x) == a*p*(x/b)**(a*p)*((x/b)**a + 1)**(-p - 1)/x
++    assert cdf(X)(x) == (1 + (x/b)**(-a))**(-p)
+ 
+ def test_erlang():
+     k = Symbol("k", integer=True, positive=True)
+
+From 1aeaf519c9de29b5958fb769dd1c9f3136549f12 Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Tue, 9 Jan 2018 21:47:24 +0530
+Subject: [PATCH 02/11] Added precomputed cdf for following continuous random
+ variables : Erlang Frechet Gamma GammaInverse Kumaraswamy Laplace Logistic
+ Nakagami
+
+Also added _cdf function for StudentT and UniformSum, but they require further improvements
+---
+ sympy/stats/crv_types.py                | 72 +++++++++++++++++++++++--
+ sympy/stats/tests/test_continuous_rv.py | 12 ++++-
+ 2 files changed, 80 insertions(+), 4 deletions(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index c0de5896d010..f631ed922eca 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -47,12 +47,13 @@
+ 
+ from sympy import (log, sqrt, pi, S, Dummy, Interval, sympify, gamma,
+                    Piecewise, And, Eq, binomial, factorial, Sum, floor, Abs,
+-                   Lambda, Basic, lowergamma, erf, erfc)
++                   Lambda, Basic, lowergamma, erf, erfc, uppergamma)
+ from sympy import beta as beta_fn
+ from sympy import cos, exp, besseli
+ from sympy.stats.crv import (SingleContinuousPSpace, SingleContinuousDistribution,
+         ContinuousDistributionHandmade)
+ from sympy.stats.rv import _value_check
++from mpmath import hyp2f1
+ import random
+ 
+ oo = S.Infinity
+@@ -810,7 +811,7 @@ def Erlang(name, k, l):
+     .. [2] http://mathworld.wolfram.com/ErlangDistribution.html
+     """
+ 
+-    return rv(name, GammaDistribution, (k, 1/l))
++    return rv(name, GammaDistribution, (k, S.One/l))
+ 
+ #-------------------------------------------------------------------------------
+ # Exponential distribution -----------------------------------------------------
+@@ -1063,6 +1064,10 @@ def pdf(self, x):
+         a, s, m = self.a, self.s, self.m
+         return a/s * ((x-m)/s)**(-1-a) * exp(-((x-m)/s)**(-a))
+ 
++    def _cdf(self, x):
++        a, s, m = self.a, self.s, self.m
++        return exp(-((x-m)/s)**(-a))
++
+ def Frechet(name, a, s=1, m=0):
+     r"""
+     Create a continuous random variable with a Frechet distribution.
+@@ -1103,6 +1108,9 @@ def Frechet(name, a, s=1, m=0):
+     >>> density(X)(z)
+     a*((-m + z)/s)**(-a - 1)*exp(-((-m + z)/s)**(-a))/s
+ 
++    >>> cdf(X)(z)
++     exp(-((x-m)/s)**(-a))
++
+     References
+     ==========
+ 
+@@ -1132,6 +1140,10 @@ def pdf(self, x):
+     def sample(self):
+         return random.gammavariate(self.k, self.theta)
+ 
++    def _cdf(self, x):
++        k, theta = self.k, self.theta
++        return lowergamma(k, S(x)/theta)/gamma(k)
++
+ 
+ def Gamma(name, k, theta):
+     r"""
+@@ -1221,6 +1233,10 @@ def pdf(self, x):
+         a, b = self.a, self.b
+         return b**a/gamma(a) * x**(-a-1) * exp(-b/x)
+ 
++    def _cdf(self, x):
++        a, b = self.a, self.b
++        return uppergamma(a,b/x)/gamma(a)
++
+ def GammaInverse(name, a, b):
+     r"""
+     Create a continuous random variable with an inverse Gamma distribution.
+@@ -1265,6 +1281,9 @@ def GammaInverse(name, a, b):
+     ---------------
+        gamma(a)
+ 
++    >>>cdf(X)(z)
++    uppergamma(a, b/z)/gamma(a)
++
+     References
+     ==========
+ 
+@@ -1406,6 +1425,14 @@ def pdf(self, x):
+         a, b = self.a, self.b
+         return a * b * x**(a-1) * (1-x**a)**(b-1)
+ 
++    def _cdf(self, x):
++        a, b = self.a, self.b
++        return Piecewise(
++            (S.Zero, x < S.Zero),
++            (1 - (1 - x**a)**b, x <= S.One),
++            (S.One, True))
++
++
+ def Kumaraswamy(name, a, b):
+     r"""
+     Create a Continuous Random Variable with a Kumaraswamy distribution.
+@@ -1446,6 +1473,10 @@ def Kumaraswamy(name, a, b):
+          a - 1 /   a    \
+     a*b*z     *\- z  + 1/
+ 
++    >>> cdf(X)(z)
++    Piecewise((0, z < 0),
++            (-(-z**a + 1)**b + 1, z <= 1),
++            (1, True))
+ 
+     References
+     ==========
+@@ -1466,6 +1497,13 @@ def pdf(self, x):
+         mu, b = self.mu, self.b
+         return 1/(2*b)*exp(-Abs(x - mu)/b)
+ 
++    def _cdf(self, x):
++        mu, b = self.mu, self.b
++        return Piecewise(
++                    (S.Half*exp((x - mu)/b), x < mu),
++                    (S.One - S.Half*exp(-(x - mu)/b), x>= mu)
++                        )
++
+ 
+ def Laplace(name, mu, b):
+     r"""
+@@ -1490,7 +1528,7 @@ def Laplace(name, mu, b):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Laplace, density
++    >>> from sympy.stats import Laplace, density, cdf
+     >>> from sympy import Symbol
+ 
+     >>> mu = Symbol("mu")
+@@ -1502,6 +1540,10 @@ def Laplace(name, mu, b):
+     >>> density(X)(z)
+     exp(-Abs(mu - z)/b)/(2*b)
+ 
++    >>> cdf(X)(z)
++    Piecewise((exp((-mu + z)/b)/2, mu > z),
++            (-exp((mu - z)/b)/2 + 1, True))
++
+     References
+     ==========
+ 
+@@ -1522,6 +1564,10 @@ def pdf(self, x):
+         mu, s = self.mu, self.s
+         return exp(-(x - mu)/s)/(s*(1 + exp(-(x - mu)/s))**2)
+ 
++    def _cdf(self, x):
++        mu, s = self.mu, self.s
++        return 1 + exp(-(x - mu)/s)
++
+ 
+ def Logistic(name, mu, s):
+     r"""
+@@ -1558,6 +1604,9 @@ def Logistic(name, mu, s):
+     >>> density(X)(z)
+     exp((mu - z)/s)/(s*(exp((mu - z)/s) + 1)**2)
+ 
++    >>> cdf(X)(z)
++    exp((mu - z)/s) + 1
++
+     References
+     ==========
+ 
+@@ -1732,6 +1781,10 @@ def pdf(self, x):
+         mu, omega = self.mu, self.omega
+         return 2*mu**mu/(gamma(mu)*omega**mu)*x**(2*mu - 1)*exp(-mu/omega*x**2)
+ 
++    def _cdf(self, x):
++        mu, omega = self.mu, self.omega
++        return lowergamma(mu, (mu/omega)*x**2)/gamma(mu)
++
+ 
+ def Nakagami(name, mu, omega):
+     r"""
+@@ -1788,6 +1841,9 @@ def Nakagami(name, mu, omega):
+     omega - -----------------------
+             gamma(mu)*gamma(mu + 1)
+ 
++    >>> cdf(X)(x)
++    lowergamma(mu, mu*x**2/omega)/gamma(mu)
++
+     References
+     ==========
+ 
+@@ -2245,6 +2301,10 @@ def pdf(self, x):
+         nu = self.nu
+         return 1/(sqrt(nu)*beta_fn(S(1)/2, nu/2))*(1 + x**2/nu)**(-(nu + 1)/2)
+ 
++    def _cdf(self, x):
++        nu = self.nu
++        return S.Half + x*gamma((nu+1)/2)*hyp2f1(S.Half, (nu+1)/2, S(3)/2, -x**2/nu)/(sqrt(pi*nu)*gamma(nu/2))
++
+ 
+ def StudentT(name, nu):
+     r"""
+@@ -2569,6 +2629,12 @@ def pdf(self, x):
+             n - 1)*Sum((-1)**k*binomial(n, k)*(x - k)**(n - 1), (k, 0, floor(x)))
+ 
+ 
++    def _cdf(self, x):
++        n = self.n
++        x=Dummy("x")
++        k = Dummy("k")
++        return 1/factorial(n)*Sum((-1)**k*binomial(n, k)*(x - k)**n, (k, 0, floor(x)))
++
+ 
+ def UniformSum(name, n):
+     r"""
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index b10f805f2246..ab3a34b7f012 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -13,7 +13,7 @@
+                          moment, cmoment, smoment)
+ 
+ from sympy import (Symbol, Abs, exp, S, N, pi, simplify, Interval, erf, erfc,
+-                   Eq, log, lowergamma, Sum, symbols, sqrt, And, gamma, beta,
++                   Eq, log, lowergamma, uppergamma, Sum, symbols, sqrt, And, gamma, beta,
+                    Piecewise, Integral, sin, cos, besseli, factorial, binomial,
+                    floor, expand_func, Rational)
+ 
+@@ -295,6 +295,7 @@ def test_frechet():
+ 
+     X = Frechet("x", a, s=s, m=m)
+     assert density(X)(x) == a*((x - m)/s)**(-a - 1)*exp(-((x - m)/s)**(-a))/s
++    assert cdf(X)(x) == exp(-((x - m)/s)**(-a))
+ 
+ def test_gamma():
+     k = Symbol("k", positive=True)
+@@ -323,6 +324,7 @@ def test_gamma_inverse():
+ 
+     X = GammaInverse("x", a, b)
+     assert density(X)(x) == x**(-a - 1)*b**a*exp(-b/x)/gamma(a)
++    assert cdf(X)(x) == uppergamma(a, b/x)/gamma(a)
+ 
+ def test_gompertz():
+     b = Symbol("b", positive=True)
+@@ -344,6 +346,9 @@ def test_kumaraswamy():
+ 
+     X = Kumaraswamy("x", a, b)
+     assert density(X)(x) == x**(a - 1)*a*b*(-x**a + 1)**(b - 1)
++    assert cdf(X)(x) == Piecewise((0, x < 0),
++                                (-(-x**a + 1)**b + 1, x <= 1),
++                                (1, True))
+ 
+ def test_laplace():
+     mu = Symbol("mu")
+@@ -351,6 +356,8 @@ def test_laplace():
+ 
+     X = Laplace('x', mu, b)
+     assert density(X)(x) == exp(-Abs(x - mu)/b)/(2*b)
++    assert cdf(X)(x) == Piecewise((exp((-mu + x)/b)/2, mu > x),
++                            (-exp((mu - x)/b)/2 + 1, True))
+ 
+ def test_logistic():
+     mu = Symbol("mu", real=True)
+@@ -358,6 +365,8 @@ def test_logistic():
+ 
+     X = Logistic('x', mu, s)
+     assert density(X)(x) == exp((-x + mu)/s)/(s*(exp((-x + mu)/s) + 1)**2)
++    assert cdf(X)(x) == exp((mu - x)/s) + 1
++
+ 
+ def test_lognormal():
+     mean = Symbol('mu', real=True, finite=True)
+@@ -408,6 +417,7 @@ def test_nakagami():
+            *gamma(mu + S.Half)/gamma(mu + 1))
+     assert simplify(variance(X, meijerg=True)) == (
+     omega - omega*gamma(mu + S(1)/2)**2/(gamma(mu)*gamma(mu + 1)))
++    assert cdf(X)(x) == lowergamma(mu, mu*x**2/omega)/gamma(mu)
+ 
+ 
+ def test_pareto():
+
+From 63710ccf6dd8f9300ed9201a97373111c6c301ba Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Wed, 10 Jan 2018 05:17:12 +0530
+Subject: [PATCH 03/11] Changed outputs of all the above _cdf functions in
+ terms of Piecewise function
+
+---
+ sympy/stats/crv_types.py                | 28 +++++++++++++++++--------
+ sympy/stats/tests/test_continuous_rv.py | 13 ++++++++----
+ 2 files changed, 28 insertions(+), 13 deletions(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index f631ed922eca..4fb839e15859 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -689,7 +689,8 @@ def pdf(self, x):
+     def _cdf(self, x):
+         #from sympy import power
+         p, a, b = self.p, self.a, self.b
+-        return (S.One + (x/b)**(-a))**(-p)
++        return Piecewise(((S.One + x**-a/b)**-p, x>=0),
++                    (S.Zero, True))
+ 
+ 
+ def Dagum(name, p, a, b):
+@@ -733,7 +734,7 @@ def Dagum(name, p, a, b):
+     a*p*(z/b)**(a*p)*((z/b)**a + 1)**(-p - 1)/z
+ 
+     >>> cdf(X)(z)
+-    (1 + (z/b)**(-a))**(-p)
++    Piecewise(((1 + z**(-a)/b)**(-p), z >= 0), (0, True))
+ 
+ 
+     References
+@@ -1066,7 +1067,8 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         a, s, m = self.a, self.s, self.m
+-        return exp(-((x-m)/s)**(-a))
++        return Piecewise((exp(-((x-m)/s)**(-a)), x>=m),
++                        (S.Zero, True))
+ 
+ def Frechet(name, a, s=1, m=0):
+     r"""
+@@ -1109,7 +1111,7 @@ def Frechet(name, a, s=1, m=0):
+     a*((-m + z)/s)**(-a - 1)*exp(-((-m + z)/s)**(-a))/s
+ 
+     >>> cdf(X)(z)
+-     exp(-((x-m)/s)**(-a))
++     Piecewise((exp(-((-m + z)/s)**(-a)), m <= z), (0, True))
+ 
+     References
+     ==========
+@@ -1142,7 +1144,9 @@ def sample(self):
+ 
+     def _cdf(self, x):
+         k, theta = self.k, self.theta
+-        return lowergamma(k, S(x)/theta)/gamma(k)
++        return Piecewise(
++                    (lowergamma(k, S(x)/theta)/gamma(k), x>0),
++                    (S.Zero, True))
+ 
+ 
+ def Gamma(name, k, theta):
+@@ -1235,7 +1239,8 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         a, b = self.a, self.b
+-        return uppergamma(a,b/x)/gamma(a)
++        return Piecewise((uppergamma(a,b/x)/gamma(a), x>0),
++                        (S.Zero, True))
+ 
+ def GammaInverse(name, a, b):
+     r"""
+@@ -1282,7 +1287,8 @@ def GammaInverse(name, a, b):
+        gamma(a)
+ 
+     >>>cdf(X)(z)
+-    uppergamma(a, b/z)/gamma(a)
++    Piecewise((uppergamma(a, b/z)/gamma(a), z > 0), (0, True))
++
+ 
+     References
+     ==========
+@@ -1783,7 +1789,9 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         mu, omega = self.mu, self.omega
+-        return lowergamma(mu, (mu/omega)*x**2)/gamma(mu)
++        return Piecewise(
++                    (lowergamma(mu, (mu/omega)*x**2)/gamma(mu), x>0),
++                    (S.Zero, True))
+ 
+ 
+ def Nakagami(name, mu, omega):
+@@ -1842,7 +1850,9 @@ def Nakagami(name, mu, omega):
+             gamma(mu)*gamma(mu + 1)
+ 
+     >>> cdf(X)(x)
+-    lowergamma(mu, mu*x**2/omega)/gamma(mu)
++    Piecewise((lowergamma(mu, mu*z**2/omega)/gamma(mu), z > 0),
++            (0, True))
++
+ 
+     References
+     ==========
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index ab3a34b7f012..e4b4087538e9 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -247,7 +247,8 @@ def test_dagum():
+ 
+     X = Dagum('x', p, a, b)
+     assert density(X)(x) == a*p*(x/b)**(a*p)*((x/b)**a + 1)**(-p - 1)/x
+-    assert cdf(X)(x) == (1 + (x/b)**(-a))**(-p)
++    assert cdf(X)(x) == Piecewise(((1 + x**(-a)/b)**(-p), x >= 0),
++                            (0, True))
+ 
+ def test_erlang():
+     k = Symbol("k", integer=True, positive=True)
+@@ -255,6 +256,8 @@ def test_erlang():
+ 
+     X = Erlang("x", k, l)
+     assert density(X)(x) == x**(k - 1)*l**k*exp(-x*l)/gamma(k)
++    assert cdf(X)(x) == Piecewise((lowergamma(k, l*x)/gamma(k), x > 0),
++                               (0, True))
+ 
+ def test_exponential():
+     rate = Symbol('lambda', positive=True, real=True, finite=True)
+@@ -295,7 +298,7 @@ def test_frechet():
+ 
+     X = Frechet("x", a, s=s, m=m)
+     assert density(X)(x) == a*((x - m)/s)**(-a - 1)*exp(-((x - m)/s)**(-a))/s
+-    assert cdf(X)(x) == exp(-((x - m)/s)**(-a))
++    assert cdf(X)(x) == Piecewise((exp(-((-m + x)/s)**(-a)), m <= x), (0, True))
+ 
+ def test_gamma():
+     k = Symbol("k", positive=True)
+@@ -324,7 +327,7 @@ def test_gamma_inverse():
+ 
+     X = GammaInverse("x", a, b)
+     assert density(X)(x) == x**(-a - 1)*b**a*exp(-b/x)/gamma(a)
+-    assert cdf(X)(x) == uppergamma(a, b/x)/gamma(a)
++    assert cdf(X)(x) == Piecewise((uppergamma(a, b/x)/gamma(a), x > 0), (0, True))
+ 
+ def test_gompertz():
+     b = Symbol("b", positive=True)
+@@ -417,7 +420,9 @@ def test_nakagami():
+            *gamma(mu + S.Half)/gamma(mu + 1))
+     assert simplify(variance(X, meijerg=True)) == (
+     omega - omega*gamma(mu + S(1)/2)**2/(gamma(mu)*gamma(mu + 1)))
+-    assert cdf(X)(x) == lowergamma(mu, mu*x**2/omega)/gamma(mu)
++    assert cdf(X)(x) == Piecewise(
++                                (lowergamma(mu, mu*x**2/omega)/gamma(mu), x > 0), 
++                                (0, True))
+ 
+ 
+ def test_pareto():
+
+From 6a241f9acfca41ecb7523f9127c39b0cb9a44fa0 Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Wed, 10 Jan 2018 12:12:09 +0530
+Subject: [PATCH 04/11] Improvised _cdf for StudentT UniformSum
+
+---
+ sympy/stats/crv_types.py                | 53 +++++++++++++++++--------
+ sympy/stats/tests/test_continuous_rv.py | 30 +++++++++++---
+ 2 files changed, 62 insertions(+), 21 deletions(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index 4fb839e15859..ed509dee4371 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -47,13 +47,12 @@
+ 
+ from sympy import (log, sqrt, pi, S, Dummy, Interval, sympify, gamma,
+                    Piecewise, And, Eq, binomial, factorial, Sum, floor, Abs,
+-                   Lambda, Basic, lowergamma, erf, erfc, uppergamma)
++                   Lambda, Basic, lowergamma, erf, erfc, uppergamma, hyper)
+ from sympy import beta as beta_fn
+ from sympy import cos, exp, besseli
+ from sympy.stats.crv import (SingleContinuousPSpace, SingleContinuousDistribution,
+         ContinuousDistributionHandmade)
+ from sympy.stats.rv import _value_check
+-from mpmath import hyp2f1
+ import random
+ 
+ oo = S.Infinity
+@@ -134,6 +133,7 @@ def ContinuousRV(symbol, density, set=Interval(-oo, oo)):
+     dist = ContinuousDistributionHandmade(pdf, set)
+     return SingleContinuousPSpace(symbol, dist).value
+ 
++
+ def rv(symbol, cls, args):
+     args = list(map(sympify, args))
+     dist = cls(*args)
+@@ -159,7 +159,7 @@ def _cdf(self, x):
+         a, b = self.a, self.b
+         return Piecewise(
+             (S.Zero, x < a),
+-            (2*asin( sqrt((x - a)/(b - a)))/pi, x <= b),
++            (2*asin(sqrt((x - a)/(b - a)))/pi, x <= b),
+             (S.One, True))
+ 
+ 
+@@ -619,7 +619,7 @@ def pdf(self, x):
+     def _cdf(self, x):
+         k = self.k
+         return Piecewise(
+-                (S.One/gamma(k/2)*lowergamma(k/2, x/2), x>=0),
++                (S.One/gamma(k/2)*lowergamma(k/2, x/2), x >= 0),
+                 (0, True)
+         )
+ 
+@@ -687,7 +687,6 @@ def pdf(self, x):
+         return a*p/x*((x/b)**(a*p)/(((x/b)**a + 1)**(p + 1)))
+ 
+     def _cdf(self, x):
+-        #from sympy import power
+         p, a, b = self.p, self.a, self.b
+         return Piecewise(((S.One + x**-a/b)**-p, x>=0),
+                     (S.Zero, True))
+@@ -748,6 +747,7 @@ def Dagum(name, p, a, b):
+ #-------------------------------------------------------------------------------
+ # Erlang distribution ----------------------------------------------------------
+ 
++
+ def Erlang(name, k, l):
+     r"""
+     Create a continuous random variable with an Erlang distribution.
+@@ -835,7 +835,7 @@ def sample(self):
+ 
+     def _cdf(self, x):
+         return Piecewise(
+-                (S.One - exp(-self.rate*x), x>=0),
++                (S.One - exp(-self.rate*x), x >= 0),
+                 (0, True),
+         )
+ 
+@@ -1067,7 +1067,7 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         a, s, m = self.a, self.s, self.m
+-        return Piecewise((exp(-((x-m)/s)**(-a)), x>=m),
++        return Piecewise((exp(-((x-m)/s)**(-a)), x >= m),
+                         (S.Zero, True))
+ 
+ def Frechet(name, a, s=1, m=0):
+@@ -1145,7 +1145,7 @@ def sample(self):
+     def _cdf(self, x):
+         k, theta = self.k, self.theta
+         return Piecewise(
+-                    (lowergamma(k, S(x)/theta)/gamma(k), x>0),
++                    (lowergamma(k, S(x)/theta)/gamma(k), x > 0),
+                     (S.Zero, True))
+ 
+ 
+@@ -1223,6 +1223,7 @@ def Gamma(name, k, theta):
+ #-------------------------------------------------------------------------------
+ # Inverse Gamma distribution ---------------------------------------------------
+ 
++
+ class GammaInverseDistribution(SingleContinuousDistribution):
+     _argnames = ('a', 'b')
+ 
+@@ -1239,9 +1240,10 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         a, b = self.a, self.b
+-        return Piecewise((uppergamma(a,b/x)/gamma(a), x>0),
++        return Piecewise((uppergamma(a,b/x)/gamma(a), x > 0),
+                         (S.Zero, True))
+ 
++
+ def GammaInverse(name, a, b):
+     r"""
+     Create a continuous random variable with an inverse Gamma distribution.
+@@ -1301,6 +1303,7 @@ def GammaInverse(name, a, b):
+ #-------------------------------------------------------------------------------
+ # Gumbel distribution --------------------------------------------------------
+ 
++
+ class GumbelDistribution(SingleContinuousDistribution):
+     _argnames = ('beta', 'mu')
+ 
+@@ -1369,6 +1372,7 @@ def pdf(self, x):
+         eta, b = self.eta, self.b
+         return b*eta*exp(b*x)*exp(eta)*exp(-eta*exp(b*x))
+ 
++
+ def Gompertz(name, b, eta):
+     r"""
+     Create a Continuous Random Variable with Gompertz distribution.
+@@ -1417,6 +1421,7 @@ def Gompertz(name, b, eta):
+ #-------------------------------------------------------------------------------
+ # Kumaraswamy distribution -----------------------------------------------------
+ 
++
+ class KumaraswamyDistribution(SingleContinuousDistribution):
+     _argnames = ('a', 'b')
+ 
+@@ -1507,7 +1512,7 @@ def _cdf(self, x):
+         mu, b = self.mu, self.b
+         return Piecewise(
+                     (S.Half*exp((x - mu)/b), x < mu),
+-                    (S.One - S.Half*exp(-(x - mu)/b), x>= mu)
++                    (S.One - S.Half*exp(-(x - mu)/b), x >= mu)
+                         )
+ 
+ 
+@@ -1641,7 +1646,7 @@ def sample(self):
+     def _cdf(self, x):
+         mean, std = self.mean, self.std
+         return Piecewise(
+-                (S.Half + S.Half*erf((log(x) - mean)/sqrt(2)/std), x>0),
++                (S.Half + S.Half*erf((log(x) - mean)/sqrt(2)/std), x > 0),
+                 (S.Zero, True)
+         )
+ 
+@@ -1790,7 +1795,7 @@ def pdf(self, x):
+     def _cdf(self, x):
+         mu, omega = self.mu, self.omega
+         return Piecewise(
+-                    (lowergamma(mu, (mu/omega)*x**2)/gamma(mu), x>0),
++                    (lowergamma(mu, (mu/omega)*x**2)/gamma(mu), x > 0),
+                     (S.Zero, True))
+ 
+ 
+@@ -2030,6 +2035,7 @@ def Pareto(name, xm, alpha):
+ #-------------------------------------------------------------------------------
+ # QuadraticU distribution ------------------------------------------------------
+ 
++
+ class QuadraticUDistribution(SingleContinuousDistribution):
+     _argnames = ('a', 'b')
+ 
+@@ -2121,6 +2127,7 @@ def pdf(self, x):
+                 ((1+cos(pi*(x-mu)/s)) / (2*s), And(mu-s<=x, x<=mu+s)),
+                 (S.Zero, True))
+ 
++
+ def RaisedCosine(name, mu, s):
+     r"""
+     Create a Continuous Random Variable with a raised cosine distribution.
+@@ -2313,7 +2320,8 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         nu = self.nu
+-        return S.Half + x*gamma((nu+1)/2)*hyp2f1(S.Half, (nu+1)/2, S(3)/2, -x**2/nu)/(sqrt(pi*nu)*gamma(nu/2))
++        return S.Half + x*gamma((nu+1)/2)*hyper((S.Half, (nu+1)/2),
++                                (S(3)/2,), -x**2/nu)/(sqrt(pi*nu)*gamma(nu/2))
+ 
+ 
+ def StudentT(name, nu):
+@@ -2362,6 +2370,11 @@ def StudentT(name, nu):
+     \/ nu *beta|1/2, --|
+                \     2 /
+ 
++    >>> cdf(X)(z)
++    1/2 + z*gamma(nu/2 + 1/2)*hyper((1/2, nu/2 + 1/2), (3/2,),
++                                -z**2/nu)/(sqrt(pi)*sqrt(nu)*gamma(nu/2))
++
++
+     References
+     ==========
+ 
+@@ -2374,6 +2387,7 @@ def StudentT(name, nu):
+ #-------------------------------------------------------------------------------
+ # Trapezoidal distribution ------------------------------------------------------
+ 
++
+ class TrapezoidalDistribution(SingleContinuousDistribution):
+     _argnames = ('a', 'b', 'c', 'd')
+ 
+@@ -2385,6 +2399,7 @@ def pdf(self, x):
+             (2*(d-x) / ((d-c)*(d+c-a-b)), And(c <= x, x <= d)),
+             (S.Zero, True))
+ 
++
+ def Trapezoidal(name, a, b, c, d):
+     r"""
+     Create a continuous random variable with a trapezoidal distribution.
+@@ -2638,12 +2653,13 @@ def pdf(self, x):
+         return 1/factorial(
+             n - 1)*Sum((-1)**k*binomial(n, k)*(x - k)**(n - 1), (k, 0, floor(x)))
+ 
+-
+     def _cdf(self, x):
+         n = self.n
+-        x=Dummy("x")
+         k = Dummy("k")
+-        return 1/factorial(n)*Sum((-1)**k*binomial(n, k)*(x - k)**n, (k, 0, floor(x)))
++        return Piecewise((S.Zero, x < 0),
++                        (1/factorial(n)*Sum((-1)**k*binomial(n, k)*(x - k)**(n),
++                        (k, 0, floor(x))), x <= n),
++                        (S.One, True))
+ 
+ 
+ def UniformSum(name, n):
+@@ -2693,6 +2709,11 @@ def UniformSum(name, n):
+     --------------------------------
+                 (n - 1)!
+ 
++    >>> cdf(X)(z)
++    Piecewise((0, z < 0), (Sum((-1)**_k*(-_k + z)**n*binomial(n, _k),
++                            (_k, 0, floor(z)))/factorial(n), n >= z), (1, True))
++
++
+     References
+     ==========
+ 
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index e4b4087538e9..dc96c3d38476 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -15,7 +15,7 @@
+ from sympy import (Symbol, Abs, exp, S, N, pi, simplify, Interval, erf, erfc,
+                    Eq, log, lowergamma, uppergamma, Sum, symbols, sqrt, And, gamma, beta,
+                    Piecewise, Integral, sin, cos, besseli, factorial, binomial,
+-                   floor, expand_func, Rational)
++                   floor, expand_func, Rational, hyper)
+ 
+ 
+ from sympy.stats.crv_types import NormalDistribution
+@@ -234,12 +234,14 @@ def test_chi_noncentral():
+     assert density(X)(x) == (x**k*l*(x*l)**(-k/2)*
+                           exp(-x**2/2 - l**2/2)*besseli(k/2 - 1, x*l))
+ 
++
+ def test_chi_squared():
+     k = Symbol("k", integer=True)
+ 
+     X = ChiSquared('x', k)
+     assert density(X)(x) == 2**(-k/2)*x**(k/2 - 1)*exp(-x/2)/gamma(k/2)
+ 
++
+ def test_dagum():
+     p = Symbol("p", positive=True)
+     b = Symbol("b", positive=True)
+@@ -250,6 +252,7 @@ def test_dagum():
+     assert cdf(X)(x) == Piecewise(((1 + x**(-a)/b)**(-p), x >= 0),
+                             (0, True))
+ 
++
+ def test_erlang():
+     k = Symbol("k", integer=True, positive=True)
+     l = Symbol("l", positive=True)
+@@ -259,6 +262,7 @@ def test_erlang():
+     assert cdf(X)(x) == Piecewise((lowergamma(k, l*x)/gamma(k), x > 0),
+                                (0, True))
+ 
++
+ def test_exponential():
+     rate = Symbol('lambda', positive=True, real=True, finite=True)
+     X = Exponential('x', rate)
+@@ -275,6 +279,7 @@ def test_exponential():
+ 
+     assert where(X <= 1).set == Interval(0, 1)
+ 
++
+ def test_f_distribution():
+     d1 = Symbol("d1", positive=True)
+     d2 = Symbol("d2", positive=True)
+@@ -300,6 +305,7 @@ def test_frechet():
+     assert density(X)(x) == a*((x - m)/s)**(-a - 1)*exp(-((x - m)/s)**(-a))/s
+     assert cdf(X)(x) == Piecewise((exp(-((-m + x)/s)**(-a)), m <= x), (0, True))
+ 
++
+ def test_gamma():
+     k = Symbol("k", positive=True)
+     theta = Symbol("theta", positive=True)
+@@ -321,6 +327,7 @@ def test_gamma():
+     # The following is too slow
+     # assert simplify(skewness(X)).subs(k, 5) == (2/sqrt(k)).subs(k, 5)
+ 
++
+ def test_gamma_inverse():
+     a = Symbol("a", positive=True)
+     b = Symbol("b", positive=True)
+@@ -329,6 +336,7 @@ def test_gamma_inverse():
+     assert density(X)(x) == x**(-a - 1)*b**a*exp(-b/x)/gamma(a)
+     assert cdf(X)(x) == Piecewise((uppergamma(a, b/x)/gamma(a), x > 0), (0, True))
+ 
++
+ def test_gompertz():
+     b = Symbol("b", positive=True)
+     eta = Symbol("eta", positive=True)
+@@ -336,6 +344,7 @@ def test_gompertz():
+     X = Gompertz("x", b, eta)
+     assert density(X)(x) == b*eta*exp(eta)*exp(b*x)*exp(-eta*exp(b*x))
+ 
++
+ def test_gumbel():
+     beta = Symbol("beta", positive=True)
+     mu = Symbol("mu")
+@@ -343,6 +352,7 @@ def test_gumbel():
+     X = Gumbel("x", beta, mu)
+     assert simplify(density(X)(x)) == exp((beta*exp((mu - x)/beta) + mu - x)/beta)/beta
+ 
++
+ def test_kumaraswamy():
+     a = Symbol("a", positive=True)
+     b = Symbol("b", positive=True)
+@@ -353,6 +363,7 @@ def test_kumaraswamy():
+                                 (-(-x**a + 1)**b + 1, x <= 1),
+                                 (1, True))
+ 
++
+ def test_laplace():
+     mu = Symbol("mu")
+     b = Symbol("b", positive=True)
+@@ -417,11 +428,11 @@ def test_nakagami():
+     assert density(X)(x) == (2*x**(2*mu - 1)*mu**mu*omega**(-mu)
+                                 *exp(-x**2*mu/omega)/gamma(mu))
+     assert simplify(E(X, meijerg=True)) == (sqrt(mu)*sqrt(omega)
+-           *gamma(mu + S.Half)/gamma(mu + 1))
++                                            *gamma(mu + S.Half)/gamma(mu + 1))
+     assert simplify(variance(X, meijerg=True)) == (
+     omega - omega*gamma(mu + S(1)/2)**2/(gamma(mu)*gamma(mu + 1)))
+     assert cdf(X)(x) == Piecewise(
+-                                (lowergamma(mu, mu*x**2/omega)/gamma(mu), x > 0), 
++                                (lowergamma(mu, mu*x**2/omega)/gamma(mu), x > 0),
+                                 (0, True))
+ 
+ 
+@@ -479,6 +490,8 @@ def test_studentt():
+ 
+     X = StudentT('x', nu)
+     assert density(X)(x) == (1 + x**2/nu)**(-nu/2 - 1/2)/(sqrt(nu)*beta(1/2, nu/2))
++    assert cdf(X)(x) == 1/2 + x*gamma(nu/2 + 1/2)*hyper((1/2, nu/2 + 1/2),
++                                (3/2,), -x**2/nu)/(sqrt(pi)*sqrt(nu)*gamma(nu/2))
+ 
+ 
+ def test_trapezoidal():
+@@ -663,6 +676,7 @@ def test_probability_unevaluated():
+     T = Normal('T', 30, 3)
+     assert type(P(T > 33, evaluate=False)) == Integral
+ 
++
+ def test_density_unevaluated():
+     X = Normal('X', 0, 1)
+     Y = Normal('Y', 0, 2)
+@@ -678,6 +692,7 @@ def test_NormalDistribution():
+     assert nd.expectation(x, x) == 0
+     assert nd.expectation(x**2, x) == 1
+ 
++
+ def test_random_parameters():
+     mu = Normal('mu', 2, 3)
+     meas = Normal('T', mu, 1)
+@@ -686,17 +701,20 @@ def test_random_parameters():
+     #assert density(meas, evaluate=False)(z) == Integral(mu.pspace.pdf *
+     #        meas.pspace.pdf, (mu.symbol, -oo, oo)).subs(meas.symbol, z)
+ 
++
+ def test_random_parameters_given():
+     mu = Normal('mu', 2, 3)
+     meas = Normal('T', mu, 1)
+     assert given(meas, Eq(mu, 5)) == Normal('T', 5, 1)
+ 
++
+ def test_conjugate_priors():
+     mu = Normal('mu', 2, 3)
+     x = Normal('x', mu, 1)
+     assert isinstance(simplify(density(mu, Eq(x, y), evaluate=False)(z)),
+             Integral)
+ 
++
+ def test_difficult_univariate():
+     """ Since using solve in place of deltaintegrate we're able to perform
+     substantially more complex density computations on single continuous random
+@@ -713,6 +731,7 @@ def test_issue_10003():
+     assert P(X < -1) == S.Zero
+     assert P(G < -1) == S.Zero
+ 
++
+ def test_precomputed_cdf():
+     x = symbols("x", real=True, finite=True)
+     mu = symbols("mu", real=True, finite=True)
+@@ -730,7 +749,8 @@ def test_precomputed_cdf():
+         compdiff = simplify(compdiff.rewrite(erfc))
+         assert compdiff == 0
+ 
++
+ def test_issue_13324():
+     X = Uniform('X', 0, 1)
+-    assert E(X, X > Rational(1,2)) == Rational(3,4)
+-    assert E(X, X > 0) == Rational(1,2)
++    assert E(X, X > Rational(1, 2)) == Rational(3, 4)
++    assert E(X, X > 0) == Rational(1, 2)
+
+From b6dade8a96eae69132b9b29823e5d6edc1e7536f Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Wed, 10 Jan 2018 18:53:13 +0530
+Subject: [PATCH 05/11] added an example for evaluation of cdf of UniformSum
+ distribution with specific values of 'x' and 'n'
+
+---
+ sympy/stats/crv_types.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index ed509dee4371..297030bdabf6 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -2714,6 +2714,14 @@ def UniformSum(name, n):
+                             (_k, 0, floor(z)))/factorial(n), n >= z), (1, True))
+ 
+ 
++    Compute cdf with specific 'x' and 'n' values as follows :
++    >>> cdf(UniformSum("x", 5), evaluate=False)(2).doit()
++    9/40
++
++    In above formof cdf functtion evaluate=False prevents an attempt at premature evaluation of the sum,
++    before the argument 2 is passed. Once 2 is passed, the sum is easily
++    evaluated with doit and without any hypergeometric complications.
++
+     References
+     ==========
+ 
+
+From 7b73716842869642b5498c7ba74324c03a84d29d Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Thu, 11 Jan 2018 14:35:20 +0530
+Subject: [PATCH 06/11] Added test_long_precomputed_cdf() function and
+ corrected formula for precomputed cdf of dagum and logistic random variables
+ test_long_precomputed_cdf() also will keep a check on the consistency of
+ density and cdf functions as they both are related.
+
+---
+ sympy/stats/crv_types.py                | 26 ++++++++++-----------
+ sympy/stats/tests/test_continuous_rv.py | 30 +++++++++++++++++++++----
+ 2 files changed, 39 insertions(+), 17 deletions(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index 297030bdabf6..f26bb041689c 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -188,7 +188,7 @@ def Arcsin(name, a=0, b=1):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Arcsin, density
++    >>> from sympy.stats import Arcsin, density, cdf
+     >>> from sympy import Symbol, simplify
+ 
+     >>> a = Symbol("a", real=True)
+@@ -688,7 +688,7 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         p, a, b = self.p, self.a, self.b
+-        return Piecewise(((S.One + x**-a/b)**-p, x>=0),
++        return Piecewise(((S.One + (S(x)/b)**-a)**-p, x>=0),
+                     (S.Zero, True))
+ 
+ 
+@@ -733,7 +733,7 @@ def Dagum(name, p, a, b):
+     a*p*(z/b)**(a*p)*((z/b)**a + 1)**(-p - 1)/z
+ 
+     >>> cdf(X)(z)
+-    Piecewise(((1 + z**(-a)/b)**(-p), z >= 0), (0, True))
++    Piecewise(((1 + (z/b)**(-a))**(-p), z >= 0), (0, True))
+ 
+ 
+     References
+@@ -1097,7 +1097,7 @@ def Frechet(name, a, s=1, m=0):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Frechet, density, E, std
++    >>> from sympy.stats import Frechet, density, E, std, cdf
+     >>> from sympy import Symbol, simplify
+ 
+     >>> a = Symbol("a", positive=True)
+@@ -1288,7 +1288,7 @@ def GammaInverse(name, a, b):
+     ---------------
+        gamma(a)
+ 
+-    >>>cdf(X)(z)
++    >>> cdf(X)(z)
+     Piecewise((uppergamma(a, b/z)/gamma(a), z > 0), (0, True))
+ 
+ 
+@@ -1469,7 +1469,7 @@ def Kumaraswamy(name, a, b):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Kumaraswamy, density, E, variance
++    >>> from sympy.stats import Kumaraswamy, density, E, variance, cdf
+     >>> from sympy import Symbol, simplify, pprint
+ 
+     >>> a = Symbol("a", positive=True)
+@@ -1577,7 +1577,7 @@ def pdf(self, x):
+ 
+     def _cdf(self, x):
+         mu, s = self.mu, self.s
+-        return 1 + exp(-(x - mu)/s)
++        return S.One/(1 + exp(-(x - mu)/s))
+ 
+ 
+ def Logistic(name, mu, s):
+@@ -1603,7 +1603,7 @@ def Logistic(name, mu, s):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Logistic, density
++    >>> from sympy.stats import Logistic, density, cdf
+     >>> from sympy import Symbol
+ 
+     >>> mu = Symbol("mu", real=True)
+@@ -1616,7 +1616,7 @@ def Logistic(name, mu, s):
+     exp((mu - z)/s)/(s*(exp((mu - z)/s) + 1)**2)
+ 
+     >>> cdf(X)(z)
+-    exp((mu - z)/s) + 1
++    1/(exp((mu - z)/s) + 1)
+ 
+     References
+     ==========
+@@ -1825,7 +1825,7 @@ def Nakagami(name, mu, omega):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import Nakagami, density, E, variance
++    >>> from sympy.stats import Nakagami, density, E, variance, cdf
+     >>> from sympy import Symbol, simplify, pprint
+ 
+     >>> mu = Symbol("mu", positive=True)
+@@ -1854,7 +1854,7 @@ def Nakagami(name, mu, omega):
+     omega - -----------------------
+             gamma(mu)*gamma(mu + 1)
+ 
+-    >>> cdf(X)(x)
++    >>> cdf(X)(z)
+     Piecewise((lowergamma(mu, mu*z**2/omega)/gamma(mu), z > 0),
+             (0, True))
+ 
+@@ -2348,7 +2348,7 @@ def StudentT(name, nu):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import StudentT, density, E, variance
++    >>> from sympy.stats import StudentT, density, E, variance, cdf
+     >>> from sympy import Symbol, simplify, pprint
+ 
+     >>> nu = Symbol("nu", positive=True)
+@@ -2688,7 +2688,7 @@ def UniformSum(name, n):
+     Examples
+     ========
+ 
+-    >>> from sympy.stats import UniformSum, density
++    >>> from sympy.stats import UniformSum, density, cdf
+     >>> from sympy import Symbol, pprint
+ 
+     >>> n = Symbol("n", integer=True)
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index dc96c3d38476..9515202f268d 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -1,4 +1,5 @@
+ from __future__ import division
++import random
+ from sympy.stats import (P, E, where, density, variance, covariance, skewness,
+                          given, pspace, cdf, ContinuousRV, sample,
+                          Arcsin, Benini, Beta, BetaPrime, Cauchy,
+@@ -15,7 +16,7 @@
+ from sympy import (Symbol, Abs, exp, S, N, pi, simplify, Interval, erf, erfc,
+                    Eq, log, lowergamma, uppergamma, Sum, symbols, sqrt, And, gamma, beta,
+                    Piecewise, Integral, sin, cos, besseli, factorial, binomial,
+-                   floor, expand_func, Rational, hyper)
++                   floor, expand_func, Rational, hyper, diff)
+ 
+ 
+ from sympy.stats.crv_types import NormalDistribution
+@@ -249,8 +250,8 @@ def test_dagum():
+ 
+     X = Dagum('x', p, a, b)
+     assert density(X)(x) == a*p*(x/b)**(a*p)*((x/b)**a + 1)**(-p - 1)/x
+-    assert cdf(X)(x) == Piecewise(((1 + x**(-a)/b)**(-p), x >= 0),
+-                            (0, True))
++    assert cdf(X)(x) == Piecewise(((1 + (x/b)**(-a))**(-p), x >= 0),
++                                    (0, True))
+ 
+ 
+ def test_erlang():
+@@ -379,7 +380,7 @@ def test_logistic():
+ 
+     X = Logistic('x', mu, s)
+     assert density(X)(x) == exp((-x + mu)/s)/(s*(exp((-x + mu)/s) + 1)**2)
+-    assert cdf(X)(x) == exp((mu - x)/s) + 1
++    assert cdf(X)(x) == 1/(exp((mu - x)/s) + 1)
+ 
+ 
+ def test_lognormal():
+@@ -750,6 +751,27 @@ def test_precomputed_cdf():
+         assert compdiff == 0
+ 
+ 
++def test_long_precomputed_cdf():
++    x = symbols("x", real=True, finite=True)
++    distribs = [
++            Arcsin("A", -5, 9),
++            Dagum("D", 4, 10, 3),
++            Erlang("E", 14, 5),
++            Frechet("F", 2, 6, -3),
++            Gamma("G", 2, 7),
++            GammaInverse("GI", 3, 5),
++            Kumaraswamy("K", 6, 8),
++            Laplace("LA", -5, 4),
++            Logistic("L", -6, 7),
++            Nakagami("N", 2, 7),
++            StudentT("S", 4)
++            ]
++    for distr in distribs:
++        for _ in range(5):
++            assert abs((simplify(diff(cdf(distr)(x), x))
++                - density(distr)(x)).evalf(subs={x: random.random()})) < 1e-15
++
++
+ def test_issue_13324():
+     X = Uniform('X', 0, 1)
+     assert E(X, X > Rational(1, 2)) == Rational(3, 4)
+
+From 80930b976ab66779055ffebb987380842c3cb489 Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Fri, 12 Jan 2018 08:38:01 +0530
+Subject: [PATCH 07/11] Added test for UniformSums cdf and density
+
+---
+ sympy/stats/tests/test_continuous_rv.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index 9515202f268d..d4fc46ae7e61 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -771,6 +771,11 @@ def test_long_precomputed_cdf():
+             assert abs((simplify(diff(cdf(distr)(x), x))
+                 - density(distr)(x)).evalf(subs={x: random.random()})) < 1e-15
+ 
++    US = UniformSum("US", 5)
++    pdf01 = density(US)(x).subs(floor(x), 0).doit()   # pdf on (0, 1)
++    cdf01 = cdf(US, evaluate=False)(x).subs(floor(x), 0).doit()   # cdf on (0, 1)
++    (diff(cdf01, x) - pdf01).subs(x, random.random()) == 0
++
+ 
+ def test_issue_13324():
+     X = Uniform('X', 0, 1)
+
+From efe74228cd0984023c59819c5eea355278ee2636 Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Wed, 17 Jan 2018 05:11:59 +0530
+Subject: [PATCH 08/11] Changed random with verify_numerically method
+
+---
+ sympy/stats/tests/test_continuous_rv.py | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index ec02bdddc6a6..d2bf95392ded 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -1,5 +1,5 @@
+ from __future__ import division
+-import random
++from sympy.utilities.randtest import verify_numerically as tn
+ from sympy.stats import (P, E, where, density, variance, covariance, skewness,
+                          given, pspace, cdf, characteristic_function, ContinuousRV, sample,
+                          Arcsin, Benini, Beta, BetaPrime, Cauchy,
+@@ -785,13 +785,12 @@ def test_long_precomputed_cdf():
+             ]
+     for distr in distribs:
+         for _ in range(5):
+-            assert abs((simplify(diff(cdf(distr)(x), x))
+-                - density(distr)(x)).evalf(subs={x: random.random()})) < 1e-15
++            assert tn(diff(cdf(distr)(x), x), density(distr)(x), x, a=0, b=0, c=1, d=0) 
+ 
+     US = UniformSum("US", 5)
+     pdf01 = density(US)(x).subs(floor(x), 0).doit()   # pdf on (0, 1)
+     cdf01 = cdf(US, evaluate=False)(x).subs(floor(x), 0).doit()   # cdf on (0, 1)
+-    (diff(cdf01, x) - pdf01).subs(x, random.random()) == 0
++    assert tn(diff(cdf01, x), pdf01, x, a=0, b=0, c=1, d=0)
+ 
+ 
+ def test_issue_13324():
+
+From 589b7e33994f21f5ed0de36949e95f402fb26df5 Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Thu, 18 Jan 2018 20:49:14 +0530
+Subject: [PATCH 09/11] deleted one whitespace
+
+---
+ sympy/stats/tests/test_continuous_rv.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sympy/stats/tests/test_continuous_rv.py b/sympy/stats/tests/test_continuous_rv.py
+index d2bf95392ded..2145d906effa 100644
+--- a/sympy/stats/tests/test_continuous_rv.py
++++ b/sympy/stats/tests/test_continuous_rv.py
+@@ -785,7 +785,7 @@ def test_long_precomputed_cdf():
+             ]
+     for distr in distribs:
+         for _ in range(5):
+-            assert tn(diff(cdf(distr)(x), x), density(distr)(x), x, a=0, b=0, c=1, d=0) 
++            assert tn(diff(cdf(distr)(x), x), density(distr)(x), x, a=0, b=0, c=1, d=0)
+ 
+     US = UniformSum("US", 5)
+     pdf01 = density(US)(x).subs(floor(x), 0).doit()   # pdf on (0, 1)
+
+From 21036544c299704ceb8a0ed396b45f785b599e9e Mon Sep 17 00:00:00 2001
+From: jashan498 <jashansingh.4398@gmail.com>
+Date: Fri, 19 Jan 2018 23:18:15 +0530
+Subject: [PATCH 10/11]  some minor changes in docstring
+
+---
+ sympy/stats/crv_types.py | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index 06ee361613bf..bf7b89a9a825 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -2721,16 +2721,17 @@ def UniformSum(name, n):
+ 
+     >>> cdf(X)(z)
+     Piecewise((0, z < 0), (Sum((-1)**_k*(-_k + z)**n*binomial(n, _k),
+-                            (_k, 0, floor(z)))/factorial(n), n >= z), (1, True))
++                    (_k, 0, floor(z)))/factorial(n), n >= z), (1, True))
+ 
+ 
+     Compute cdf with specific 'x' and 'n' values as follows :
+     >>> cdf(UniformSum("x", 5), evaluate=False)(2).doit()
+     9/40
+ 
+-    In above formof cdf functtion evaluate=False prevents an attempt at premature evaluation of the sum,
+-    before the argument 2 is passed. Once 2 is passed, the sum is easily
+-    evaluated with doit and without any hypergeometric complications.
++    The argument evaluate=False prevents an attempt at evaluation
++    of the sum for general n, before the argument 2 is passed.
++    Once 2 is passed, the sum is easilyevaluated with doit and without
++    any hypergeometric complications.
+ 
+     References
+     ==========
+
+From 30c9ac7fae98c69ad540ccb1145fc27fca426f8d Mon Sep 17 00:00:00 2001
+From: Leonid Kovalev <normalhuman@users.noreply.github.com>
+Date: Sun, 21 Jan 2018 13:35:28 -0500
+Subject: [PATCH 11/11] Shorten a docstring
+
+This was an unnecessary sentence, a bit too conversational.
+---
+ sympy/stats/crv_types.py | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/sympy/stats/crv_types.py b/sympy/stats/crv_types.py
+index bf7b89a9a825..b602439edc3e 100644
+--- a/sympy/stats/crv_types.py
++++ b/sympy/stats/crv_types.py
+@@ -2730,8 +2730,6 @@ def UniformSum(name, n):
+ 
+     The argument evaluate=False prevents an attempt at evaluation
+     of the sum for general n, before the argument 2 is passed.
+-    Once 2 is passed, the sum is easilyevaluated with doit and without
+-    any hypergeometric complications.
+ 
+     References
+     ==========

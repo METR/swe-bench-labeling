@@ -1,0 +1,228 @@
+diff --git a/django/test/testcases.py b/django/test/testcases.py
+index 92f566b7b0..a1c90dca2d 100644
+--- a/django/test/testcases.py
++++ b/django/test/testcases.py
+@@ -1399,6 +1399,16 @@ class QuietWSGIRequestHandler(WSGIRequestHandler):
+     """
+     def log_message(*args):
+         pass
++    
++    def handle_one_request(self):
++        """
++        Handle a single HTTP request and ensure database connections are closed.
++        """
++        # Call parent method to handle the request
++        super().handle_one_request()
++        # Close database connections after handling the request in thread
++        # This ensures connections don't leak when using ThreadedWSGIServer
++        connections.close_all()
+ 
+ 
+ class FSFilesHandler(WSGIHandler):
+diff --git a/test_db_connection_issue.py b/test_db_connection_issue.py
+new file mode 100644
+index 0000000000..d5d162bc70
+--- /dev/null
++++ b/test_db_connection_issue.py
+@@ -0,0 +1,118 @@
++"""
++Test to reproduce the database connection issue with ThreadedWSGIServer
++"""
++import os
++import sys
++import tempfile
++import threading
++import time
++from django.conf import settings
++from django.test import LiveServerTestCase, override_settings
++from django.db import connections, DEFAULT_DB_ALIAS
++from django.test.client import Client
++import django
++
++# Create a temporary database file
++temp_db = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
++temp_db.close()
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': temp_db.name,
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    MIDDLEWARE=[],
++    ROOT_URLCONF='test_db_connection_issue',
++    SECRET_KEY='test-secret-key',
++    USE_TZ=True,
++)
++
++django.setup()
++
++# URL configuration
++from django.urls import path
++from django.http import HttpResponse
++
++def test_view(request):
++    # Access the database to ensure a connection is created
++    from django.contrib.auth.models import User
++    User.objects.exists()
++    return HttpResponse('OK')
++
++urlpatterns = [
++    path('test/', test_view),
++]
++
++class TestDBConnectionsWithThreadedServer(LiveServerTestCase):
++    """Test that database connections are properly closed in ThreadedWSGIServer"""
++    
++    def test_threaded_requests_close_connections(self):
++        """Make multiple concurrent requests and verify connections are closed"""
++        results = []
++        errors = []
++        
++        def make_request():
++            try:
++                import urllib.request
++                response = urllib.request.urlopen(self.live_server_url + '/test/')
++                results.append(response.getcode())
++                response.close()
++            except Exception as e:
++                errors.append(e)
++        
++        # Create multiple threads to make concurrent requests
++        threads = []
++        for i in range(10):
++            t = threading.Thread(target=make_request)
++            threads.append(t)
++            t.start()
++        
++        # Wait for all threads to complete
++        for t in threads:
++            t.join()
++        
++        # Check that all requests succeeded
++        self.assertEqual(len(errors), 0, f"Errors occurred: {errors}")
++        self.assertEqual(len(results), 10)
++        self.assertTrue(all(status == 200 for status in results))
++        
++        # Give some time for connections to be closed
++        time.sleep(0.1)
++        
++        # Check that there are no lingering connections
++        # This is the key test - if connections aren't properly closed,
++        # the database teardown will fail with "database is being accessed by other users"
++
++
++if __name__ == '__main__':
++    from django.test.runner import DiscoverRunner
++    import atexit
++    
++    # Clean up the temp file on exit
++    atexit.register(lambda: os.unlink(temp_db.name) if os.path.exists(temp_db.name) else None)
++    
++    runner = DiscoverRunner(verbosity=2)
++    runner.setup_test_environment()
++    old_config = runner.setup_databases()
++    
++    try:
++        # Run the test
++        suite = runner.test_loader.loadTestsFromTestCase(TestDBConnectionsWithThreadedServer)
++        result = runner.test_runner(verbosity=2).run(suite)
++        
++        if result.wasSuccessful():
++            print("\nAll tests passed! Database connections are being properly closed.")
++        else:
++            print(f"\nTests failed: {len(result.failures)} failures, {len(result.errors)} errors")
++    finally:
++        # This is where the error would occur if connections aren't closed
++        runner.teardown_databases(old_config)
++        runner.teardown_test_environment()
+diff --git a/test_liveserver_db_connections.py b/test_liveserver_db_connections.py
+new file mode 100644
+index 0000000000..a1027b4131
+--- /dev/null
++++ b/test_liveserver_db_connections.py
+@@ -0,0 +1,77 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.test import LiveServerTestCase
++from django.test.client import Client
++from django.db import connections
++
++# Configure Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++
++# Create a simple URLconf module
++import django.http
++
++def empty_view(request):
++    return django.http.HttpResponse('OK')
++
++urlpatterns = []
++
++# We need to configure settings before importing Django
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    MIDDLEWARE=[],
++    ROOT_URLCONF=__name__,  # Use this module as URLconf
++    SECRET_KEY='test-secret-key',
++    USE_TZ=True,
++)
++
++django.setup()
++
++# Define a simple test
++class TestLiveServerDBConnections(LiveServerTestCase):
++    def test_database_connections_closed(self):
++        """Test that database connections are properly closed after requests."""
++        # Make several requests to the live server
++        client = Client()
++        for i in range(5):
++            response = client.get(self.live_server_url + '/')
++            # Each request should get a 404 since we have no URLs configured
++            self.assertEqual(response.status_code, 404)
++        
++        # After the test, connections should be closed properly
++        # The test framework will try to destroy the test database
++        # If connections aren't closed, it will raise an OperationalError
++
++
++if __name__ == '__main__':
++    # Run the test using Django's test runner
++    from django.test import TestCase
++    from django.test.runner import DiscoverRunner
++    
++    runner = DiscoverRunner(verbosity=2)
++    runner.setup_test_environment()
++    old_config = runner.setup_databases()
++    
++    try:
++        # Run the test class
++        suite = runner.test_loader.loadTestsFromTestCase(TestLiveServerDBConnections)
++        result = runner.test_runner(verbosity=2).run(suite)
++        
++        if result.wasSuccessful():
++            print("\nAll tests passed!")
++        else:
++            print(f"\nTests failed: {len(result.failures)} failures, {len(result.errors)} errors")
++    finally:
++        runner.teardown_databases(old_config)
++        runner.teardown_test_environment()

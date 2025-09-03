@@ -1,0 +1,150 @@
+diff --git a/django/template/engine.py b/django/template/engine.py
+index dfaa67ba12..ff9ce58d59 100644
+--- a/django/template/engine.py
++++ b/django/template/engine.py
+@@ -160,7 +160,7 @@ class Engine:
+         if isinstance(context, Context):
+             return t.render(context)
+         else:
+-            return t.render(Context(context))
++            return t.render(Context(context, autoescape=self.autoescape))
+ 
+     def select_template(self, template_name_list):
+         """
+diff --git a/test_autoescape.py b/test_autoescape.py
+new file mode 100644
+index 0000000000..68ef4d7ddf
+--- /dev/null
++++ b/test_autoescape.py
+@@ -0,0 +1,33 @@
++from django.template import Engine
++
++# First create a test template
++import os
++import tempfile
++
++# Create a temporary directory for templates
++temp_dir = tempfile.mkdtemp()
++template_path = os.path.join(temp_dir, 'test_template')
++with open(template_path, 'w') as f:
++    f.write('{{ content }}')
++
++# Test case 1: Engine with autoescape=False
++engine = Engine(dirs=[temp_dir], autoescape=False)
++result = engine.render_to_string('test_template', {'content': '<script>alert("XSS")</script>'})
++print("Test 1 - Engine with autoescape=False:")
++print("Result: " + repr(result))
++print('Expected: \'<script>alert("XSS")</script>\'')
++expected = '<script>alert("XSS")</script>'
++print("Autoescape working correctly: " + str(result == expected))
++print()
++
++# Test case 2: Engine with autoescape=True (default)
++engine_escaped = Engine(dirs=[temp_dir], autoescape=True)
++result_escaped = engine_escaped.render_to_string('test_template', {'content': '<script>alert("XSS")</script>'})
++print("Test 2 - Engine with autoescape=True:")
++print("Result: " + repr(result_escaped))
++print('Expected: \'&lt;script&gt;alert(&quot;XSS&quot;)&lt;/script&gt;\'')
++print("Autoescape working correctly: " + str('&lt;script&gt;' in result_escaped))
++
++# Clean up
++import shutil
++shutil.rmtree(temp_dir)
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..af3a820942
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,61 @@
++from django.template import Engine, Context
++import os
++import tempfile
++import shutil
++
++# Create a temporary directory for templates
++temp_dir = tempfile.mkdtemp()
++template_path = os.path.join(temp_dir, 'test_template')
++with open(template_path, 'w') as f:
++    f.write('{{ content }}')
++
++# Test 1: Engine with autoescape=False, using render_to_string
++print("Test 1: Engine(autoescape=False) with render_to_string")
++engine = Engine(dirs=[temp_dir], autoescape=False)
++result = engine.render_to_string('test_template', {'content': '<b>HTML</b>'})
++print("Result:", repr(result))
++print("Expected: '<b>HTML</b>'")
++print("Pass:", result == '<b>HTML</b>')
++print()
++
++# Test 2: Engine with autoescape=True, using render_to_string
++print("Test 2: Engine(autoescape=True) with render_to_string")
++engine_escaped = Engine(dirs=[temp_dir], autoescape=True)
++result_escaped = engine_escaped.render_to_string('test_template', {'content': '<b>HTML</b>'})
++print("Result:", repr(result_escaped))
++print("Expected: '&lt;b&gt;HTML&lt;/b&gt;'")
++print("Pass:", result_escaped == '&lt;b&gt;HTML&lt;/b&gt;')
++print()
++
++# Test 3: Passing a Context object should preserve its autoescape setting
++print("Test 3: Passing a Context object with autoescape=False")
++engine_default = Engine(dirs=[temp_dir])  # default autoescape=True
++ctx = Context({'content': '<b>HTML</b>'}, autoescape=False)
++result_ctx = engine_default.render_to_string('test_template', ctx)
++print("Result:", repr(result_ctx))
++print("Expected: '<b>HTML</b>'")
++print("Pass:", result_ctx == '<b>HTML</b>')
++print()
++
++# Test 4: Passing a Context object with autoescape=True
++print("Test 4: Passing a Context object with autoescape=True")
++engine_noauto = Engine(dirs=[temp_dir], autoescape=False)
++ctx_escaped = Context({'content': '<b>HTML</b>'}, autoescape=True)
++result_ctx_escaped = engine_noauto.render_to_string('test_template', ctx_escaped)
++print("Result:", repr(result_ctx_escaped))
++print("Expected: '&lt;b&gt;HTML&lt;/b&gt;'")
++print("Pass:", result_ctx_escaped == '&lt;b&gt;HTML&lt;/b&gt;')
++print()
++
++# Test 5: Using select_template with autoescape=False
++print("Test 5: Engine(autoescape=False) with select_template")
++template_path2 = os.path.join(temp_dir, 'test_template2')
++with open(template_path2, 'w') as f:
++    f.write('{{ content }}')
++result_select = engine.render_to_string(['nonexistent', 'test_template2'], {'content': '<i>italic</i>'})
++print("Result:", repr(result_select))
++print("Expected: '<i>italic</i>'")
++print("Pass:", result_select == '<i>italic</i>')
++
++# Clean up
++shutil.rmtree(temp_dir)
+diff --git a/tests/template_tests/test_engine.py b/tests/template_tests/test_engine.py
+index 2bb8601fbb..73773bf31e 100644
+--- a/tests/template_tests/test_engine.py
++++ b/tests/template_tests/test_engine.py
+@@ -20,6 +20,26 @@ class RenderToStringTest(SimpleTestCase):
+             self.engine.render_to_string('test_context.html', {'obj': 'test'}),
+             'obj:test\n',
+         )
++    
++    def test_autoescape_off(self):
++        """
++        #xxxxx -- render_to_string should honor the engine's autoescape attribute
++        """
++        engine = Engine(dirs=[TEMPLATE_DIR], autoescape=False)
++        self.assertEqual(
++            engine.render_to_string('test_context.html', {'obj': '<script>'}),
++            'obj:<script>\n',
++        )
++    
++    def test_autoescape_on(self):
++        """
++        #xxxxx -- render_to_string should honor the engine's autoescape attribute
++        """
++        engine = Engine(dirs=[TEMPLATE_DIR], autoescape=True)
++        self.assertEqual(
++            engine.render_to_string('test_context.html', {'obj': '<script>'}),
++            'obj:&lt;script&gt;\n',
++        )
+ 
+ 
+ class GetDefaultTests(SimpleTestCase):

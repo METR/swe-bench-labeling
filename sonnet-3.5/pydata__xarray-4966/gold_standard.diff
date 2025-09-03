@@ -1,0 +1,103 @@
+From 17c89b27fa1675a072aeaf712f43fde168cdf3b9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tobias=20K=C3=B6lling?= <tobias.koelling@mpimet.mpg.de>
+Date: Fri, 26 Feb 2021 12:59:58 +0100
+Subject: [PATCH 1/2] conventions: decode unsigned integers to signed if
+ _Unsigned=false
+
+netCDF3 doesn't know unsigned while OPeNDAP doesn't know signed (bytes).
+Depending on which backend source is used, the original data is stored
+with the wrong signedness and needs to be decoded based on the _Unsigned
+attribute. While the netCDF3 variant is already implemented, this commit
+adds the symmetric case covering OPeNDAP.
+
+closes #4954
+---
+ xarray/coding/variables.py  |  8 ++++++++
+ xarray/tests/test_coding.py | 28 ++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/xarray/coding/variables.py b/xarray/coding/variables.py
+index b035ff82086..938752c4efc 100644
+--- a/xarray/coding/variables.py
++++ b/xarray/coding/variables.py
+@@ -316,6 +316,14 @@ def decode(self, variable, name=None):
+                     if "_FillValue" in attrs:
+                         new_fill = unsigned_dtype.type(attrs["_FillValue"])
+                         attrs["_FillValue"] = new_fill
++            elif data.dtype.kind == "u":
++                if unsigned == "false":
++                    signed_dtype = np.dtype("i%s" % data.dtype.itemsize)
++                    transform = partial(np.asarray, dtype=signed_dtype)
++                    data = lazy_elemwise_func(data, transform, signed_dtype)
++                    if "_FillValue" in attrs:
++                        new_fill = signed_dtype.type(attrs["_FillValue"])
++                        attrs["_FillValue"] = new_fill
+             else:
+                 warnings.warn(
+                     "variable %r has _Unsigned attribute but is not "
+diff --git a/xarray/tests/test_coding.py b/xarray/tests/test_coding.py
+index e0df7782aa7..839f2fd1f2e 100644
+--- a/xarray/tests/test_coding.py
++++ b/xarray/tests/test_coding.py
+@@ -117,3 +117,31 @@ def test_scaling_offset_as_list(scale_factor, add_offset):
+     encoded = coder.encode(original)
+     roundtripped = coder.decode(encoded)
+     assert_allclose(original, roundtripped)
++
++
++@pytest.mark.parametrize("bits", [1, 2, 4, 8])
++def test_decode_unsigned_from_signed(bits):
++    unsigned_dtype = np.dtype(f"u{bits}")
++    signed_dtype = np.dtype(f"i{bits}")
++    original_values = np.array([np.iinfo(unsigned_dtype).max], dtype=unsigned_dtype)
++    encoded = xr.Variable(
++        ("x",), original_values.astype(signed_dtype), attrs={"_Unsigned": "true"}
++    )
++    coder = variables.UnsignedIntegerCoder()
++    decoded = coder.decode(encoded)
++    assert decoded.dtype == unsigned_dtype
++    assert decoded.values == original_values
++
++
++@pytest.mark.parametrize("bits", [1, 2, 4, 8])
++def test_decode_signed_from_unsigned(bits):
++    unsigned_dtype = np.dtype(f"u{bits}")
++    signed_dtype = np.dtype(f"i{bits}")
++    original_values = np.array([-1], dtype=signed_dtype)
++    encoded = xr.Variable(
++        ("x",), original_values.astype(unsigned_dtype), attrs={"_Unsigned": "false"}
++    )
++    coder = variables.UnsignedIntegerCoder()
++    decoded = coder.decode(encoded)
++    assert decoded.dtype == signed_dtype
++    assert decoded.values == original_values
+
+From 76176f2eb456f07f1f1866b204af282e2caafc57 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tobias=20K=C3=B6lling?= <tobias.koelling@mpimet.mpg.de>
+Date: Fri, 26 Feb 2021 13:21:29 +0100
+Subject: [PATCH 2/2] whats-new.rst: added _Unsigned = "false"
+
+---
+ doc/whats-new.rst | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index ef7f5b43fdd..38fcdb471ac 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -14,6 +14,15 @@ What's New
+ 
+     np.random.seed(123456)
+ 
++.. _whats-new.unreleased:
++
++unreleased
++----------
++
++Bug fixes
++~~~~~~~~~
++- Decode values as signed if attribute `_Unsigned = "false"` (:issue:`4954`)
++  By `Tobias Kölling <https://github.com/d70-t>`_.
+ 
+ .. _whats-new.0.17.0:
+ 

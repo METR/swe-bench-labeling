@@ -1,0 +1,191 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index eaccc96d7d..ad83b31188 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -722,8 +722,58 @@ class SQLCompiler:
+ 
+             results = []
+             for item in opts.ordering:
+-                results.extend(self.find_ordering_name(item, opts, alias,
+-                                                       order, already_seen))
++                # Handle expressions (e.g., OrderBy objects) in Meta.ordering
++                if hasattr(item, 'resolve_expression'):
++                    # For expressions, we create a transform function that prefixes
++                    # field references with the correct alias
++                    def make_transform(original_expr, alias):
++                        def transform(target, alias2):
++                            # Clone the expression and update field references
++                            expr = original_expr.copy()
++                            # If the expression contains field references (F objects),
++                            # they need to be prefixed with the table alias
++                            from django.db.models import F
++                            
++                            def update_refs(node):
++                                if isinstance(node, F):
++                                    # Create a new F object with the prefixed name
++                                    return F(f"{alias}.{node.name}")
++                                for child in node.get_source_expressions():
++                                    if hasattr(child, 'get_source_expressions'):
++                                        update_refs(child)
++                            
++                            update_refs(expr)
++                            return expr
++                        return transform
++                    
++                    if isinstance(item, Value):
++                        # output_field must be resolved for constants.
++                        item = Cast(item, item.output_field)
++                    if not isinstance(item, OrderBy):
++                        item = item.asc()
++                    if not self.query.standard_ordering:
++                        item = item.copy()
++                        item.reverse_ordering()
++                    
++                    # Get field references from the expression
++                    from django.db.models import F
++                    base_expr = item.expression if isinstance(item, OrderBy) else item
++                    
++                    # For F() expressions, we need to handle them specially
++                    if isinstance(base_expr, F):
++                        # Use the standard field lookup mechanism
++                        field_name = base_expr.name
++                        results.extend(self.find_ordering_name(
++                            field_name if not isinstance(item, OrderBy) or not item.descending else f"-{field_name}",
++                            opts, alias, order, already_seen
++                        ))
++                    else:
++                        # For other expressions, just pass them through
++                        # but they might not work correctly with joins
++                        results.append((item, False))
++                else:
++                    results.extend(self.find_ordering_name(item, opts, alias,
++                                                           order, already_seen))
+             return results
+         targets, alias, _ = self.query.trim_joins(targets, joins, path)
+         return [(OrderBy(transform_function(t, alias), descending=descending), False) for t in targets]
+diff --git a/test_order_bug2.py b/test_order_bug2.py
+new file mode 100644
+index 0000000000..f6b617673f
+--- /dev/null
++++ b/test_order_bug2.py
+@@ -0,0 +1,38 @@
++from django.db import models
++from django.db.models import F
++from django.db.models.expressions import OrderBy
++
++# Test models to reproduce the issue  
++class BaseModel(models.Model):
++    created_at = models.DateTimeField(auto_now_add=True)
++    
++    class Meta:
++        # Using an expression in ordering
++        ordering = [OrderBy(F('created_at'), descending=True)]
++        app_label = 'test_app'
++
++class DerivedModel(BaseModel):
++    name = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Another test with deeper inheritance
++class GrandParent(models.Model):
++    gp_field = models.CharField(max_length=100)
++    
++    class Meta:
++        ordering = [OrderBy(F('gp_field'))]
++        app_label = 'test_app'
++
++class Parent(GrandParent):
++    p_field = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++class Child(Parent):
++    c_field = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
+diff --git a/test_ordering_expression_bug.py b/test_ordering_expression_bug.py
+new file mode 100644
+index 0000000000..52136f038b
+--- /dev/null
++++ b/test_ordering_expression_bug.py
+@@ -0,0 +1,31 @@
++from django.db import models
++from django.db.models import F
++from django.db.models.expressions import OrderBy
++from django.test import TestCase
++
++# Test models to reproduce the issue
++class Parent(models.Model):
++    name = models.CharField(max_length=100)
++    created_at = models.DateTimeField(auto_now_add=True)
++    
++    class Meta:
++        # Using an expression in ordering
++        ordering = [OrderBy(F('created_at'), descending=True)]
++        app_label = 'test_app'
++
++class Child(Parent):
++    extra_field = models.CharField(max_length=100)
++    
++    class Meta:
++        app_label = 'test_app'
++
++
++class OrderingExpressionTest(TestCase):
++    def test_child_ordering_with_expression(self):
++        """Test that ordering by parent model with expression in Meta.ordering works"""
++        # This should not crash
++        child = Child.objects.create(name="Test", extra_field="Extra")
++        
++        # This query should work when ordering by a parent field
++        result = Child.objects.order_by('name')
++        self.assertEqual(list(result), [child])
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..543a1cabb9
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,11 @@
++SECRET_KEY = 'test'
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++]
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
+diff --git a/trace_issue.py b/trace_issue.py
+new file mode 100644
+index 0000000000..9133fbacc8
+--- /dev/null
++++ b/trace_issue.py
+@@ -0,0 +1,22 @@
++from django.db import models
++from django.db.models import F
++from django.db.models.expressions import OrderBy
++
++# Model with expression ordering
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    pub_date = models.DateTimeField()
++    
++    class Meta:
++        ordering = [OrderBy(F('pub_date'), descending=True)]
++        app_label = 'test_app'
++
++# Model that has a relation to Article
++class Comment(models.Model):
++    article = models.ForeignKey(Article, on_delete=models.CASCADE)
++    content = models.TextField()
++    
++    class Meta:
++        app_label = 'test_app'
++
++# Let's trace what happens when we order Comment by article

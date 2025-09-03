@@ -1,0 +1,365 @@
+diff --git a/debug_empty_sample_dims.py b/debug_empty_sample_dims.py
+new file mode 100644
+index 00000000..d097ae8c
+--- /dev/null
++++ b/debug_empty_sample_dims.py
+@@ -0,0 +1,50 @@
++import xarray as xr
++import numpy as np
++
++# Test with empty sample_dims
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr * 2})
++
++print("Original dataset:")
++print(data)
++
++# Stack with empty sample_dims
++stacked = data.to_stacked_array('y', sample_dims=[])
++print("\nStacked array:")
++print(stacked)
++print("\nStacked dims:", stacked.dims)
++print("Stacked coords:", list(stacked.coords))
++print("Stacked indexes:", list(stacked.indexes.keys()))
++
++# Look at what happens when we select
++idx = stacked.indexes['y']
++print(f"\nMultiIndex levels: {idx.levels}")
++print(f"MultiIndex names: {idx.names}")
++
++level_number = idx._get_level_number(0)
++variables = idx.levels[level_number]
++variable_dim = idx.names[level_number]
++
++print(f"\nlevel_number: {level_number}")
++print(f"variables: {variables}")
++print(f"variable_dim: {variable_dim}")
++
++# Test selecting a variable
++selected = stacked.sel({variable_dim: 'a'})
++print(f"\nSelected variable 'a':")
++print(f"  Shape: {selected.shape}")
++print(f"  Dims: {selected.dims}")
++print(f"  Coords: {list(selected.coords)}")
++
++squeezed = selected.squeeze(drop=True)
++print(f"\nAfter squeeze:")
++print(f"  Shape: {squeezed.shape}")
++print(f"  Dims: {squeezed.dims}")
++print(f"  Coords: {list(squeezed.coords)}")
++
++# Check if 'y' is in coords to drop
++print(f"\n'y' in squeezed.coords: {'y' in squeezed.coords}")
++print(f"'y' in squeezed.dims: {'y' in squeezed.dims}")
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 00000000..e7c3f31e
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,46 @@
++import xarray as xr
++import numpy as np
++import pandas as pd
++
++# Reproduce the issue with debugging
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++print("Original dataset:")
++print(data)
++
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++print("\nStacked array:")
++print(stacked)
++print("\nStacked array dimensions:", stacked.dims)
++print("Stacked array coords:", list(stacked.coords))
++
++# Look at the MultiIndex
++idx = stacked.indexes['y']
++print(f"\nMultiIndex levels: {idx.levels}")
++print(f"MultiIndex names: {idx.names}")
++
++# Try to understand what happens in to_unstacked_dataset
++level_number = idx._get_level_number(0)
++variables = idx.levels[level_number]
++variable_dim = idx.names[level_number]
++
++print(f"\nlevel_number: {level_number}")
++print(f"variables: {variables}")
++print(f"variable_dim: {variable_dim}")
++
++# Test selecting each variable
++for k in variables:
++    print(f"\nSelecting {variable_dim}={k}")
++    selected = stacked.sel({variable_dim: k})
++    print(f"  Shape: {selected.shape}")
++    print(f"  Dims: {selected.dims}")
++    print(f"  Coords: {list(selected.coords)}")
++    
++    squeezed = selected.squeeze(drop=True)
++    print(f"  After squeeze - Shape: {squeezed.shape}")
++    print(f"  After squeeze - Dims: {squeezed.dims}")
++    print(f"  After squeeze - Coords: {list(squeezed.coords)}")
++    print(f"  After squeeze - Coord 'y' in coords: {'y' in squeezed.coords}")
+diff --git a/debug_issue2.py b/debug_issue2.py
+new file mode 100644
+index 00000000..4bd924df
+--- /dev/null
++++ b/debug_issue2.py
+@@ -0,0 +1,33 @@
++import xarray as xr
++import numpy as np
++
++# Reproduce the issue with more debugging
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++
++# Look at the y coordinate after selection
++for var in ['a', 'b']:
++    selected = stacked.sel(variable=var)
++    squeezed = selected.squeeze(drop=True)
++    print(f"\nVariable '{var}':")
++    print(f"  y coord value: {squeezed.coords['y'].values}")
++    print(f"  y coord dims: {squeezed.coords['y'].dims}")
++    
++# Try creating a dataset manually
++data_dict = {}
++for var in ['a', 'b']:
++    selected = stacked.sel(variable=var)
++    squeezed = selected.squeeze(drop=True)
++    data_dict[var] = squeezed
++    
++print("\nTrying to create Dataset from data_dict:")
++try:
++    result = xr.Dataset(data_dict)
++    print("Success!")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..51be4b90
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,22 @@
++import xarray as xr
++import numpy as np
++
++# Reproduce the issue
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++print("Original dataset:")
++print(data)
++
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++print("\nStacked array:")
++print(stacked)
++
++try:
++    unstacked = stacked.to_unstacked_dataset('y')
++    print("\nUnstacked dataset:")
++    print(unstacked)
++except Exception as e:
++    print(f"\nError: {type(e).__name__}: {e}")
+diff --git a/test_roundtrip.py b/test_roundtrip.py
+new file mode 100644
+index 00000000..7443b280
+--- /dev/null
++++ b/test_roundtrip.py
+@@ -0,0 +1,39 @@
++import xarray as xr
++import numpy as np
++
++# Test the roundtrip
++arr = xr.DataArray(
++    np.arange(3),
++    coords=[("x", [0, 1, 2])],
++)
++data = xr.Dataset({"a": arr, "b": arr})
++
++stacked = data.to_stacked_array('y', sample_dims=['x'])
++unstacked = stacked.to_unstacked_dataset('y')
++
++print("Original dataset:")
++print(data)
++print("\nUnstacked dataset:")
++print(unstacked)
++print("\nAre they identical?", data.identical(unstacked))
++
++# Test with multiple dimensions
++print("\n" + "="*50)
++print("Testing with multiple dimensions:")
++
++arr2d = xr.DataArray(
++    np.arange(12).reshape(3, 4),
++    coords=[("x", [0, 1, 2]), ("z", list("abcd"))]
++)
++data2d = xr.Dataset({"var1": arr2d, "var2": arr2d * 2})
++
++print("\nOriginal 2D dataset:")
++print(data2d)
++
++stacked2d = data2d.to_stacked_array('y', sample_dims=['x', 'z'])
++print("\nStacked 2D array shape:", stacked2d.shape)
++
++unstacked2d = stacked2d.to_unstacked_dataset('y')
++print("\nUnstacked 2D dataset:")
++print(unstacked2d)
++print("\nAre they identical?", data2d.identical(unstacked2d))
+diff --git a/test_single_dim_fix.py b/test_single_dim_fix.py
+new file mode 100644
+index 00000000..83a1c44f
+--- /dev/null
++++ b/test_single_dim_fix.py
+@@ -0,0 +1,68 @@
++import pytest
++import xarray as xr
++import numpy as np
++from xarray.tests import assert_identical
++
++
++class TestToUnstackedDatasetSingleDim:
++    """Test cases for the single-dimension variable bug fix"""
++    
++    def test_to_stacked_array_to_unstacked_dataset_single_dim(self):
++        """Test roundtrip for single-dimension variables."""
++        # This is the issue reported - single dimension variables
++        arr = xr.DataArray(
++            np.arange(3),
++            coords=[("x", [0, 1, 2])],
++        )
++        data = xr.Dataset({"a": arr, "b": arr})
++        
++        # Stack and unstack  
++        stacked = data.to_stacked_array('y', sample_dims=['x'])
++        unstacked = stacked.to_unstacked_dataset('y')
++        
++        # Check roundtrip
++        assert_identical(data, unstacked)
++
++    def test_to_stacked_array_to_unstacked_dataset_empty_sample_dims(self):
++        """Test roundtrip when sample_dims is empty (all dims are stacked)."""
++        # Single dimension case with empty sample_dims
++        arr = xr.DataArray(
++            np.arange(3),
++            coords=[("x", [0, 1, 2])],
++        )
++        data = xr.Dataset({"a": arr, "b": arr * 2})
++        
++        # Stack with empty sample_dims
++        stacked = data.to_stacked_array('y', sample_dims=[])
++        unstacked = stacked.to_unstacked_dataset('y')
++        
++        # Check roundtrip
++        assert_identical(data, unstacked)
++        
++    def test_original_multidim_cases_still_work(self):
++        """Ensure the fix doesn't break existing multi-dimensional cases."""
++        # 2D case
++        arr2d = xr.DataArray(
++            np.arange(12).reshape(3, 4),
++            coords=[("x", [0, 1, 2]), ("z", list("abcd"))]
++        )
++        data2d = xr.Dataset({"var1": arr2d, "var2": arr2d * 2})
++        
++        stacked2d = data2d.to_stacked_array('y', sample_dims=['x', 'z'])
++        unstacked2d = stacked2d.to_unstacked_dataset('y')
++        
++        assert_identical(data2d, unstacked2d)
++
++if __name__ == "__main__":
++    # Run tests
++    test = TestToUnstackedDatasetSingleDim()
++    test.test_to_stacked_array_to_unstacked_dataset_single_dim()
++    print("✓ Single dimension test passed")
++    
++    test.test_to_stacked_array_to_unstacked_dataset_empty_sample_dims()
++    print("✓ Empty sample_dims test passed")
++    
++    test.test_original_multidim_cases_still_work()
++    print("✓ Multi-dimensional test passed")
++    
++    print("\nAll tests passed!")
+diff --git a/test_single_dim_roundtrip.py b/test_single_dim_roundtrip.py
+new file mode 100644
+index 00000000..4adb3bc5
+--- /dev/null
++++ b/test_single_dim_roundtrip.py
+@@ -0,0 +1,45 @@
++import pytest
++import xarray as xr
++import numpy as np
++from xarray.tests import assert_identical
++
++def test_to_stacked_array_to_unstacked_dataset_single_dim():
++    """Test roundtrip for single-dimension variables."""
++    # This is the issue reported - single dimension variables
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr})
++    
++    # Stack and unstack  
++    stacked = data.to_stacked_array('y', sample_dims=['x'])
++    unstacked = stacked.to_unstacked_dataset('y')
++    
++    # Check roundtrip
++    assert_identical(data, unstacked)
++
++def test_to_stacked_array_to_unstacked_dataset_empty_sample_dims():
++    """Test roundtrip when sample_dims is empty (all dims are stacked)."""
++    # Single dimension case with empty sample_dims
++    arr = xr.DataArray(
++        np.arange(3),
++        coords=[("x", [0, 1, 2])],
++    )
++    data = xr.Dataset({"a": arr, "b": arr * 2})
++    
++    # Stack with empty sample_dims
++    stacked = data.to_stacked_array('y', sample_dims=[])
++    unstacked = stacked.to_unstacked_dataset('y')
++    
++    # Check roundtrip
++    assert_identical(data, unstacked)
++
++if __name__ == "__main__":
++    test_to_stacked_array_to_unstacked_dataset_single_dim()
++    print("Single dimension test passed!")
++    
++    test_to_stacked_array_to_unstacked_dataset_empty_sample_dims()
++    print("Empty sample_dims test passed!")
++    
++    print("\nAll tests passed!")
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index b0df8749..f002a2dd 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -1961,7 +1961,14 @@ class DataArray(AbstractArray, DataWithCoords):
+         # pull variables out of datarray
+         data_dict = {}
+         for k in variables:
+-            data_dict[k] = self.sel({variable_dim: k}).squeeze(drop=True)
++            # after squeezing, we need to drop the stacked coordinate 
++            # to avoid conflicts when merging into a dataset
++            squeezed = self.sel({variable_dim: k}).squeeze(drop=True)
++            # Only drop the stacked dim if it's still in the coordinates
++            if dim in squeezed.coords:
++                data_dict[k] = squeezed.drop_vars(dim)
++            else:
++                data_dict[k] = squeezed
+ 
+         # unstacked dataset
+         return Dataset(data_dict)

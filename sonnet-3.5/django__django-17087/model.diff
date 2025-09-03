@@ -1,0 +1,52 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index d88cda6e20..f55e334603 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -10,6 +10,7 @@ import pathlib
+ import re
+ import types
+ import uuid
++from types import MethodType
+ 
+ from django.conf import SettingsReference
+ from django.db import models
+@@ -98,6 +99,14 @@ class DeconstructableSerializer(BaseSerializer):
+             strings.append("%s=%s" % (kw, arg_string))
+         return "%s(%s)" % (name, ", ".join(strings)), imports
+ 
++class NestedClassMethodSerializer(BaseSerializer):
++    def serialize(self):
++        module = self.value.__self__.__module__
++        class_name = self.value.__self__.__qualname__
++        method_name = self.value.__name__
++        path = f"{module}.{class_name}.{method_name}"
++        return path, {f"import {module}"}
++
+     @staticmethod
+     def _serialize_path(path):
+         module, name = path.rsplit(".", 1)
+@@ -329,6 +338,14 @@ class UUIDSerializer(BaseSerializer):
+         return "uuid.%s" % repr(self.value), {"import uuid"}
+ 
+ 
++class NestedClassMethodSerializer(BaseSerializer):
++    def serialize(self):
++        module = self.value.__self__.__module__
++        class_name = self.value.__self__.__qualname__
++        method_name = self.value.__name__
++        return f"{module}.{class_name}.{method_name}", {f"import {module}"}
++
++
+ class Serializer:
+     _registry = {
+         # Some of these are order-dependent.
+@@ -387,6 +404,9 @@ def serializer_factory(value):
+         return OperationSerializer(value)
+     if isinstance(value, type):
+         return TypeSerializer(value)
++    # Handle nested class methods
++    if isinstance(value, MethodType) and value.__self__ is not None and isinstance(value.__self__, type):
++        return NestedClassMethodSerializer(value)
+     # Anything that knows how to deconstruct itself.
+     if hasattr(value, "deconstruct"):
+         return DeconstructableSerializer(value)

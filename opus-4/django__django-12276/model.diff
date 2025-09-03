@@ -1,0 +1,259 @@
+diff --git a/django/forms/widgets.py b/django/forms/widgets.py
+index 338d54d72f..40ac1d3162 100644
+--- a/django/forms/widgets.py
++++ b/django/forms/widgets.py
+@@ -387,6 +387,9 @@ class FileInput(Input):
+     def value_omitted_from_data(self, data, files, name):
+         return name not in files
+ 
++    def use_required_attribute(self, initial):
++        return super().use_required_attribute(initial) and not initial
++
+ 
+ FILE_INPUT_CONTRADICTION = object()
+ 
+@@ -451,9 +454,6 @@ class ClearableFileInput(FileInput):
+             return False
+         return upload
+ 
+-    def use_required_attribute(self, initial):
+-        return super().use_required_attribute(initial) and not initial
+-
+     def value_omitted_from_data(self, data, files, name):
+         return (
+             super().value_omitted_from_data(data, files, name) and
+diff --git a/test_comprehensive_file_input.py b/test_comprehensive_file_input.py
+new file mode 100644
+index 0000000000..7b42f58f6b
+--- /dev/null
++++ b/test_comprehensive_file_input.py
+@@ -0,0 +1,83 @@
++#!/usr/bin/env python
++import os
++import sys
++
++# Add Django to the path
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.settings'
++
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    USE_TZ=True,
++    DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++    MEDIA_ROOT='/tmp/media/',
++    MEDIA_URL='/media/',
++)
++django.setup()
++
++# Now test the widgets
++from django import forms
++from django.forms.widgets import FileInput, ClearableFileInput, HiddenInput
++from django.core.files.uploadedfile import SimpleUploadedFile
++
++# Test with forms to ensure proper rendering
++class TestForm(forms.Form):
++    file_field = forms.FileField(required=True, widget=FileInput())
++    clearable_file_field = forms.FileField(required=True, widget=ClearableFileInput())
++
++# Create form without initial data
++form = TestForm()
++print("Form without initial data:")
++print(f"file_field HTML:\n{form['file_field']}")
++print(f"\nclearable_file_field HTML:\n{form['clearable_file_field']}")
++
++# Create form with initial data
++initial_file = SimpleUploadedFile("test.txt", b"file content")
++form_with_initial = TestForm(initial={'file_field': initial_file, 'clearable_file_field': initial_file})
++print("\n\nForm with initial data:")
++print(f"file_field HTML:\n{form_with_initial['file_field']}")
++print(f"\nclearable_file_field HTML:\n{form_with_initial['clearable_file_field']}")
++
++# Test edge cases
++print("\n\nEdge case tests:")
++
++# Test with hidden widget (should always return False)
++hidden_input = HiddenInput()
++hidden_input.is_required = True
++print(f"HiddenInput.use_required_attribute(None): {hidden_input.use_required_attribute(None)}")
++print(f"HiddenInput.use_required_attribute(initial_file): {hidden_input.use_required_attribute(initial_file)}")
++
++# Test with different types of initial values
++file_input = FileInput()
++file_input.is_required = True
++
++print(f"\nFileInput.use_required_attribute(None): {file_input.use_required_attribute(None)}")
++print(f"FileInput.use_required_attribute(False): {file_input.use_required_attribute(False)}")
++print(f"FileInput.use_required_attribute(''): {file_input.use_required_attribute('')}")
++print(f"FileInput.use_required_attribute('some_string'): {file_input.use_required_attribute('some_string')}")
++print(f"FileInput.use_required_attribute(initial_file): {file_input.use_required_attribute(initial_file)}")
++
++# Test that the behavior is inherited correctly
++clearable_input = ClearableFileInput()
++clearable_input.is_required = True
++
++print(f"\nClearableFileInput.use_required_attribute(None): {clearable_input.use_required_attribute(None)}")
++print(f"ClearableFileInput.use_required_attribute(False): {clearable_input.use_required_attribute(False)}")
++print(f"ClearableFileInput.use_required_attribute(''): {clearable_input.use_required_attribute('')}")
++print(f"ClearableFileInput.use_required_attribute('some_string'): {clearable_input.use_required_attribute('some_string')}")
++print(f"ClearableFileInput.use_required_attribute(initial_file): {clearable_input.use_required_attribute(initial_file)}")
+diff --git a/test_file_input_required.py b/test_file_input_required.py
+new file mode 100644
+index 0000000000..e149181e01
+--- /dev/null
++++ b/test_file_input_required.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python
++import os
++import sys
++
++# Add Django to the path
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.settings'
++
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    USE_TZ=True,
++)
++django.setup()
++
++# Now test the widgets
++from django.forms.widgets import FileInput, ClearableFileInput
++from django.core.files.uploadedfile import SimpleUploadedFile
++
++# Test FileInput widget
++print("Testing FileInput widget:")
++file_input = FileInput()
++file_input.is_required = True
++
++# Test without initial data
++print(f"FileInput.use_required_attribute(None): {file_input.use_required_attribute(None)}")
++
++# Test with initial data (simulating an already uploaded file)
++initial_file = SimpleUploadedFile("test.txt", b"file content")
++print(f"FileInput.use_required_attribute(initial_file): {file_input.use_required_attribute(initial_file)}")
++
++print("\nTesting ClearableFileInput widget:")
++clearable_file_input = ClearableFileInput()
++clearable_file_input.is_required = True
++
++# Test without initial data
++print(f"ClearableFileInput.use_required_attribute(None): {clearable_file_input.use_required_attribute(None)}")
++
++# Test with initial data
++print(f"ClearableFileInput.use_required_attribute(initial_file): {clearable_file_input.use_required_attribute(initial_file)}")
+diff --git a/test_html_output.py b/test_html_output.py
+new file mode 100644
+index 0000000000..238262c559
+--- /dev/null
++++ b/test_html_output.py
+@@ -0,0 +1,65 @@
++#!/usr/bin/env python
++import os
++import sys
++
++# Add Django to the path
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.settings'
++
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='test-secret-key',
++    INSTALLED_APPS=[],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++)
++django.setup()
++
++# Now test the widgets behavior
++from django.forms.widgets import FileInput, ClearableFileInput
++from django.forms import Form, FileField
++
++# Test with forms
++class TestForm(Form):
++    file_field = FileField(required=True, widget=FileInput())
++    clearable_field = FileField(required=True, widget=ClearableFileInput())
++
++print("=== FileInput Tests ===")
++
++# Without initial data
++form = TestForm()
++print("Required FileInput without initial:")
++print(form['file_field'])
++
++# With initial data  
++class MockFile:
++    def __init__(self, name):
++        self.name = name
++        self.url = f'/media/{name}'
++    
++    def __str__(self):
++        return self.name
++
++form = TestForm(initial={'file_field': MockFile('existing.pdf'), 'clearable_field': MockFile('existing.pdf')})
++print("\nRequired FileInput WITH initial:")
++print(form['file_field'])
++
++print("\n=== ClearableFileInput Tests ===")
++
++# Without initial data
++form = TestForm()
++print("Required ClearableFileInput without initial:")
++print(form['clearable_field'])
++
++# With initial data
++form_with_initial = TestForm(initial={'file_field': MockFile('existing.pdf'), 'clearable_field': MockFile('existing.pdf')})
++print("\nRequired ClearableFileInput WITH initial:")
++print(form_with_initial['clearable_field'])
+diff --git a/tests/forms_tests/widget_tests/test_fileinput.py b/tests/forms_tests/widget_tests/test_fileinput.py
+index bbd7c7fe52..7d232ee211 100644
+--- a/tests/forms_tests/widget_tests/test_fileinput.py
++++ b/tests/forms_tests/widget_tests/test_fileinput.py
+@@ -18,3 +18,10 @@ class FileInputTest(WidgetTest):
+     def test_value_omitted_from_data(self):
+         self.assertIs(self.widget.value_omitted_from_data({}, {}, 'field'), True)
+         self.assertIs(self.widget.value_omitted_from_data({}, {'field': 'value'}, 'field'), False)
++
++    def test_use_required_attribute(self):
++        # Without initial data, required attribute should be used
++        self.assertIs(self.widget.use_required_attribute(None), True)
++        self.assertIs(self.widget.use_required_attribute(''), True)
++        # With initial data (like an already uploaded file), required attribute should not be used
++        self.assertIs(self.widget.use_required_attribute('file.txt'), False)

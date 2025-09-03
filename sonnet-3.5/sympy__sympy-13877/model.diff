@@ -1,0 +1,85 @@
+diff --git a/run_matrix_tests.py b/run_matrix_tests.py
+new file mode 100644
+index 0000000000..5314f2c3aa
+--- /dev/null
++++ b/run_matrix_tests.py
+@@ -0,0 +1,13 @@
++import sys
++sys.path.append('/testbed')
++
++from sympy.matrices.tests.test_matrices import *
++
++if __name__ == '__main__':
++    test_args()
++    test_division()
++    test_sum()
++    test_abs()
++    test_addition()
++    test_fancy_index_matrix()
++    print("All tests passed successfully!")
+diff --git a/sympy/matrices/matrices.py b/sympy/matrices/matrices.py
+index 97cde62e26..7e84696f78 100644
+--- a/sympy/matrices/matrices.py
++++ b/sympy/matrices/matrices.py
+@@ -191,9 +191,8 @@ def bareiss(mat, cumm=1):
+                 return mat[0, 0]
+ 
+             # find a pivot and extract the remaining matrix
+-            # XXX should use `_find_reasonable_pivot`.  Blocked by issue #12362
+             pivot_pos, pivot_val, _, _ = _find_pivot(mat[:, 0])
+-            if pivot_pos == None:
++            if pivot_pos is None:
+                 return S.Zero
+ 
+             # if we have a valid pivot, we'll do a "row swap", so keep the
+@@ -207,9 +206,7 @@ def bareiss(mat, cumm=1):
+ 
+             def entry(i, j):
+                 ret = (pivot_val*tmp_mat[i, j + 1] - mat[pivot_pos, j + 1]*tmp_mat[i, 0]) / cumm
+-                if not ret.is_Atom:
+-                    cancel(ret)
+-                return ret
++                return cancel(ret)
+ 
+             return sign*bareiss(self._new(mat.rows - 1, mat.cols - 1, entry), pivot_val)
+ 
+diff --git a/test_matrix_determinant.py b/test_matrix_determinant.py
+new file mode 100644
+index 0000000000..a40e97e588
+--- /dev/null
++++ b/test_matrix_determinant.py
+@@ -0,0 +1,34 @@
++from sympy import *
++from sympy.abc import a
++
++def test_matrix_determinant():
++    def f(n):
++        matrix = Matrix([[i + a*j for i in range(n)] for j in range(n)])
++        print(f"Matrix({n}x{n}):")
++        print(matrix)
++        result = matrix.det().doit().expand()
++        return result
++    
++    for n in range(1, 7):
++        result = f(n)
++        print(f"f({n}) = {result}")
++        print(f"f({n}) expanded = {expand(result)}")
++        print()
++        
++        if n == 1:
++            assert result == 0
++        elif n == 2:
++            assert result == -a
++        elif n == 3:
++            expected = expand(2*a*(a + 2) + 2*a*(2*a + 1) - 3*a*(2*a + 2))
++            assert expand(result) == expected, f"Expected {expected}, but got {expand(result)}"
++        elif n == 4:
++            assert result == 0 or result.simplify() == 0
++        elif n == 5:
++            assert result is not S.NaN
++        elif n == 6:
++            assert result is not None
++
++if __name__ == "__main__":
++    test_matrix_determinant()
++    print("All tests passed!")

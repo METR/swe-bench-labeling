@@ -1,0 +1,36 @@
+diff --git a/django/core/servers/basehttp.py b/django/core/servers/basehttp.py
+index fef5532e58..458eed3946 100644
+--- a/django/core/servers/basehttp.py
++++ b/django/core/servers/basehttp.py
+@@ -198,8 +198,30 @@ class WSGIRequestHandler(simple_server.WSGIRequestHandler):
+         return super().get_environ()
+ 
+     def handle(self):
++        """Handle a single HTTP request"""
++        self.raw_requestline = self.rfile.readline(65537)
++        if len(self.raw_requestline) > 65536:
++            self.requestline = ''
++            self.request_version = ''
++            self.command = ''
++            self.send_error(414)
++            return
++
++        if not self.parse_request():
++            return
++
++        handler = ServerHandler(
++            self.rfile, self.wfile, self.get_stderr(), self.get_environ()
++        )
++        handler.request_handler = self  # backpointer for logging
++        handler.run(self.server.get_app())
++
++        if self.command == 'HEAD':
++            # For HEAD requests, remove the response body
++            self.wfile.truncate(0)
++            self.wfile.seek(0)
++
+         self.close_connection = True
+-        self.handle_one_request()
+         while not self.close_connection:
+             self.handle_one_request()
+         try:

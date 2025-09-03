@@ -1,0 +1,358 @@
+diff --git a/setup.py b/setup.py
+index 3d499983f..e07b2fd4f 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/autodoc/mock.py b/sphinx/ext/autodoc/mock.py
+index 98a3a3a96..80c3a0b6a 100644
+--- a/sphinx/ext/autodoc/mock.py
++++ b/sphinx/ext/autodoc/mock.py
+@@ -70,10 +70,12 @@ class _MockObject:
+ 
+ def _make_subclass(name: str, module: str, superclass: Any = _MockObject,
+                    attributes: Any = None) -> Any:
+-    attrs = {'__module__': module, '__display_name__': module + '.' + name}
++    # Convert name to string to handle TypeVar and other non-string types
++    name_str = str(name)
++    attrs = {'__module__': module, '__display_name__': module + '.' + name_str}
+     attrs.update(attributes or {})
+ 
+-    return type(name, (superclass,), attrs)
++    return type(name_str, (superclass,), attrs)
+ 
+ 
+ class _MockModule(ModuleType):
+diff --git a/test_before_fix.py b/test_before_fix.py
+new file mode 100644
+index 000000000..9dbdfcb73
+--- /dev/null
++++ b/test_before_fix.py
+@@ -0,0 +1,31 @@
++#!/usr/bin/env python3
++"""Test that would fail before our fix but passes now"""
++
++from typing import TypeVar
++
++# Temporarily revert the fix to show the error would occur
++def _make_subclass_broken(name, module, superclass=None, attributes=None):
++    """Original broken version"""
++    attrs = {'__module__': module, '__display_name__': module + '.' + name}
++    attrs.update(attributes or {})
++    return type(name, (superclass,), attrs)
++
++# Test the broken version
++T = TypeVar('T')
++try:
++    result = _make_subclass_broken(T, "mymodule")
++    print("ERROR: Should have failed but didn't!")
++except TypeError as e:
++    print(f"✓ Broken version correctly fails with: {e}")
++
++# Now test with our fixed version
++from sphinx.ext.autodoc.mock import _make_subclass
++
++try:
++    result = _make_subclass(T, "mymodule")
++    print(f"✓ Fixed version works! Result: {result}")
++    print(f"  Name: {result.__name__}")
++    print(f"  Module: {result.__module__}")
++    print(f"  Display name: {result.__display_name__}")
++except Exception as e:
++    print(f"ERROR: Fixed version failed with: {e}")
+diff --git a/test_comprehensive_generics.py b/test_comprehensive_generics.py
+new file mode 100644
+index 000000000..eb5dffc0a
+--- /dev/null
++++ b/test_comprehensive_generics.py
+@@ -0,0 +1,59 @@
++#!/usr/bin/env python3
++"""Comprehensive test for generic types with autodoc mock"""
++
++from typing import TypeVar, Generic, List, Dict, Tuple, Union, Optional
++from sphinx.ext.autodoc.mock import _MockObject, _MockModule, mock
++
++# Test TypeVars
++T = TypeVar('T')
++K = TypeVar('K')
++V = TypeVar('V')
++
++# Test with _MockObject
++print("Testing _MockObject with generics:")
++mock_obj = _MockObject()
++mock_obj.__display_name__ = "mymodule.MyClass"
++
++# Test single TypeVar
++result1 = mock_obj[T]
++print(f"mock_obj[T]: {result1}")
++
++# Test multiple TypeVars (simulating Dict[K, V])
++result2 = mock_obj[K]
++result3 = result2[V]
++print(f"mock_obj[K][V]: {result3}")
++
++# Test with _MockModule
++print("\nTesting _MockModule with generics:")
++mock_module = _MockModule("mymodule")
++
++# Get a class from module
++MyClass = mock_module.MyClass
++print(f"MyClass: {MyClass}")
++
++# Use generics with the class
++GenericClass = MyClass[T]
++print(f"MyClass[T]: {GenericClass}")
++
++# Test nested generics
++NestedGeneric = MyClass[List[T]]
++print(f"MyClass[List[T]]: {NestedGeneric}")
++
++# Test with actual mock context
++print("\nTesting with mock context:")
++with mock(['external_module']):
++    import external_module
++    
++    # Get a generic class
++    GenericExternal = external_module.SomeGeneric
++    print(f"external_module.SomeGeneric: {GenericExternal}")
++    
++    # Apply type parameter
++    SpecializedExternal = GenericExternal[int]
++    print(f"external_module.SomeGeneric[int]: {SpecializedExternal}")
++    
++    # Test with TypeVar
++    SpecializedExternalT = GenericExternal[T]
++    print(f"external_module.SomeGeneric[T]: {SpecializedExternalT}")
++
++print("\nAll tests passed!")
+diff --git a/test_generic_detailed.py b/test_generic_detailed.py
+new file mode 100644
+index 000000000..0d003d64c
+--- /dev/null
++++ b/test_generic_detailed.py
+@@ -0,0 +1,27 @@
++#!/usr/bin/env python3
++"""Test case to understand how generics interact with mock"""
++
++from typing import TypeVar, Generic
++from sphinx.ext.autodoc.mock import _MockObject
++
++# Create a mock object
++mock_obj = _MockObject()
++mock_obj.__display_name__ = "mymodule.MyClass"
++
++# Create a TypeVar
++T = TypeVar('T')
++
++print(f"TypeVar T: {T}")
++print(f"Type of T: {type(T)}")
++print(f"str(T): {str(T)}")
++print(f"repr(T): {repr(T)}")
++
++# When autodoc processes Generic[T], it's essentially doing:
++# mock_obj[T]
++# which calls __getitem__ with T as the key
++
++try:
++    result = mock_obj[T]
++    print(f"Result of mock_obj[T]: {result}")
++except TypeError as e:
++    print(f"Error when calling mock_obj[T]: {e}")
+diff --git a/test_generic_mock.py b/test_generic_mock.py
+new file mode 100644
+index 000000000..e5540f162
+--- /dev/null
++++ b/test_generic_mock.py
+@@ -0,0 +1,18 @@
++#!/usr/bin/env python3
++"""Test case to reproduce the generic type issue with autodoc mock"""
++
++from typing import TypeVar, Generic
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass
++
++# Create a TypeVar
++T = TypeVar('T')
++
++# Try to use _make_subclass with a TypeVar
++try:
++    # This should fail with TypeError: can only concatenate str (not "TypeVar") to str
++    result = _make_subclass(T, "mymodule")
++    print(f"Result: {result}")
++except TypeError as e:
++    print(f"TypeError caught: {e}")
++    print(f"Type of first argument: {type(T)}")
++    print(f"Value of first argument: {T}")
+diff --git a/test_generic_typevar_fix.py b/test_generic_typevar_fix.py
+new file mode 100644
+index 000000000..ebea758e5
+--- /dev/null
++++ b/test_generic_typevar_fix.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python3
++"""Test to verify the fix for TypeVar handling in autodoc mock"""
++
++import pytest
++from typing import TypeVar
++from sphinx.ext.autodoc.mock import _MockObject, _make_subclass
++
++
++def test_mock_handles_typevar():
++    """Test that _MockObject can handle TypeVar as a key in __getitem__"""
++    T = TypeVar('T')
++    mock_obj = _MockObject()
++    mock_obj.__display_name__ = "mymodule.MyClass"
++    
++    # This should not raise TypeError
++    result = mock_obj[T]
++    assert str(result) == "mymodule.MyClass.~T"
++
++
++def test_make_subclass_handles_typevar():
++    """Test that _make_subclass can handle TypeVar as name parameter"""
++    T = TypeVar('T')
++    
++    # This should not raise TypeError
++    result = _make_subclass(T, "mymodule")
++    assert result.__name__ == "~T"
++    assert result.__module__ == "mymodule"
++    assert result.__display_name__ == "mymodule.~T"
++
++
++def test_make_subclass_preserves_string_behavior():
++    """Test that _make_subclass still works correctly with string names"""
++    result = _make_subclass("MyClass", "mymodule")
++    assert result.__name__ == "MyClass"
++    assert result.__module__ == "mymodule"
++    assert result.__display_name__ == "mymodule.MyClass"
++
++
++if __name__ == "__main__":
++    test_mock_handles_typevar()
++    print("✓ test_mock_handles_typevar passed")
++    
++    test_make_subclass_handles_typevar()
++    print("✓ test_make_subclass_handles_typevar passed")
++    
++    test_make_subclass_preserves_string_behavior()
++    print("✓ test_make_subclass_preserves_string_behavior passed")
++    
++    print("\nAll tests passed!")
+diff --git a/test_screenpy_case.py b/test_screenpy_case.py
+new file mode 100644
+index 000000000..efd2f49be
+--- /dev/null
++++ b/test_screenpy_case.py
+@@ -0,0 +1,42 @@
++#!/usr/bin/env python3
++"""Test case simulating the screenpy generic-typed class issue"""
++
++from typing import TypeVar, Generic
++from sphinx.ext.autodoc.mock import mock
++
++# Create a TypeVar like screenpy does
++T = TypeVar('T')
++
++# Simulate what happens during autodoc processing of a generic class
++print("Simulating autodoc processing of a generic class...")
++
++# When sphinx autodoc processes a class like:
++# class Actor(Generic[T]):
++#     pass
++# 
++# It needs to mock the Generic[T] part
++
++with mock(['some_external_module']):
++    import some_external_module
++    
++    # Simulate getting a base class that's generic
++    BaseClass = some_external_module.BaseClass
++    print(f"BaseClass: {BaseClass}")
++    
++    # Apply generic typing
++    GenericBase = BaseClass[T]
++    print(f"BaseClass[T]: {GenericBase}")
++    
++    # Try to create a subclass (this is what autodoc does)
++    try:
++        # This simulates what happens when autodoc tries to process:
++        # class MyClass(BaseClass[T]):
++        #     pass
++        attrs = {'__module__': 'test_module'}
++        MyClass = type('MyClass', (GenericBase,), attrs)
++        print(f"Successfully created MyClass: {MyClass}")
++        print(f"MyClass base classes: {MyClass.__bases__}")
++    except Exception as e:
++        print(f"Error creating class: {e}")
++
++print("\nTest completed successfully!")
+diff --git a/tests/test_ext_autodoc_mock.py b/tests/test_ext_autodoc_mock.py
+index 4760493cf..97a85c0df 100644
+--- a/tests/test_ext_autodoc_mock.py
++++ b/tests/test_ext_autodoc_mock.py
+@@ -117,3 +117,24 @@ def test_mock_decorator():
+     assert func.__doc__ == "docstring"
+     assert Foo.meth.__doc__ == "docstring"
+     assert Bar.__doc__ == "docstring"
++
++
++
++def test_MockObject_with_TypeVar():
++    """Test that _MockObject can handle TypeVar in __getitem__ (issue #7964)."""
++    from typing import TypeVar
++    from sphinx.ext.autodoc.mock import _make_subclass
++    
++    T = TypeVar('T')
++    mock = _MockObject()
++    mock.__display_name__ = "mymodule.MyClass"
++    
++    # This should not raise TypeError: can only concatenate str (not "TypeVar") to str
++    result = mock[T]
++    assert str(result) == "mymodule.MyClass.~T"
++    
++    # Test _make_subclass directly with TypeVar
++    result = _make_subclass(T, "mymodule")
++    assert result.__name__ == "~T"
++    assert result.__module__ == "mymodule"
++    assert result.__display_name__ == "mymodule.~T"
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

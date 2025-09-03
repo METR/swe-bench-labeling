@@ -1,0 +1,44 @@
+diff --git a/django/contrib/sitemaps/__init__.py b/django/contrib/sitemaps/__init__.py
+index 27756d9d96..b40ad806ed 100644
+--- a/django/contrib/sitemaps/__init__.py
++++ b/django/contrib/sitemaps/__init__.py
+@@ -168,7 +168,7 @@ class Sitemap:
+         if callable(self.lastmod):
+             try:
+                 return max([self.lastmod(item) for item in self.items()])
+-            except TypeError:
++            except (TypeError, ValueError):
+                 return None
+         else:
+             return self.lastmod
+diff --git a/tests/sitemaps_tests/test_http.py b/tests/sitemaps_tests/test_http.py
+index 4a269b8737..c349d3b8e1 100644
+--- a/tests/sitemaps_tests/test_http.py
++++ b/tests/sitemaps_tests/test_http.py
+@@ -247,6 +247,26 @@ class HTTPSitemapTests(SitemapTestsBase):
+         response = self.client.get("/lastmod/latest-lastmod-timezone-sitemap.xml")
+         self.assertContains(response, "<lastmod>2013-03-13T10:00:00-05:00</lastmod>")
+ 
++    def test_empty_sitemap_with_callable_lastmod(self):
++        """
++        Test that an empty sitemap with callable lastmod doesn't raise ValueError.
++        Regression test for #34234.
++        """
++        # Direct test of get_latest_lastmod method
++        from .urls.http import EmptySitemap
++        
++        class EmptySitemapWithCallableLastmod(EmptySitemap):
++            def items(self):
++                return []
++            
++            def lastmod(self, item):
++                from datetime import datetime
++                return datetime.now()
++        
++        sitemap = EmptySitemapWithCallableLastmod()
++        # This should not raise ValueError and should return None
++        self.assertIsNone(sitemap.get_latest_lastmod())
++
+     def test_localized_priority(self):
+         """The priority value should not be localized."""
+         with translation.override("fr"):

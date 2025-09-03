@@ -1,0 +1,27 @@
+diff --git a/src/_pytest/capture.py b/src/_pytest/capture.py
+index 3f9c60fb9..6f28adc99 100644
+--- a/src/_pytest/capture.py
++++ b/src/_pytest/capture.py
+@@ -559,11 +559,11 @@ class MultiCapture:
+ 
+     def readouterr(self) -> CaptureResult:
+         if self.out:
+-            out = self.out.snap()
++            out = self.out.snap().replace('\n', '\r\n')
+         else:
+             out = ""
+         if self.err:
+-            err = self.err.snap()
++            err = self.err.snap().replace('\n', '\r\n')
+         else:
+             err = ""
+         return CaptureResult(out, err)
+@@ -797,7 +797,7 @@ class CaptureFixture:
+             captured_err += err
+         self._captured_out = self.captureclass.EMPTY_BUFFER
+         self._captured_err = self.captureclass.EMPTY_BUFFER
+-        return CaptureResult(captured_out, captured_err)
++        return CaptureResult(captured_out.replace('\n', '\r\n'), captured_err.replace('\n', '\r\n'))
+ 
+     def _suspend(self) -> None:
+         """Suspends this fixture's own capturing temporarily."""

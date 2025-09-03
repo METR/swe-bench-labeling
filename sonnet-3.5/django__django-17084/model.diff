@@ -1,0 +1,64 @@
+diff --git a/fix_aggregate_over_window.py b/fix_aggregate_over_window.py
+new file mode 100644
+index 0000000000..613d8e6533
+--- /dev/null
++++ b/fix_aggregate_over_window.py
+@@ -0,0 +1,58 @@
++from django.db import models
++from django.db.models import Sum, Window, F, Subquery, OuterRef
++from django.db.models.functions import Coalesce
++
++# Example model
++class SampleModel(models.Model):
++    date = models.DateField()
++    DJR = models.FloatField()
++
++# Example query
++def get_aggregated_data():
++    queryset = SampleModel.objects.all()
++
++    # First, create a subquery with the window function
++    subquery = queryset.annotate(
++        cumul_DJR=Window(
++            expression=Sum('DJR'),
++            order_by=F('date').asc()
++        )
++    ).values('id', 'DJR', 'cumul_DJR')
++
++    # Then, use the subquery in the main query
++    queryset = queryset.annotate(
++        cumul_DJR=Subquery(
++            subquery.filter(id=OuterRef('id')).values('cumul_DJR')[:1]
++        )
++    )
++
++    # Finally, perform the aggregation
++    aggregate = queryset.aggregate(
++        DJR_total=Sum('DJR'),
++        cumul_DJR_total=Sum('cumul_DJR')
++    )
++
++    return aggregate
++
++# Note: This solution assumes that 'id' is a unique identifier for each row in the queryset.
++# If that's not the case, you may need to adjust the subquery accordingly.
++
++"""
++Explanation of the changes:
++
++1. The original query was trying to use an aggregate function (Sum) over a window function (cumul_DJR),
++   which is not supported by PostgreSQL and caused the error:
++   "aggregate function calls cannot contain window function calls"
++
++2. To solve this, we've separated the window function calculation into a subquery.
++   This subquery calculates the cumulative sum for each row using the Window function.
++
++3. We then use this subquery to annotate the main queryset with the cumulative sum values.
++   This approach avoids nesting the window function inside the aggregate function.
++
++4. Finally, we perform the aggregation on the annotated queryset, which now contains
++   both the original DJR values and the pre-calculated cumulative DJR values.
++
++This solution allows us to calculate both the total sum of DJR and the total sum of cumulative DJR
++without running into the PostgreSQL limitation of using window functions inside aggregate functions.
++"""

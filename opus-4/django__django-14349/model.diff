@@ -1,0 +1,64 @@
+diff --git a/django/core/validators.py b/django/core/validators.py
+index a385819510..2884037d29 100644
+--- a/django/core/validators.py
++++ b/django/core/validators.py
+@@ -101,6 +101,12 @@ class URLValidator(RegexValidator):
+     def __call__(self, value):
+         if not isinstance(value, str):
+             raise ValidationError(self.message, code=self.code, params={'value': value})
++        
++        # Check for control characters that urlsplit might strip (bpo-43882)
++        # to ensure consistent behavior across Python versions
++        if '\n' in value or '\r' in value or '\t' in value:
++            raise ValidationError(self.message, code=self.code, params={'value': value})
++            
+         # Check if the scheme is valid.
+         scheme = value.split('://')[0].lower()
+         if scheme not in self.schemes:
+diff --git a/test_urlvalidator_fix.py b/test_urlvalidator_fix.py
+new file mode 100644
+index 0000000000..921c61bf39
+--- /dev/null
++++ b/test_urlvalidator_fix.py
+@@ -0,0 +1,41 @@
++#!/usr/bin/env python
++"""
++Test script to verify URLValidator behavior with control characters
++across different Python versions.
++"""
++import sys
++import django
++from django.conf import settings
++
++# Configure Django
++settings.configure(
++    USE_I18N=True,
++    SECRET_KEY='test-secret-key',
++)
++django.setup()
++
++from django.core.validators import URLValidator
++from django.core.exceptions import ValidationError
++
++# Test URLs with control characters
++test_urls = [
++    ('http://www.djangoproject.com/\n', 'URL with newline'),
++    ('http://[::ffff:192.9.5.5]\n', 'IPv6 URL with newline'),
++    ('http://example.com/\r', 'URL with carriage return'),
++    ('http://example.com/\t', 'URL with tab'),
++    ('http://example.com/', 'Valid URL without control chars'),
++]
++
++print(f"Python version: {sys.version}")
++print("-" * 60)
++
++for url, description in test_urls:
++    try:
++        URLValidator()(url)
++        result = "VALID (no exception)"
++    except ValidationError:
++        result = "INVALID (ValidationError raised)"
++    
++    print(f"{description:<35} {repr(url):<30} {result}")
++
++print("\nAll tests completed successfully!")

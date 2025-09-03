@@ -1,0 +1,79 @@
+diff --git a/requests/utils.py b/requests/utils.py
+index 1c2ae4e0..ac343e90 100644
+--- a/requests/utils.py
++++ b/requests/utils.py
+@@ -808,6 +808,8 @@ def get_environ_proxies(url, no_proxy=None):
+         return getproxies()
+ 
+ 
++import sys
++
+ def select_proxy(url, proxies):
+     """Select a proxy for the url, if applicable.
+ 
+@@ -831,6 +833,16 @@ def select_proxy(url, proxies):
+             proxy = proxies[proxy_key]
+             break
+ 
++    print(f"Debug: select_proxy called with url={url}, proxies={proxies}")
++    print(f"Debug: selected proxy: {proxy}")
++
++    # Special handling for Python 3.8.12
++    if sys.version_info[:3] == (3, 8, 12):
++        print("Debug: Applying Python 3.8.12 specific proxy handling")
++        # Add any specific logic for Python 3.8.12 here
++        # For example, you might want to force a specific proxy protocol
++        # or add additional headers
++
+     return proxy
+ 
+ 
+diff --git a/test_proxy.py b/test_proxy.py
+new file mode 100644
+index 00000000..7b7a5f8f
+--- /dev/null
++++ b/test_proxy.py
+@@ -0,0 +1,43 @@
++import requests
++import os
++import sys
++import argparse
++
++def main(http_proxy, https_proxy, proxy_user, proxy_pass):
++    # Set up proxy configuration
++    proxies = {
++        'http': http_proxy,
++        'https': https_proxy,
++    }
++
++    # Remove None values from proxies
++    proxies = {k: v for k, v in proxies.items() if v is not None}
++
++    # Set up proxy authentication
++    if proxy_user and proxy_pass:
++        proxy_auth = requests.auth.HTTPProxyAuth(proxy_user, proxy_pass)
++    else:
++        proxy_auth = None
++
++    print(f"Python version: {sys.version}")
++    print(f"Requests version: {requests.__version__}")
++    print(f"Proxy settings: {proxies}")
++    print(f"Proxy auth: {proxy_auth.username if proxy_auth else 'None'}:{('*' * len(proxy_auth.password)) if proxy_auth else 'None'}")
++
++    try:
++        # Make a request using the proxy
++        response = requests.get('https://example.org/', proxies=proxies, auth=proxy_auth)
++        print(f"Response status code: {response.status_code}")
++        print(f"Response content: {response.text[:100]}...")  # Print first 100 characters
++    except requests.exceptions.RequestException as e:
++        print(f"An error occurred: {e}")
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description="Test proxy settings with requests library")
++    parser.add_argument("--http-proxy", help="HTTP proxy URL")
++    parser.add_argument("--https-proxy", help="HTTPS proxy URL")
++    parser.add_argument("--proxy-user", help="Proxy username")
++    parser.add_argument("--proxy-pass", help="Proxy password")
++    args = parser.parse_args()
++
++    main(args.http_proxy, args.https_proxy, args.proxy_user, args.proxy_pass)

@@ -1,0 +1,461 @@
+diff --git a/debug_fix.py b/debug_fix.py
+new file mode 100644
+index 000000000..1ec22490e
+--- /dev/null
++++ b/debug_fix.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python
++"""Debug script to understand why ScaffoldOpts doesn't work."""
++
++import os
++import sys
++sys.path.insert(0, '/testbed')
++
++from sphinx.ext.autodoc import DataDocumenter, ModuleDocumenter
++from sphinx.pycode import ModuleAnalyzer
++from sphinx.util.docstrings import prepare_docstring
++from sphinx.application import Sphinx
++from sphinx.environment import BuildEnvironment
++from docutils.parsers.rst import directives
++from docutils.statemachine import StringList
++
++# Set up minimal app/env
++class MockApp:
++    config = type('config', (), {
++        'autodoc_type_aliases': {},
++        'autodoc_typehints_format': 'short',
++        'autodoc_inherit_docstrings': True,
++        'autodoc_mock_imports': [],
++        'autodoc_warningiserror': False
++    })()
++    
++    def emit(self, *args, **kwargs):
++        pass
++
++class MockDirective:
++    class state:
++        class document:
++            class settings:
++                tab_width = 8
++                
++    env = type('env', (), {
++        'app': MockApp(),
++        'note_reread': lambda: None
++    })()
++
++# Create test module
++module_content = '''from typing import Dict, Any, Union, Callable
++from pathlib import Path
++
++ScaffoldOpts = Dict[str, Any]
++"""Dictionary with PyScaffold's options, see ``pyscaffold.api.create_project``.
++Should be treated as immutable (if required, copy before changing).
++"""
++
++FileContents = Union[str, None]
++"""When the file content is ``None``, the file should not be written to
++disk (empty files are represented by an empty string ``""`` as content).
++"""
++
++FileOp = Callable[[Path, FileContents, Dict[str, Any]], Union[Path, None]]
++"""Signature of functions considered file operations.
++"""
++'''
++
++# Write test module
++with open('/tmp/test_module.py', 'w') as f:
++    f.write(module_content)
++
++sys.path.insert(0, '/tmp')
++
++# Test each type alias
++from test_module import ScaffoldOpts, FileContents, FileOp
++
++for name, obj in [('ScaffoldOpts', ScaffoldOpts), ('FileContents', FileContents), ('FileOp', FileOp)]:
++    print(f"\n=== Testing {name} ===")
++    
++    # Create documenter
++    documenter = DataDocumenter(MockDirective(), name)
++    documenter.modname = 'test_module'
++    documenter.objpath = [name]
++    documenter.object = obj
++    documenter.parent = sys.modules['test_module']
++    documenter.analyzer = None
++    documenter.env = MockDirective.env
++    documenter.fullname = f'test_module.{name}'
++    
++    # Check get_module_comment
++    comment = documenter.get_module_comment(name)
++    print(f"  get_module_comment: {comment}")
++    
++    # Check get_doc
++    doc = documenter.get_doc()
++    print(f"  get_doc: {doc}")
++    
++    # Test update_content
++    more_content = StringList()
++    documenter.update_content(more_content)
++    print(f"  update_content added: {list(more_content)}")
++
++# Also check with analyzer
++print("\n=== Checking ModuleAnalyzer ===")
++try:
++    analyzer = ModuleAnalyzer.for_module('test_module')
++    analyzer.analyze()
++    print("attr_docs:", dict(analyzer.attr_docs))
++except Exception as e:
++    print(f"Error: {e}")
++
++os.unlink('/tmp/test_module.py')
+diff --git a/debug_type_alias.py b/debug_type_alias.py
+new file mode 100644
+index 000000000..2b248d08d
+--- /dev/null
++++ b/debug_type_alias.py
+@@ -0,0 +1,39 @@
++import inspect
++from typing import Dict, Any, Union, Callable
++from pathlib import Path
++from sphinx.util import inspect as sphinx_inspect
++
++# Import our test types
++from test_type_alias import ScaffoldOpts, FileContents, FileOp
++
++print("Checking ScaffoldOpts:")
++print(f"  Type: {type(ScaffoldOpts)}")
++print(f"  __doc__: {ScaffoldOpts.__doc__}")
++print(f"  isNewType: {sphinx_inspect.isNewType(ScaffoldOpts)}")
++print(f"  isgenericalias: {sphinx_inspect.isgenericalias(ScaffoldOpts)}")
++print(f"  isinstance TypeVar: {isinstance(ScaffoldOpts, type(type))}")
++
++print("\nChecking FileContents:")
++print(f"  Type: {type(FileContents)}")
++print(f"  __doc__: {FileContents.__doc__}")
++print(f"  isNewType: {sphinx_inspect.isNewType(FileContents)}")
++print(f"  isgenericalias: {sphinx_inspect.isgenericalias(FileContents)}")
++
++print("\nChecking FileOp:")
++print(f"  Type: {type(FileOp)}")
++print(f"  __doc__: {FileOp.__doc__}")
++print(f"  isNewType: {sphinx_inspect.isNewType(FileOp)}")
++print(f"  isgenericalias: {sphinx_inspect.isgenericalias(FileOp)}")
++
++# Check if they have __module__ attribute
++print("\nModule attributes:")
++print(f"  ScaffoldOpts.__module__: {getattr(ScaffoldOpts, '__module__', 'NOT FOUND')}")
++print(f"  FileContents.__module__: {getattr(FileContents, '__module__', 'NOT FOUND')}")
++print(f"  FileOp.__module__: {getattr(FileOp, '__module__', 'NOT FOUND')}")
++
++# Check getdoc results
++from sphinx.util.inspect import getdoc
++print("\ngetdoc results:")
++print(f"  ScaffoldOpts: {getdoc(ScaffoldOpts, lambda obj, name: getattr(obj, name, None))}")
++print(f"  FileContents: {getdoc(FileContents, lambda obj, name: getattr(obj, name, None))}")
++print(f"  FileOp: {getdoc(FileOp, lambda obj, name: getattr(obj, name, None))}")
+diff --git a/setup.py b/setup.py
+index b669afc00..0986baec3 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 000000000..8b1378917
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1 @@
++
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index 1f4c98284..224f9da7e 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -1798,8 +1798,12 @@ class GenericAliasMixin(DataDocumenterMixinBase):
+ 
+     def update_content(self, more_content: StringList) -> None:
+         if inspect.isgenericalias(self.object):
+-            more_content.append(_('alias of %s') % restify(self.object), '')
+-            more_content.append('', '')
++            # Check if there's a docstring available
++            doc = self.get_doc()  # type: ignore
++            if not doc or not any(doc):
++                # Only add "alias of" text if there's no docstring
++                more_content.append(_('alias of %s') % restify(self.object), '')
++                more_content.append('', '')
+ 
+         super().update_content(more_content)
+ 
+@@ -1816,9 +1820,13 @@ class NewTypeMixin(DataDocumenterMixinBase):
+ 
+     def update_content(self, more_content: StringList) -> None:
+         if inspect.isNewType(self.object):
+-            supertype = restify(self.object.__supertype__)
+-            more_content.append(_('alias of %s') % supertype, '')
+-            more_content.append('', '')
++            # Check if there's a docstring available
++            doc = self.get_doc()  # type: ignore
++            if not doc or not any(doc):
++                # Only add "alias of" text if there's no docstring
++                supertype = restify(self.object.__supertype__)
++                more_content.append(_('alias of %s') % supertype, '')
++                more_content.append('', '')
+ 
+         super().update_content(more_content)
+ 
+@@ -1849,18 +1857,22 @@ class TypeVarMixin(DataDocumenterMixinBase):
+ 
+     def update_content(self, more_content: StringList) -> None:
+         if isinstance(self.object, TypeVar):
+-            attrs = [repr(self.object.__name__)]
+-            for constraint in self.object.__constraints__:
+-                attrs.append(stringify_typehint(constraint))
+-            if self.object.__bound__:
+-                attrs.append(r"bound=\ " + restify(self.object.__bound__))
+-            if self.object.__covariant__:
+-                attrs.append("covariant=True")
+-            if self.object.__contravariant__:
+-                attrs.append("contravariant=True")
+-
+-            more_content.append(_('alias of TypeVar(%s)') % ", ".join(attrs), '')
+-            more_content.append('', '')
++            # Check if there's a docstring available
++            doc = self.get_doc()  # type: ignore
++            if not doc or not any(doc):
++                # Only add "alias of" text if there's no docstring
++                attrs = [repr(self.object.__name__)]
++                for constraint in self.object.__constraints__:
++                    attrs.append(stringify_typehint(constraint))
++                if self.object.__bound__:
++                    attrs.append(r"bound=\ " + restify(self.object.__bound__))
++                if self.object.__covariant__:
++                    attrs.append("covariant=True")
++                if self.object.__contravariant__:
++                    attrs.append("contravariant=True")
++
++                more_content.append(_('alias of TypeVar(%s)') % ", ".join(attrs), '')
++                more_content.append('', '')
+ 
+         super().update_content(more_content)
+ 
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..dc2deb20b
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,129 @@
++#!/usr/bin/env python
++"""Test script to reproduce the issue and verify the fix."""
++
++import os
++import sys
++import shutil
++import tempfile
++from pathlib import Path
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Test directory: {test_dir}")
++
++# Create the test module with type aliases
++module_content = '''from pathlib import Path
++from typing import Any, Callable, Dict, Union
++
++# Signatures for the documentation purposes
++
++ScaffoldOpts = Dict[str, Any]
++"""Dictionary with PyScaffold's options, see ``pyscaffold.api.create_project``.
++Should be treated as immutable (if required, copy before changing).
++
++Please notice some behaviours given by the options **SHOULD** be observed. For example,
++files should be overwritten when the **force** option is ``True``. Similarly when
++**pretend** is ``True``, no operation should be really performed, but any action should
++be logged as if realized.
++"""
++
++FileContents = Union[str, None]
++"""When the file content is ``None``, the file should not be written to
++disk (empty files are represented by an empty string ``""`` as content).
++"""
++
++FileOp = Callable[[Path, FileContents, ScaffoldOpts], Union[Path, None]]
++"""Signature of functions considered file operations::
++
++    Callable[[Path, FileContents, ScaffoldOpts], Union[Path, None]]
++
++- **path** (:obj:`pathlib.Path`): file path potentially to be written to/changed
++  in the disk.
++- **contents** (:obj:`FileContents`): usually a string that represents a text content
++  of the file. :obj:`None` indicates the file should not be written.
++- **opts** (:obj:`ScaffoldOpts`): a dict with PyScaffold's options.
++
++If the file is written (or more generally changed, such as new access permissions),
++by convention they should return the :obj:`file path <pathlib.Path>`.
++If no file was touched, :obj:`None` should be returned. Please notice a **FileOp**
++might return :obj:`None` if a pre-existing file in the disk is not modified.
++
++.. note::
++    A **FileOp** usually has side effects (e.g. write a file to the disk), see
++    :obj:`FileFileContents` and :obj:`ScaffoldOpts` for other conventions.
++"""
++'''
++
++# Write the test module
++with open(os.path.join(test_dir, 'file.py'), 'w') as f:
++    f.write(module_content)
++
++# Create conf.py
++conf_content = '''
++import os
++import sys
++sys.path.insert(0, os.path.abspath('.'))
++
++extensions = ['sphinx.ext.autodoc']
++exclude_patterns = ['_build']
++'''
++
++with open(os.path.join(test_dir, 'conf.py'), 'w') as f:
++    f.write(conf_content)
++
++# Create index.rst
++index_content = '''
++Test Type Aliases
++=================
++
++.. automodule:: file
++   :members:
++   :undoc-members:
++'''
++
++with open(os.path.join(test_dir, 'index.rst'), 'w') as f:
++    f.write(index_content)
++
++# Run sphinx-build
++os.chdir(test_dir)
++result = os.system(f'{sys.executable} -m sphinx -b html -E . _build/html')
++
++if result == 0:
++    print("\nBuild successful!")
++    
++    # Check the generated HTML
++    html_file = os.path.join(test_dir, '_build/html/index.html')
++    if os.path.exists(html_file):
++        with open(html_file, 'r') as f:
++            content = f.read()
++        
++        # Check if docstrings are present
++        if "Dictionary with PyScaffold's options" in content:
++            print("✓ ScaffoldOpts docstring found")
++        else:
++            print("✗ ScaffoldOpts docstring NOT found")
++            
++        if "When the file content is" in content:
++            print("✓ FileContents docstring found")
++        else:
++            print("✗ FileContents docstring NOT found")
++            
++        if "Signature of functions considered file operations" in content:
++            print("✓ FileOp docstring found")
++        else:
++            print("✗ FileOp docstring NOT found")
++            
++        # Check if "alias of" text is present when it shouldn't be
++        if "alias of" in content:
++            print("\n⚠ 'alias of' text still present in output")
++            # Extract context around "alias of"
++            import re
++            matches = re.finditer(r'.{50}alias of.{50}', content, re.DOTALL)
++            for match in matches:
++                print(f"  Context: ...{match.group()}...")
++else:
++    print(f"\nBuild failed with code {result}")
++
++# Cleanup
++os.chdir('..')
++shutil.rmtree(test_dir)
+diff --git a/test_type_alias.py b/test_type_alias.py
+new file mode 100644
+index 000000000..ec7209833
+--- /dev/null
++++ b/test_type_alias.py
+@@ -0,0 +1,40 @@
++from pathlib import Path
++from typing import Any, Callable, Dict, Union
++
++# Signatures for the documentation purposes
++
++ScaffoldOpts = Dict[str, Any]
++"""Dictionary with PyScaffold's options, see ``pyscaffold.api.create_project``.
++Should be treated as immutable (if required, copy before changing).
++
++Please notice some behaviours given by the options **SHOULD** be observed. For example,
++files should be overwritten when the **force** option is ``True``. Similarly when
++**pretend** is ``True``, no operation should be really performed, but any action should
++be logged as if realized.
++"""
++
++FileContents = Union[str, None]
++"""When the file content is ``None``, the file should not be written to
++disk (empty files are represented by an empty string ``""`` as content).
++"""
++
++FileOp = Callable[[Path, FileContents, ScaffoldOpts], Union[Path, None]]
++"""Signature of functions considered file operations::
++
++    Callable[[Path, FileContents, ScaffoldOpts], Union[Path, None]]
++
++- **path** (:obj:`pathlib.Path`): file path potentially to be written to/changed
++  in the disk.
++- **contents** (:obj:`FileContents`): usually a string that represents a text content
++  of the file. :obj:`None` indicates the file should not be written.
++- **opts** (:obj:`ScaffoldOpts`): a dict with PyScaffold's options.
++
++If the file is written (or more generally changed, such as new access permissions),
++by convention they should return the :obj:`file path <pathlib.Path>`.
++If no file was touched, :obj:`None` should be returned. Please notice a **FileOp**
++might return :obj:`None` if a pre-existing file in the disk is not modified.
++
++.. note::
++    A **FileOp** usually has side effects (e.g. write a file to the disk), see
++    :obj:`FileFileContents` and :obj:`ScaffoldOpts` for other conventions.
++"""
+diff --git a/tox.ini b/tox.ini
+index a363e187f..3b8bc12d0 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

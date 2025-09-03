@@ -1,0 +1,187 @@
+diff --git a/sklearn/ensemble/_iforest.py b/sklearn/ensemble/_iforest.py
+index 4d6c1c3f0..4a3b03f83 100644
+--- a/sklearn/ensemble/_iforest.py
++++ b/sklearn/ensemble/_iforest.py
+@@ -345,7 +345,10 @@ class IsolationForest(OutlierMixin, BaseBagging):
+             return self
+ 
+         # else, define offset_ wrt contamination parameter
+-        self.offset_ = np.percentile(self.score_samples(X), 100.0 * self.contamination)
++        # Directly use _compute_chunked_score_samples to avoid re-validating X
++        # since it was already validated at the beginning of fit()
++        scores = -self._compute_chunked_score_samples(X)
++        self.offset_ = np.percentile(scores, 100.0 * self.contamination)
+ 
+         return self
+ 
+diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
+index 5f046540f..da2d7eeb0 100644
+--- a/sklearn/ensemble/tests/test_iforest.py
++++ b/sklearn/ensemble/tests/test_iforest.py
+@@ -326,6 +326,39 @@ def test_iforest_with_n_jobs_does_not_segfault():
+     IsolationForest(n_estimators=10, max_samples=256, n_jobs=2).fit(X)
+ 
+ 
++def test_iforest_dataframe_without_feature_warning():
++    """Test that IsolationForest does not warn when fitted with a DataFrame
++    and contamination != 'auto'.
++    
++    Non-regression test for issue where fitting with a DataFrame and 
++    contamination != 'auto' would generate a warning about feature names.
++    """
++    pd = pytest.importorskip("pandas")
++    
++    # Test with DataFrame and contamination != "auto" - should not raise warning
++    X_df = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++    
++    with warnings.catch_warnings():
++        warnings.simplefilter("error", UserWarning)
++        # This should not raise any warning
++        clf = IsolationForest(random_state=0, contamination=0.05).fit(X_df)
++        
++    # Also test with multi-feature DataFrame
++    X_multi = pd.DataFrame({
++        "feature1": [1, 2, 3, 4, 5, 100],
++        "feature2": [1, 2, 3, 4, 5, 100],
++        "feature3": [1, 2, 3, 4, 5, 100]
++    })
++    
++    with warnings.catch_warnings():
++        warnings.simplefilter("error", UserWarning)
++        # This should not raise any warning
++        clf = IsolationForest(random_state=0, contamination=0.1).fit(X_multi)
++    
++    # Make sure model still works correctly
++    assert clf.predict([[1, 1, 1]]).shape == (1,)
++
++
+ # TODO(1.4): remove in 1.4
+ def test_base_estimator_property_deprecated():
+     X = np.array([[1, 2], [3, 4]])
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 000000000..2031ebad0
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,77 @@
++from sklearn.ensemble import IsolationForest
++import pandas as pd
++import numpy as np
++import warnings
++
++# Test 1: Original issue - DataFrame with contamination != "auto" should not raise warning
++print("Test 1: DataFrame with contamination=0.05")
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    X_df = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++    clf1 = IsolationForest(random_state=0, contamination=0.05).fit(X_df)
++    
++    if w:
++        for warning in w:
++            print(f"  Warning: {warning.message}")
++    else:
++        print("  No warnings - PASS")
++
++# Test 2: DataFrame with contamination="auto" should not raise warning
++print("\nTest 2: DataFrame with contamination='auto'")
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    X_df = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++    clf2 = IsolationForest(random_state=0, contamination="auto").fit(X_df)
++    
++    if w:
++        for warning in w:
++            print(f"  Warning: {warning.message}")
++    else:
++        print("  No warnings - PASS")
++
++# Test 3: Numpy array should work fine
++print("\nTest 3: Numpy array with contamination=0.05")
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    X_np = np.array([[-1.1], [0.3], [0.5], [100]])
++    clf3 = IsolationForest(random_state=0, contamination=0.05).fit(X_np)
++    
++    if w:
++        for warning in w:
++            print(f"  Warning: {warning.message}")
++    else:
++        print("  No warnings - PASS")
++
++# Test 4: Check that predictions are consistent
++print("\nTest 4: Check predictions are consistent")
++X_test = np.array([[0.5], [10], [-5], [100]])
++pred1 = clf1.predict(X_test)
++pred3 = clf3.predict(X_test)
++print(f"  Predictions with DataFrame: {pred1}")
++print(f"  Predictions with NumPy:     {pred3}")
++print(f"  Predictions match: {np.array_equal(pred1, pred3)} - {'PASS' if np.array_equal(pred1, pred3) else 'FAIL'}")
++
++# Test 5: Check scores are computed correctly
++print("\nTest 5: Check decision function values")
++scores1 = clf1.decision_function(X_test)
++scores3 = clf3.decision_function(X_test)
++print(f"  Scores with DataFrame: {scores1}")
++print(f"  Scores with NumPy:     {scores3}")
++print(f"  Scores match: {np.allclose(scores1, scores3)} - {'PASS' if np.allclose(scores1, scores3) else 'FAIL'}")
++
++# Test 6: Multi-feature test
++print("\nTest 6: Multi-feature DataFrame with contamination=0.1")
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    X_multi = pd.DataFrame({
++        "feature1": [1, 2, 3, 4, 5, 100],
++        "feature2": [1, 2, 3, 4, 5, 100],
++        "feature3": [1, 2, 3, 4, 5, 100]
++    })
++    clf_multi = IsolationForest(random_state=0, contamination=0.1).fit(X_multi)
++    
++    if w:
++        for warning in w:
++            print(f"  Warning: {warning.message}")
++    else:
++        print("  No warnings - PASS")
+diff --git a/test_issue_auto.py b/test_issue_auto.py
+new file mode 100644
+index 000000000..da9903fc5
+--- /dev/null
++++ b/test_issue_auto.py
+@@ -0,0 +1,16 @@
++from sklearn.ensemble import IsolationForest
++import pandas as pd
++import warnings
++
++# Test with contamination="auto" - should not raise warning
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    
++    X = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++    clf = IsolationForest(random_state=0, contamination="auto").fit(X)
++    
++    if w:
++        for warning in w:
++            print(f"Warning: {warning.message}")
++    else:
++        print("No warnings!")
+diff --git a/test_issue_reproduction.py b/test_issue_reproduction.py
+new file mode 100644
+index 000000000..b9c35654f
+--- /dev/null
++++ b/test_issue_reproduction.py
+@@ -0,0 +1,16 @@
++from sklearn.ensemble import IsolationForest
++import pandas as pd
++import warnings
++
++# Catch warnings to see them
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    
++    X = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++    clf = IsolationForest(random_state=0, contamination=0.05).fit(X)
++    
++    if w:
++        for warning in w:
++            print(f"Warning: {warning.message}")
++    else:
++        print("No warnings!")

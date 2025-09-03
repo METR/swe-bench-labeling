@@ -1,0 +1,32 @@
+diff --git a/django/core/mail/message.py b/django/core/mail/message.py
+index e393b4cf5c..7d4d945885 100644
+--- a/django/core/mail/message.py
++++ b/django/core/mail/message.py
+@@ -257,7 +257,14 @@ class EmailMessage:
+             msg['Date'] = formatdate(localtime=settings.EMAIL_USE_LOCALTIME)
+         if 'message-id' not in header_names:
+             # Use cached DNS_NAME for performance
+-            msg['Message-ID'] = make_msgid(domain=DNS_NAME)
++            # Convert to punycode if the domain contains non-ASCII characters
++            domain = str(DNS_NAME)
++            try:
++                domain.encode('ascii')
++            except UnicodeEncodeError:
++                # Domain contains non-ASCII, convert to punycode
++                domain = domain.encode('idna').decode('ascii')
++            msg['Message-ID'] = make_msgid(domain=domain)
+         for name, value in self.extra_headers.items():
+             if name.lower() != 'from':  # From is already handled
+                 msg[name] = value
+diff --git a/test_add_method.py b/test_add_method.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_punycode.py b/test_punycode.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_unicode_dns.py b/test_unicode_dns.py
+new file mode 100644
+index 0000000000..e69de29bb2

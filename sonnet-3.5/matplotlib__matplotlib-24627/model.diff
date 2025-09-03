@@ -1,0 +1,76 @@
+diff --git a/lib/matplotlib/axes/_base.py b/lib/matplotlib/axes/_base.py
+index 90b0bf117e..b5ea114805 100644
+--- a/lib/matplotlib/axes/_base.py
++++ b/lib/matplotlib/axes/_base.py
+@@ -1401,6 +1401,12 @@ class _AxesBase(martist.Artist):
+         else:
+             self.__clear()
+ 
++    def cla(self):
++        """Clear the Axes."""
++        # Act as an alias, or as the superclass implementation depending on the
++        # subclass implementation.
++        if self._subclass_uses_cla:
++            self.__clear()
+     def cla(self):
+         """Clear the Axes."""
+         # Act as an alias, or as the superclass implementation depending on the
+@@ -1409,10 +1415,10 @@ class _AxesBase(martist.Artist):
+             self.__clear()
+         else:
+             self.clear()
+-
+-    class ArtistList(MutableSequence):
+-        """
+-        A sublist of Axes children based on their type.
++        
++        # Unset .axes attribute of deparented artists
++        for artist in self.get_children():
++            artist.axes = None
+ 
+         The type-specific children sublists will become immutable in
+         Matplotlib 3.7. Then, these artist lists will likely be replaced by
+diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
+index 6c18ba1a64..b9f51e2650 100644
+--- a/lib/matplotlib/figure.py
++++ b/lib/matplotlib/figure.py
+@@ -929,8 +929,18 @@ default: %(va)s
+         _break_share_link(ax, ax._twinned_axes)
+ 
+     def clear(self, keep_observers=False):
+-        """
+-        Clear the figure.
++        """Clear the figure."""
++        # Unset .figure attribute of deparented artists
++        for ax in self.axes:
++            for artist in ax.get_children():
++                artist.figure = None
++                artist.axes = None
++        
++        # Original clear implementation
++        super().clear(keep_observers=keep_observers)
++        toolbar = self.canvas.toolbar
++        if toolbar is not None:
++            toolbar.update()
+ 
+         Parameters
+         ----------
+@@ -3039,10 +3049,15 @@ class Figure(FigureBase):
+         self.set_size_inches(self.get_figwidth(), val, forward=forward)
+ 
+     def clear(self, keep_observers=False):
+-        # docstring inherited
++        """Clear the figure."""
++        # Unset .figure attribute of deparented artists
++        for ax in self.axes:
++            for artist in ax.get_children():
++                artist.figure = None
++                artist.axes = None
++        
++        # Original clear implementation
+         super().clear(keep_observers=keep_observers)
+-        # FigureBase.clear does not clear toolbars, as
+-        # only Figure can have toolbars
+         toolbar = self.canvas.toolbar
+         if toolbar is not None:
+             toolbar.update()

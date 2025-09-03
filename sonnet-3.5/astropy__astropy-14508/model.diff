@@ -1,0 +1,61 @@
+diff --git a/astropy/io/fits/card.py b/astropy/io/fits/card.py
+index 118bfced89..27aefd8238 100644
+--- a/astropy/io/fits/card.py
++++ b/astropy/io/fits/card.py
+@@ -1299,6 +1299,13 @@ def _format_value(value):
+ 
+ def _format_float(value):
+     """Format a floating number to make sure it gets the decimal point."""
++    value_str = str(value)
++    if len(value_str) <= 20:
++        if "." not in value_str and "e" not in value_str.lower():
++            value_str += ".0"
++        return value_str
++
++    # If str(value) is too long, fall back to the original formatting
+     value_str = f"{value:.16G}"
+     if "." not in value_str and "E" not in value_str:
+         value_str += ".0"
+diff --git a/pyproject.toml b/pyproject.toml
+index 65df5b1b77..d02c4f9eda 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/test_card_float_format.py b/test_card_float_format.py
+new file mode 100644
+index 0000000000..b1b2e8b144
+--- /dev/null
++++ b/test_card_float_format.py
+@@ -0,0 +1,26 @@
++from astropy.io import fits
++
++# Test case from the issue
++value = 0.009125
++comment = '[m] radius arround actuator to avoid'
++keyword = 'ESO IFM CL RADIUS'
++
++# Create a new Card object
++new_c = fits.Card(f'HIERARCH {keyword}', value, comment)
++
++# Print the card as a string
++print(str(new_c))
++
++# Create a card with a longer float value
++long_value = 123456789.987654321
++long_c = fits.Card('LONG_FLOAT', long_value, 'A longer float value')
++
++# Print the long float card as a string
++print(str(long_c))
++
++# Test with a very small float
++small_value = 1.23e-10
++small_c = fits.Card('SMALL_FLOAT', small_value, 'A very small float value')
++
++# Print the small float card as a string
++print(str(small_c))

@@ -1,0 +1,16 @@
+diff --git a/pylint/checkers/similar.py b/pylint/checkers/similar.py
+index c65b1c893..7fdc02b3a 100644
+--- a/pylint/checkers/similar.py
++++ b/pylint/checkers/similar.py
+@@ -801,7 +801,10 @@ class SimilarChecker(BaseChecker, Similar, MapReduceMixin):
+         """
+         BaseChecker.set_option(self, optname, value, action, optdict)
+         if optname == "min-similarity-lines":
+-            self.min_lines = self.config.min_similarity_lines
++            if self.config.min_similarity_lines == 0:
++                self.min_lines = sys.maxsize  # Effectively disable the check
++            else:
++                self.min_lines = self.config.min_similarity_lines
+         elif optname == "ignore-comments":
+             self.ignore_comments = self.config.ignore_comments
+         elif optname == "ignore-docstrings":

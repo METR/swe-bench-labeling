@@ -1,0 +1,569 @@
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 0000000000..35beab6c0d
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,19 @@
++import numpy as np
++from matplotlib import units
++
++# Test what happens with empty arrays
++values = np.atleast_1d(np.array([], dtype=object))
++print(f"Empty array values: {values}")
++print(f"Shape: {values.shape}")
++print(f"Length: {len(values)}")
++
++# Check if empty array is considered numlike
++is_numlike = all(units.ConversionInterface.is_numlike(v)
++                 and not isinstance(v, (str, bytes))
++                 for v in values)
++print(f"Is empty array numlike? {is_numlike}")
++
++# Check all() behavior with empty sequence
++print(f"all([]) = {all([])}")
++print(f"all([True]) = {all([True])}")
++print(f"all([False]) = {all([False])}")
+diff --git a/lib/matplotlib/category.py b/lib/matplotlib/category.py
+index c823b68fd9..1ea9d6202d 100644
+--- a/lib/matplotlib/category.py
++++ b/lib/matplotlib/category.py
+@@ -55,7 +55,7 @@ class StrCategoryConverter(units.ConversionInterface):
+         values = np.atleast_1d(np.array(value, dtype=object))
+         # pass through sequence of non binary numbers
+         with _api.suppress_matplotlib_deprecation_warning():
+-            is_numlike = all(units.ConversionInterface.is_numlike(v)
++            is_numlike = len(values) > 0 and all(units.ConversionInterface.is_numlike(v)
+                              and not isinstance(v, (str, bytes))
+                              for v in values)
+         if is_numlike:
+diff --git a/lib/matplotlib/category.py.backup b/lib/matplotlib/category.py.backup
+new file mode 100644
+index 0000000000..c823b68fd9
+--- /dev/null
++++ b/lib/matplotlib/category.py.backup
+@@ -0,0 +1,244 @@
++"""
++Plotting of string "category" data: ``plot(['d', 'f', 'a'], [1, 2, 3])`` will
++plot three points with x-axis values of 'd', 'f', 'a'.
++
++See :doc:`/gallery/lines_bars_and_markers/categorical_variables` for an
++example.
++
++The module uses Matplotlib's `matplotlib.units` mechanism to convert from
++strings to integers and provides a tick locator, a tick formatter, and the
++`.UnitData` class that creates and stores the string-to-integer mapping.
++"""
++
++from collections import OrderedDict
++import dateutil.parser
++import itertools
++import logging
++
++import numpy as np
++
++from matplotlib import _api, ticker, units
++
++
++_log = logging.getLogger(__name__)
++
++
++class StrCategoryConverter(units.ConversionInterface):
++    @staticmethod
++    def convert(value, unit, axis):
++        """
++        Convert strings in *value* to floats using mapping information stored
++        in the *unit* object.
++
++        Parameters
++        ----------
++        value : str or iterable
++            Value or list of values to be converted.
++        unit : `.UnitData`
++            An object mapping strings to integers.
++        axis : `~matplotlib.axis.Axis`
++            The axis on which the converted value is plotted.
++
++            .. note:: *axis* is unused.
++
++        Returns
++        -------
++        float or ndarray[float]
++        """
++        if unit is None:
++            raise ValueError(
++                'Missing category information for StrCategoryConverter; '
++                'this might be caused by unintendedly mixing categorical and '
++                'numeric data')
++        StrCategoryConverter._validate_unit(unit)
++        # dtype = object preserves numerical pass throughs
++        values = np.atleast_1d(np.array(value, dtype=object))
++        # pass through sequence of non binary numbers
++        with _api.suppress_matplotlib_deprecation_warning():
++            is_numlike = all(units.ConversionInterface.is_numlike(v)
++                             and not isinstance(v, (str, bytes))
++                             for v in values)
++        if is_numlike:
++            _api.warn_deprecated(
++                "3.5", message="Support for passing numbers through unit "
++                "converters is deprecated since %(since)s and support will be "
++                "removed %(removal)s; use Axis.convert_units instead.")
++            return np.asarray(values, dtype=float)
++        # force an update so it also does type checking
++        unit.update(values)
++        return np.vectorize(unit._mapping.__getitem__, otypes=[float])(values)
++
++    @staticmethod
++    def axisinfo(unit, axis):
++        """
++        Set the default axis ticks and labels.
++
++        Parameters
++        ----------
++        unit : `.UnitData`
++            object string unit information for value
++        axis : `~matplotlib.axis.Axis`
++            axis for which information is being set
++
++            .. note:: *axis* is not used
++
++        Returns
++        -------
++        `~matplotlib.units.AxisInfo`
++            Information to support default tick labeling
++
++        """
++        StrCategoryConverter._validate_unit(unit)
++        # locator and formatter take mapping dict because
++        # args need to be pass by reference for updates
++        majloc = StrCategoryLocator(unit._mapping)
++        majfmt = StrCategoryFormatter(unit._mapping)
++        return units.AxisInfo(majloc=majloc, majfmt=majfmt)
++
++    @staticmethod
++    def default_units(data, axis):
++        """
++        Set and update the `~matplotlib.axis.Axis` units.
++
++        Parameters
++        ----------
++        data : str or iterable of str
++        axis : `~matplotlib.axis.Axis`
++            axis on which the data is plotted
++
++        Returns
++        -------
++        `.UnitData`
++            object storing string to integer mapping
++        """
++        # the conversion call stack is default_units -> axis_info -> convert
++        if axis.units is None:
++            axis.set_units(UnitData(data))
++        else:
++            axis.units.update(data)
++        return axis.units
++
++    @staticmethod
++    def _validate_unit(unit):
++        if not hasattr(unit, '_mapping'):
++            raise ValueError(
++                f'Provided unit "{unit}" is not valid for a categorical '
++                'converter, as it does not have a _mapping attribute.')
++
++
++class StrCategoryLocator(ticker.Locator):
++    """Tick at every integer mapping of the string data."""
++    def __init__(self, units_mapping):
++        """
++        Parameters
++        ----------
++        units_mapping : dict
++            Mapping of category names (str) to indices (int).
++        """
++        self._units = units_mapping
++
++    def __call__(self):
++        # docstring inherited
++        return list(self._units.values())
++
++    def tick_values(self, vmin, vmax):
++        # docstring inherited
++        return self()
++
++
++class StrCategoryFormatter(ticker.Formatter):
++    """String representation of the data at every tick."""
++    def __init__(self, units_mapping):
++        """
++        Parameters
++        ----------
++        units_mapping : dict
++            Mapping of category names (str) to indices (int).
++        """
++        self._units = units_mapping
++
++    def __call__(self, x, pos=None):
++        # docstring inherited
++        return self.format_ticks([x])[0]
++
++    def format_ticks(self, values):
++        # docstring inherited
++        r_mapping = {v: self._text(k) for k, v in self._units.items()}
++        return [r_mapping.get(round(val), '') for val in values]
++
++    @staticmethod
++    def _text(value):
++        """Convert text values into utf-8 or ascii strings."""
++        if isinstance(value, bytes):
++            value = value.decode(encoding='utf-8')
++        elif not isinstance(value, str):
++            value = str(value)
++        return value
++
++
++class UnitData:
++    def __init__(self, data=None):
++        """
++        Create mapping between unique categorical values and integer ids.
++
++        Parameters
++        ----------
++        data : iterable
++            sequence of string values
++        """
++        self._mapping = OrderedDict()
++        self._counter = itertools.count()
++        if data is not None:
++            self.update(data)
++
++    @staticmethod
++    def _str_is_convertible(val):
++        """
++        Helper method to check whether a string can be parsed as float or date.
++        """
++        try:
++            float(val)
++        except ValueError:
++            try:
++                dateutil.parser.parse(val)
++            except (ValueError, TypeError):
++                # TypeError if dateutil >= 2.8.1 else ValueError
++                return False
++        return True
++
++    def update(self, data):
++        """
++        Map new values to integer identifiers.
++
++        Parameters
++        ----------
++        data : iterable of str or bytes
++
++        Raises
++        ------
++        TypeError
++            If elements in *data* are neither str nor bytes.
++        """
++        data = np.atleast_1d(np.array(data, dtype=object))
++        # check if convertible to number:
++        convertible = True
++        for val in OrderedDict.fromkeys(data):
++            # OrderedDict just iterates over unique values in data.
++            _api.check_isinstance((str, bytes), value=val)
++            if convertible:
++                # this will only be called so long as convertible is True.
++                convertible = self._str_is_convertible(val)
++            if val not in self._mapping:
++                self._mapping[val] = next(self._counter)
++        if convertible:
++            _log.info('Using categorical units to plot a list of strings '
++                      'that are all parsable as floats or dates. If these '
++                      'strings should be plotted as numbers, cast to the '
++                      'appropriate data type before plotting.')
++
++
++# Register the converter with Matplotlib's unit framework
++units.registry[str] = StrCategoryConverter()
++units.registry[np.str_] = StrCategoryConverter()
++units.registry[bytes] = StrCategoryConverter()
++units.registry[np.bytes_] = StrCategoryConverter()
+diff --git a/test_comprehensive.py b/test_comprehensive.py
+new file mode 100644
+index 0000000000..9f11387938
+--- /dev/null
++++ b/test_comprehensive.py
+@@ -0,0 +1,58 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++
++# Capture warnings
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    
++    # Test 1: Empty arrays (should not warn)
++    print("Test 1: Empty arrays")
++    f, ax = plt.subplots()
++    ax.xaxis.update_units(["a", "b"])
++    ax.plot([], [])
++    if w:
++        print(f"  WARNING: {w[-1].message}")
++    else:
++        print("  No warning (correct)")
++    
++    # Clear warnings
++    w.clear()
++    
++    # Test 2: Numeric data with category units (should warn)
++    print("\nTest 2: Numeric data with category units")
++    f, ax = plt.subplots()
++    ax.xaxis.update_units(["a", "b"])
++    ax.plot([1, 2], [3, 4])
++    if w:
++        print(f"  WARNING: {w[-1].message}")
++    else:
++        print("  No warning")
++    
++    # Clear warnings
++    w.clear()
++    
++    # Test 3: String data with category units (should not warn)
++    print("\nTest 3: String data with category units")
++    f, ax = plt.subplots()
++    ax.xaxis.update_units(["a", "b"])
++    ax.plot(["a", "b"], [1, 2])
++    if w:
++        print(f"  WARNING: {w[-1].message}")
++    else:
++        print("  No warning (correct)")
++    
++    # Clear warnings
++    w.clear()
++    
++    # Test 4: Mixed empty and string data (should not warn)
++    print("\nTest 4: Empty y-data with string x-data")
++    f, ax = plt.subplots()
++    ax.xaxis.update_units(["a", "b"])
++    ax.plot(["a"], [])
++    if w:
++        print(f"  WARNING: {w[-1].message}")
++    else:
++        print("  No warning (correct)")
++
++print("\nAll tests completed")
+diff --git a/test_convert_units.py b/test_convert_units.py
+new file mode 100644
+index 0000000000..2af446484e
+--- /dev/null
++++ b/test_convert_units.py
+@@ -0,0 +1,23 @@
++import matplotlib.pyplot as plt
++import warnings
++
++# Test what the deprecation message suggests
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    
++    f, ax = plt.subplots()
++    ax.xaxis.update_units(["a", "b"])
++    
++    # Try using convert_units as suggested by the warning
++    try:
++        result = ax.xaxis.convert_units([])
++        print(f"convert_units([]) returned: {result}")
++        print(f"Type: {type(result)}")
++        print("No exception!")
++    except Exception as e:
++        print(f"Exception raised: {type(e).__name__}: {e}")
++    
++    # Check for warnings
++    if w:
++        for warning in w:
++            print(f"Warning: {warning.message}")
+diff --git a/test_edge_cases.py b/test_edge_cases.py
+new file mode 100644
+index 0000000000..b0992cd28a
+--- /dev/null
++++ b/test_edge_cases.py
+@@ -0,0 +1,44 @@
++import matplotlib.pyplot as plt
++import matplotlib.category as mcat
++import numpy as np
++import warnings
++
++# Create a unit object for testing
++unit = mcat.UnitData(["a", "b", "c"])
++
++test_cases = [
++    ("Empty list", []),
++    ("Empty numpy array", np.array([])),
++    ("Empty object array", np.array([], dtype=object)),
++    ("Single number", [1]),
++    ("Multiple numbers", [1, 2, 3]),
++    ("Single string", ["a"]),
++    ("Multiple strings", ["a", "b", "c"]),
++    ("Mixed (should fail)", ["a", 1]),
++]
++
++print("Testing various edge cases with StrCategoryConverter.convert:\n")
++
++for name, data in test_cases:
++    print(f"Test: {name}")
++    print(f"  Input: {data}")
++    
++    with warnings.catch_warnings(record=True) as w:
++        warnings.simplefilter("always")
++        
++        try:
++            result = mcat.StrCategoryConverter.convert(data, unit, None)
++            print(f"  Result: {result}")
++            
++            # Check for deprecation warnings
++            dep_warnings = [warning for warning in w 
++                           if issubclass(warning.category, DeprecationWarning)]
++            if dep_warnings:
++                print(f"  ⚠️  Deprecation warning: {dep_warnings[0].message}")
++            else:
++                print("  ✓ No deprecation warning")
++                
++        except Exception as e:
++            print(f"  ❌ Exception: {type(e).__name__}: {e}")
++    
++    print()
+diff --git a/test_empty_data_warning.py b/test_empty_data_warning.py
+new file mode 100644
+index 0000000000..77bee75f0b
+--- /dev/null
++++ b/test_empty_data_warning.py
+@@ -0,0 +1,73 @@
++"""
++Test to verify that empty data doesn't trigger the deprecation warning
++when passed to axis with category units.
++"""
++import matplotlib.pyplot as plt
++import matplotlib.category as mcat
++import numpy as np
++import warnings
++import pytest
++
++def test_empty_data_no_warning():
++    """Empty data should not trigger deprecation warning."""
++    with warnings.catch_warnings(record=True) as w:
++        warnings.simplefilter("always")
++        
++        # Test case from the issue
++        f, ax = plt.subplots()
++        ax.xaxis.update_units(["a", "b"])
++        ax.plot([], [])
++        
++        # Check no deprecation warning was raised
++        deprecation_warnings = [warning for warning in w 
++                               if issubclass(warning.category, DeprecationWarning)]
++        assert len(deprecation_warnings) == 0, \
++            f"Unexpected deprecation warning: {deprecation_warnings[0].message if deprecation_warnings else ''}"
++
++def test_numeric_data_still_warns():
++    """Numeric data should still trigger deprecation warning."""
++    with warnings.catch_warnings(record=True) as w:
++        warnings.simplefilter("always")
++        
++        # Create unit object
++        unit = mcat.UnitData(["a", "b"])
++        
++        # Convert numeric data
++        result = mcat.StrCategoryConverter.convert([1, 2], unit, None)
++        
++        # Check that deprecation warning was raised
++        deprecation_warnings = [warning for warning in w 
++                               if issubclass(warning.category, DeprecationWarning)]
++        assert len(deprecation_warnings) == 1
++        assert "Support for passing numbers through unit converters" in str(deprecation_warnings[0].message)
++
++def test_direct_converter_empty_array():
++    """Test converter directly with empty array."""
++    unit = mcat.UnitData(["a", "b"])
++    
++    with warnings.catch_warnings(record=True) as w:
++        warnings.simplefilter("always")
++        
++        # Convert empty array
++        result = mcat.StrCategoryConverter.convert([], unit, None)
++        
++        # Should return empty array without warning
++        assert isinstance(result, np.ndarray)
++        assert len(result) == 0
++        
++        # Check no deprecation warning
++        deprecation_warnings = [warning for warning in w 
++                               if issubclass(warning.category, DeprecationWarning)]
++        assert len(deprecation_warnings) == 0
++
++if __name__ == "__main__":
++    test_empty_data_no_warning()
++    print("✓ Empty data doesn't trigger warning")
++    
++    test_numeric_data_still_warns()
++    print("✓ Numeric data still triggers warning")
++    
++    test_direct_converter_empty_array()
++    print("✓ Direct converter handles empty arrays correctly")
++    
++    print("\nAll tests passed!")
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..3212ed957d
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,13 @@
++import matplotlib.pyplot as plt
++import numpy as np
++import warnings
++
++# Enable warnings to see the deprecation warning
++warnings.simplefilter('always')
++
++# Reproduce the issue
++f, ax = plt.subplots()
++ax.xaxis.update_units(["a", "b"])
++ax.plot([], [])
++
++print("Test completed")
+diff --git a/test_simple.py b/test_simple.py
+new file mode 100644
+index 0000000000..48ac18c228
+--- /dev/null
++++ b/test_simple.py
+@@ -0,0 +1,34 @@
++import matplotlib.pyplot as plt
++import matplotlib.category as mcat
++import numpy as np
++import warnings
++
++# Test the converter directly
++print("Testing StrCategoryConverter.convert directly:")
++
++# Create a unit object
++unit = mcat.UnitData(["a", "b"])
++
++# Test 1: Empty array
++print("\nTest 1: Empty array")
++result = mcat.StrCategoryConverter.convert([], unit, None)
++print(f"Result: {result}")
++print(f"Type: {type(result)}")
++
++# Test 2: Numeric array  
++print("\nTest 2: Numeric array [1, 2]")
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    result = mcat.StrCategoryConverter.convert([1, 2], unit, None)
++    if w:
++        print(f"Warning: {w[-1].message}")
++    print(f"Result: {result}")
++
++# Test 3: String array
++print("\nTest 3: String array ['a', 'b']")
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    result = mcat.StrCategoryConverter.convert(['a', 'b'], unit, None)
++    if w:
++        print(f"Warning: {w[-1].message}")
++    print(f"Result: {result}")
