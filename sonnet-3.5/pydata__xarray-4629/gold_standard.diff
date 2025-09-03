@@ -1,24 +1,12 @@
-From e3d18a2ed9af0cec143bcb4ee892519b769ab205 Mon Sep 17 00:00:00 2001
-From: Benjamin Bean <bbean@nrao.edu>
-Date: Mon, 30 Nov 2020 15:55:41 -0700
-Subject: [PATCH 1/2] fixes bug #4627 to make a copy of the attrs in the merged
- object
-
----
- doc/whats-new.rst          | 1 +
- xarray/core/merge.py       | 2 +-
- xarray/tests/test_merge.py | 7 +++++++
- 3 files changed, 9 insertions(+), 1 deletion(-)
-
 diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index 992531d2e32..d19d4f49276 100644
+index 992531d2e32..13dad17e2c4 100644
 --- a/doc/whats-new.rst
 +++ b/doc/whats-new.rst
 @@ -31,6 +31,7 @@ New Features
  Bug fixes
  ~~~~~~~~~
  
-+- :py:func:`Xarray.merge` with :py:attr:`combine_attrs='override'` makes a copy of the attrs (:issue:`4627`).
++- :py:func:`merge` with ``combine_attrs='override'`` makes a copy of the attrs (:issue:`4627`).
  
  Documentation
  ~~~~~~~~~~~~~
@@ -53,27 +41,3 @@ index 0994ed9a485..afb65a35d58 100644
      def test_merge_dicts_simple(self):
          actual = xr.merge([{"foo": 0}, {"bar": "one"}, {"baz": 3.5}])
          expected = xr.Dataset({"foo": 0, "bar": "one", "baz": 3.5})
-
-From 5ede7602664b8bab3affe3ebef55cdcdb516680f Mon Sep 17 00:00:00 2001
-From: Benjamin Bean <gladclef@users.noreply.github.com>
-Date: Tue, 1 Dec 2020 09:14:40 -0700
-Subject: [PATCH 2/2] Better formatting in doc/whats-new.rst
-
-Co-authored-by: Deepak Cherian <dcherian@users.noreply.github.com>
----
- doc/whats-new.rst | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index d19d4f49276..13dad17e2c4 100644
---- a/doc/whats-new.rst
-+++ b/doc/whats-new.rst
-@@ -31,7 +31,7 @@ New Features
- Bug fixes
- ~~~~~~~~~
- 
--- :py:func:`Xarray.merge` with :py:attr:`combine_attrs='override'` makes a copy of the attrs (:issue:`4627`).
-+- :py:func:`merge` with ``combine_attrs='override'`` makes a copy of the attrs (:issue:`4627`).
- 
- Documentation
- ~~~~~~~~~~~~~

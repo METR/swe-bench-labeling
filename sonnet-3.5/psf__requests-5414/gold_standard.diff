@@ -1,14 +1,3 @@
-From 658c10e84a461e5298199f20f17b510b90ac478a Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=C3=81lvaro=20Mond=C3=A9jar?= <mondejar1994@gmail.com>
-Date: Sun, 5 Apr 2020 18:47:21 +0200
-Subject: [PATCH] Raise InvalidURL if hosts starts with '.' as was reported at
- #5367.
-
----
- requests/models.py     | 2 +-
- tests/test_requests.py | 2 ++
- 2 files changed, 3 insertions(+), 1 deletion(-)
-
 diff --git a/requests/models.py b/requests/models.py
 index e7d292d580..d86388182b 100644
 --- a/requests/models.py

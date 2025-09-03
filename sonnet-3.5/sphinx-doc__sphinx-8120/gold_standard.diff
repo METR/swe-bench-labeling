@@ -1,22 +1,3 @@
-From 37235c71e04aff3b93ae98f12456a34666635a9d Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Fri, 14 Aug 2020 16:11:23 +0900
-Subject: [PATCH] Fix #6640: i18n: Failed to override system message
- translation
-
-Our document describes that users can override system messages via
-their own message catalog named `sphinx.mo` under the locale_dirs.
-But it has not been used since its beginning of i18n mechanism because
-the priority of users' message catalog is lower than system's.
-
-This makes the priority of users' message catalog higher than system's.
----
- CHANGES                   |  1 +
- sphinx/application.py     |  7 +++++--
- sphinx/locale/__init__.py |  2 +-
- tests/test_intl.py        | 29 +++++++++++++++++++++++++++++
- 4 files changed, 36 insertions(+), 3 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index e30d42e43a8..481ade0b855 100644
 --- a/CHANGES

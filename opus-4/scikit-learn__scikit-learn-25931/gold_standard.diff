@@ -1,52 +1,21 @@
-From 07a2beee79475e3aaa9160378f1e595f306ebbd6 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 22 Mar 2023 07:10:13 +0800
-Subject: [PATCH 1/5] added non-regression test for whether feature names are
- preserved by IsolationForest when contamination is not "auto"
-
----
- sklearn/ensemble/tests/test_iforest.py | 17 +++++++++++++++++
- 1 file changed, 17 insertions(+)
-
-diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
-index 5f046540fffdc..e9fa1c954b018 100644
---- a/sklearn/ensemble/tests/test_iforest.py
-+++ b/sklearn/ensemble/tests/test_iforest.py
-@@ -339,3 +339,20 @@ def test_base_estimator_property_deprecated():
-     )
-     with pytest.warns(FutureWarning, match=warn_msg):
-         model.base_estimator_
-+    
-+def test_iforest_preserve_feature_names():
-+    """Check that feature names are preserved when contamination is not "auto".
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index dac97146be221..99cbaadf9b76a 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -232,6 +232,11 @@ Changelog
+   when `max_samples` is a float and `round(n_samples * max_samples) < 1`.
+   :pr:`25601` by :user:`Jan Fidor <JanFidor>`.
+ 
++- |Fix| :meth:`ensemble.IsolationForest.fit` no longer warns about missing
++  feature names when called with `contamination` not `"auto"` on a pandas
++  dataframe.
++  :pr:`25931` by :user:`Yao Xiao <Charlie-XIAO>`.
 +
-+    Feature names are required for consistency checks during scoring.
-+    
-+    Non-regression test for Issue #25844
-+    """
-+    pd = pytest.importorskip("pandas")
-+    rng = np.random.RandomState(0)
-+
-+    X = pd.DataFrame(data=rng.randn(4), columns=["a"])
-+    model = IsolationForest(random_state=0, contamination=0.05)
-+
-+    with warnings.catch_warnings():
-+        warnings.simplefilter("error", UserWarning)
-+        model.fit(X)
-
-From 13ab33dc76fcce3fa604ff088d33162ecdb8acfa Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 22 Mar 2023 08:10:20 +0800
-Subject: [PATCH 2/5] Fixed "IsolationForest removes features when called with
- contamination not 'auto'" Also see Issue #25844, now does not generate
- warnings
-
----
- sklearn/ensemble/_iforest.py | 24 ++++++++++++++++--------
- 1 file changed, 16 insertions(+), 8 deletions(-)
-
+ :mod:`sklearn.exception`
+ ........................
+ - |Feature| Added :class:`exception.InconsistentVersionWarning` which is raised
 diff --git a/sklearn/ensemble/_iforest.py b/sklearn/ensemble/_iforest.py
-index 4d6c1c3f0b7f9..d7d2707b953d9 100644
+index 4d6c1c3f0b7f9..cc0f3cf09dee7 100644
 --- a/sklearn/ensemble/_iforest.py
 +++ b/sklearn/ensemble/_iforest.py
 @@ -344,8 +344,10 @@ def fit(self, X, y=None, sample_weight=None):
@@ -56,8 +25,8 @@ index 4d6c1c3f0b7f9..d7d2707b953d9 100644
 -        # else, define offset_ wrt contamination parameter
 -        self.offset_ = np.percentile(self.score_samples(X), 100.0 * self.contamination)
 +        # Else, define offset_ wrt contamination parameter
-+        # Input validation would remove feature names, so we call private version
-+        # of score_sample that does not perform input validation
++        # To avoid performing input validation a second time we call
++        # _score_samples rather than score_samples
 +        self.offset_ = np.percentile(self._score_samples(X), 100.0 * self.contamination)
  
          return self
@@ -76,10 +45,10 @@ index 4d6c1c3f0b7f9..d7d2707b953d9 100644
 -        # Take the opposite of the scores as bigger is better (here less
 -        # abnormal)
 +        return self._score_samples(X)
-+    
++
 +    def _score_samples(self, X):
 +        """Private version of score_samples without input validation.
-+        
++
 +        Input validation would remove feature names, so we disable it.
 +        """
 +        # Code structure from ForestClassifier/predict_proba
@@ -90,118 +59,29 @@ index 4d6c1c3f0b7f9..d7d2707b953d9 100644
          return -self._compute_chunked_score_samples(X)
  
      def _compute_chunked_score_samples(self, X):
-
-From b630df0c3e287122be3217835bdc61722be0bb46 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 22 Mar 2023 08:54:25 +0800
-Subject: [PATCH 3/5] added an entry to the changelog at v1.3.rst
-
----
- doc/whats_new/v1.3.rst | 4 ++++
- 1 file changed, 4 insertions(+)
-
-diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
-index dac97146be221..87d42e1d79b44 100644
---- a/doc/whats_new/v1.3.rst
-+++ b/doc/whats_new/v1.3.rst
-@@ -232,6 +232,10 @@ Changelog
-   when `max_samples` is a float and `round(n_samples * max_samples) < 1`.
-   :pr:`25601` by :user:`Jan Fidor <JanFidor>`.
- 
-+- |Fix| :meth:`ensemble.IsolationForest.fit` no longer removes feature names
-+  or gives warnings when called with `contamination` not `"auto"`.
-+  :pr:`25931` by :user:`Yao Xiao <Charlie-XIAO>`.
-+
- :mod:`sklearn.exception`
- ........................
- - |Feature| Added :class:`exception.InconsistentVersionWarning` which is raised
-
-From 171fff5a976e0fa78f67b74aa82818d28ba34c2a Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 22 Mar 2023 09:04:16 +0800
-Subject: [PATCH 4/5] code style check, removed some leading spaces
-
----
- sklearn/ensemble/_iforest.py           | 4 ++--
- sklearn/ensemble/tests/test_iforest.py | 5 +++--
- 2 files changed, 5 insertions(+), 4 deletions(-)
-
-diff --git a/sklearn/ensemble/_iforest.py b/sklearn/ensemble/_iforest.py
-index d7d2707b953d9..8858308c46988 100644
---- a/sklearn/ensemble/_iforest.py
-+++ b/sklearn/ensemble/_iforest.py
-@@ -434,10 +434,10 @@ def score_samples(self, X):
-         X = self._validate_data(X, accept_sparse="csr", dtype=np.float32, reset=False)
- 
-         return self._score_samples(X)
--    
-+
-     def _score_samples(self, X):
-         """Private version of score_samples without input validation.
--        
-+
-         Input validation would remove feature names, so we disable it.
-         """
-         # Code structure from ForestClassifier/predict_proba
 diff --git a/sklearn/ensemble/tests/test_iforest.py b/sklearn/ensemble/tests/test_iforest.py
-index e9fa1c954b018..7650dd5c14ce4 100644
+index 5f046540fffdc..7650dd5c14ce4 100644
 --- a/sklearn/ensemble/tests/test_iforest.py
 +++ b/sklearn/ensemble/tests/test_iforest.py
-@@ -339,12 +339,13 @@ def test_base_estimator_property_deprecated():
+@@ -339,3 +339,21 @@ def test_base_estimator_property_deprecated():
      )
      with pytest.warns(FutureWarning, match=warn_msg):
          model.base_estimator_
--    
 +
 +
- def test_iforest_preserve_feature_names():
-     """Check that feature names are preserved when contamination is not "auto".
- 
-     Feature names are required for consistency checks during scoring.
--    
++def test_iforest_preserve_feature_names():
++    """Check that feature names are preserved when contamination is not "auto".
 +
-     Non-regression test for Issue #25844
-     """
-     pd = pytest.importorskip("pandas")
-
-From f4eace5c5364aa3bb6e7b6eede03c3d78955aa49 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 22 Mar 2023 20:18:53 +0800
-Subject: [PATCH 5/5] adopted changes @ogrisel @lesteve, resolved conversations
-
----
- doc/whats_new/v1.3.rst       | 5 +++--
- sklearn/ensemble/_iforest.py | 4 ++--
- 2 files changed, 5 insertions(+), 4 deletions(-)
-
-diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
-index 87d42e1d79b44..99cbaadf9b76a 100644
---- a/doc/whats_new/v1.3.rst
-+++ b/doc/whats_new/v1.3.rst
-@@ -232,8 +232,9 @@ Changelog
-   when `max_samples` is a float and `round(n_samples * max_samples) < 1`.
-   :pr:`25601` by :user:`Jan Fidor <JanFidor>`.
- 
--- |Fix| :meth:`ensemble.IsolationForest.fit` no longer removes feature names
--  or gives warnings when called with `contamination` not `"auto"`.
-+- |Fix| :meth:`ensemble.IsolationForest.fit` no longer warns about missing
-+  feature names when called with `contamination` not `"auto"` on a pandas
-+  dataframe.
-   :pr:`25931` by :user:`Yao Xiao <Charlie-XIAO>`.
- 
- :mod:`sklearn.exception`
-diff --git a/sklearn/ensemble/_iforest.py b/sklearn/ensemble/_iforest.py
-index 8858308c46988..cc0f3cf09dee7 100644
---- a/sklearn/ensemble/_iforest.py
-+++ b/sklearn/ensemble/_iforest.py
-@@ -345,8 +345,8 @@ def fit(self, X, y=None, sample_weight=None):
-             return self
- 
-         # Else, define offset_ wrt contamination parameter
--        # Input validation would remove feature names, so we call private version
--        # of score_sample that does not perform input validation
-+        # To avoid performing input validation a second time we call
-+        # _score_samples rather than score_samples
-         self.offset_ = np.percentile(self._score_samples(X), 100.0 * self.contamination)
- 
-         return self
++    Feature names are required for consistency checks during scoring.
++
++    Non-regression test for Issue #25844
++    """
++    pd = pytest.importorskip("pandas")
++    rng = np.random.RandomState(0)
++
++    X = pd.DataFrame(data=rng.randn(4), columns=["a"])
++    model = IsolationForest(random_state=0, contamination=0.05)
++
++    with warnings.catch_warnings():
++        warnings.simplefilter("error", UserWarning)
++        model.fit(X)

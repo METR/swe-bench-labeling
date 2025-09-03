@@ -1,267 +1,22 @@
-From 1745347be6d62fd6d00118878cec56edb74b06fe Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Tue, 12 Dec 2017 23:03:16 +0100
-Subject: [PATCH 1/9] Fixex #10284. Added store_cv_values to RidgeClassifierCV
- and a test. ISSUE: Linear_model.RidgeClassifierCV's Parameter store_cv_values
-
----
- sklearn/linear_model/ridge.py            | 12 ++++++--
- sklearn/linear_model/tests/test_ridge.py | 38 +++++++++++++++++++++---
- 2 files changed, 44 insertions(+), 6 deletions(-)
-
-diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
-index c46cdff7da2d3..32bbeae736e81 100644
---- a/sklearn/linear_model/ridge.py
-+++ b/sklearn/linear_model/ridge.py
-@@ -1301,6 +1301,12 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
-         weights inversely proportional to class frequencies in the input data
-         as ``n_samples / (n_classes * np.bincount(y))``
- 
-+    store_cv_values : boolean, default=False
-+        Flag indicating if the cross-validation values corresponding to
-+        each alpha should be stored in the `cv_values_` attribute (see
-+        below). This flag is only compatible with `cv=None` (i.e. using
-+        Generalized Cross-Validation).
-+
-     Attributes
-     ----------
-     cv_values_ : array, shape = [n_samples, n_alphas] or \
-@@ -1332,11 +1338,13 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
-     a one-versus-all approach. Concretely, this is implemented by taking
-     advantage of the multi-variate response support in Ridge.
-     """
-+
-     def __init__(self, alphas=(0.1, 1.0, 10.0), fit_intercept=True,
--                 normalize=False, scoring=None, cv=None, class_weight=None):
-+                 normalize=False, scoring=None, cv=None, class_weight=None,
-+                 store_cv_values=False):
-         super(RidgeClassifierCV, self).__init__(
-             alphas=alphas, fit_intercept=fit_intercept, normalize=normalize,
--            scoring=scoring, cv=cv)
-+            scoring=scoring, cv=cv, store_cv_values=store_cv_values)
-         self.class_weight = class_weight
- 
-     def fit(self, X, y, sample_weight=None):
-diff --git a/sklearn/linear_model/tests/test_ridge.py b/sklearn/linear_model/tests/test_ridge.py
-index ee44da5d56b86..fd4f6b1edae82 100644
---- a/sklearn/linear_model/tests/test_ridge.py
-+++ b/sklearn/linear_model/tests/test_ridge.py
-@@ -49,8 +49,11 @@
- X_iris = sp.csr_matrix(iris.data)
- y_iris = iris.target
- 
--DENSE_FILTER = lambda X: X
--SPARSE_FILTER = lambda X: sp.csr_matrix(X)
-+
-+def DENSE_FILTER(X): return X
-+
-+
-+def SPARSE_FILTER(X): return sp.csr_matrix(X)
- 
- 
- def test_ridge():
-@@ -352,7 +355,7 @@ def _test_ridge_loo(filter_):
-     assert_equal(ridge_gcv2.alpha_, alpha_)
- 
-     # check that we get same best alpha with custom score_func
--    func = lambda x, y: -mean_squared_error(x, y)
-+    def func(x, y): return -mean_squared_error(x, y)
-     scoring = make_scorer(func)
-     ridge_gcv3 = RidgeCV(fit_intercept=False, scoring=scoring)
-     f(ridge_gcv3.fit)(filter_(X_diabetes), y_diabetes)
-@@ -576,7 +579,7 @@ def test_class_weights_cv():
- 
- def test_ridgecv_store_cv_values():
-     # Test _RidgeCV's store_cv_values attribute.
--    rng = rng = np.random.RandomState(42)
-+    rng = np.random.RandomState(42)
- 
-     n_samples = 8
-     n_features = 5
-@@ -598,6 +601,33 @@ def test_ridgecv_store_cv_values():
-     assert_equal(r.cv_values_.shape, (n_samples, n_responses, n_alphas))
- 
- 
-+def test_ridge_classifier_cv_store_cv_values():
-+    # Test RidgeClassifier
-+    x = np.array([[-1.0, -1.0], [-1.0, 0], [-.8, -1.0],
-+                  [1.0, 1.0], [1.0, 0.0]])
-+    y = np.array([1, 1, 1, -1, -1])
-+
-+    n_samples = x.shape[0]
-+
-+    alphas = [1e-1, 1e0, 1e1]
-+    n_alphas = len(alphas)
-+
-+    r = RidgeClassifierCV(alphas=alphas, store_cv_values=True)
-+
-+    # with len(y.shape) == 1
-+    n_targets = 1
-+    r.fit(x, y)
-+    assert_equal(r.cv_values_.shape, (n_samples, n_targets, n_alphas))
-+
-+    # with len(y.shape) == 2
-+    y = np.array([[1, 1, 1, -1, -1],
-+                  [1, -1, 1, -1, 1],
-+                  [-1, -1, 1, -1, -1]]).transpose()
-+    n_targets = y.shape[1]
-+    r.fit(x, y)
-+    assert_equal(r.cv_values_.shape, (n_samples, n_targets, n_alphas))
-+
-+
- def test_ridgecv_sample_weight():
-     rng = np.random.RandomState(0)
-     alphas = (0.1, 1.0, 10.0)
-
-From eb59462764dc0e02eb25ffd4fd04761671ce7470 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Tue, 19 Dec 2017 13:10:33 +0100
-Subject: [PATCH 2/9] Fixes #10284 Changed test nomenclature in
- test_ridgecv_store_cv_values
-
----
- sklearn/linear_model/tests/test_ridge.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sklearn/linear_model/tests/test_ridge.py b/sklearn/linear_model/tests/test_ridge.py
-index fd4f6b1edae82..3a77373bea9e8 100644
---- a/sklearn/linear_model/tests/test_ridge.py
-+++ b/sklearn/linear_model/tests/test_ridge.py
-@@ -595,10 +595,10 @@ def test_ridgecv_store_cv_values():
-     assert_equal(r.cv_values_.shape, (n_samples, n_alphas))
- 
-     # with len(y.shape) == 2
--    n_responses = 3
--    y = rng.randn(n_samples, n_responses)
-+    n_targets = 3
-+    y = rng.randn(n_samples, n_targets)
-     r.fit(x, y)
--    assert_equal(r.cv_values_.shape, (n_samples, n_responses, n_alphas))
-+    assert_equal(r.cv_values_.shape, (n_samples, n_targets, n_alphas))
- 
- 
- def test_ridge_classifier_cv_store_cv_values():
-
-From 90a7205ee4715509dc2e9a5e2d31de8c370eec05 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Wed, 20 Dec 2017 07:52:46 +0100
-Subject: [PATCH 3/9] Fixes #10284 Updated RidgeClassifierCV documentation
-
----
- sklearn/linear_model/ridge.py | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
-
-diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
-index 32bbeae736e81..1f773a0208c0e 100644
---- a/sklearn/linear_model/ridge.py
-+++ b/sklearn/linear_model/ridge.py
-@@ -1309,8 +1309,7 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
- 
-     Attributes
-     ----------
--    cv_values_ : array, shape = [n_samples, n_alphas] or \
--    shape = [n_samples, n_responses, n_alphas], optional
-+    cv_values_ : array, shape = [n_samples, n_targets, n_alphas], optional
-         Cross-validation values for each alpha (if `store_cv_values=True` and
-     `cv=None`). After `fit()` has been called, this attribute will contain \
-     the mean squared errors (by default) or the values of the \
-
-From f6130fef2c6834bb52bc31c539761d6eaffd5f97 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Mon, 25 Dec 2017 12:39:21 +0100
-Subject: [PATCH 4/9] Fixes #10284 Updated RidgeClassifierCV documentation -
- line formatting fixing
-
----
- sklearn/linear_model/ridge.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
-index 1f773a0208c0e..bbccba574c582 100644
---- a/sklearn/linear_model/ridge.py
-+++ b/sklearn/linear_model/ridge.py
-@@ -1311,9 +1311,9 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
-     ----------
-     cv_values_ : array, shape = [n_samples, n_targets, n_alphas], optional
-         Cross-validation values for each alpha (if `store_cv_values=True` and
--    `cv=None`). After `fit()` has been called, this attribute will contain \
--    the mean squared errors (by default) or the values of the \
--    `{loss,score}_func` function (if provided in the constructor).
-+        `cv=None`). After `fit()` has been called, this attribute will contain
-+        the mean squared errors (by default) or the values of the
-+        `{loss,score}_func` function (if provided in the constructor).
- 
-     coef_ : array, shape = [n_features] or [n_targets, n_features]
-         Weight vector(s).
-
-From 980ea0e4dea51eb065e3fd5794b1deeb8167c207 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Wed, 27 Dec 2017 02:25:40 +0100
-Subject: [PATCH 5/9] Fixes #10284 Updated RidgeClassifierCV added credits
-
----
- doc/whats_new/v0.20.rst | 6 ++++++
- 1 file changed, 6 insertions(+)
-
 diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
-index defa3bdc4c792..e51d5246d066c 100644
+index dfba937a361ad..b01ac19a4b6c4 100644
 --- a/doc/whats_new/v0.20.rst
 +++ b/doc/whats_new/v0.20.rst
-@@ -155,6 +155,12 @@ Classifiers and regressors
-   arrays are converted to C-ordered arrays in the dense case. :issue:`9991` by
-   :user:`Guillaume Lemaitre <glemaitre>`.
- 
-+- Fixed a bug in :class: `linear_model.RidgeClassifierCV` where
-+  the parameter `store_cv_values` was not immplemented though it was documented
-+  in `cv_values_` as a way to set up the storage of cross-validation
-+  values for different alphas. :issue:`10297` by 
-+  :user:`Isabel María Villalba-Jiménez <mabelvj>`. 
-+
- Decomposition, manifold learning and clustering
- 
- - Fix for uninformative error in :class:`decomposition.IncrementalPCA`:
-
-From 1d18ca24885dc29df8cb8f629897e9f28844d6a9 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Tue, 2 Jan 2018 14:08:27 +0100
-Subject: [PATCH 6/9] Fixes #10284 added double bacticks to documentation of
- ridge
-
----
- doc/whats_new/v0.20.rst       | 10 +++++-----
- sklearn/linear_model/ridge.py | 22 +++++++++++-----------
- 2 files changed, 16 insertions(+), 16 deletions(-)
-
-diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
-index af222235c8444..a4ec288e3225e 100644
---- a/doc/whats_new/v0.20.rst
-+++ b/doc/whats_new/v0.20.rst
-@@ -22,7 +22,7 @@ random sampling procedures.
- - :class:`metrics.roc_auc_score` (bug fix)
- - :class:`metrics.roc_curve` (bug fix)
- - :class:`neural_network.BaseMultilayerPerceptron` (bug fix)
--- :class:`neural_network.MLPRegressor` (bug fix)
-+- :class:`neural_network.MLPRidgeClassifierCV_store_cv_values_issue_10284Regressor` (bug fix)
- - :class:`neural_network.MLPClassifier` (bug fix)
- 
- Details are listed in the changelog below.
-@@ -196,10 +196,10 @@ Classifiers and regressors
+@@ -221,6 +221,12 @@ Classifiers and regressors
+   callable and b) the input to the NearestNeighbors model is sparse.
    :issue:`9579` by :user:`Thomas Kober <tttthomasssss>`.
  
- - Fixed a bug in :class:`linear_model.RidgeClassifierCV` where
--  the parameter `store_cv_values` was not immplemented though it was documented
--  in `cv_values_` as a way to set up the storage of cross-validation
--  values for different alphas. :issue:`10297` by 
--  :user:`Isabel María Villalba-Jiménez <mabelvj>`. 
-+  the parameter ``store_cv_values`` was not immplemented though
-+  it was documented in ``cv_values_`` as a way to set up the storage
++- Fixed a bug in :class:`linear_model.RidgeClassifierCV` where
++  the parameter ``store_cv_values`` was not implemented though
++  it was documented in ``cv_values`` as a way to set up the storage
 +  of cross-validation values for different alphas. :issue:`10297` by 
-+  :user:`Mabel Villalba-Jiménez <mabelvj>`. 
- 
- Decomposition, manifold learning and clustering
- 
++  :user:`Mabel Villalba-Jiménez <mabelvj>`.
++  
+ - Fixed a bug in :class:`naive_bayes.MultinomialNB` which did not accept vector
+   valued pseudocounts (alpha).
+   :issue:`10346` by :user:`Tobias Madsen <TobiasMadsen>`
 diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
-index 09dce8567e656..90e370dbc4e7a 100644
+index 911c74ae3b926..1d80cacac9a1d 100644
 --- a/sklearn/linear_model/ridge.py
 +++ b/sklearn/linear_model/ridge.py
 @@ -1212,18 +1212,18 @@ class RidgeCV(_BaseRidgeCV, RegressorMixin):
@@ -280,31 +35,34 @@ index 09dce8567e656..90e370dbc4e7a 100644
          shape = [n_samples, n_targets, n_alphas], optional
 -        Cross-validation values for each alpha (if `store_cv_values=True` and \
 -        `cv=None`). After `fit()` has been called, this attribute will \
-+        Cross-validation values for each alpha (if ``store_cv_values=True``\
-+        and ``cv=None``). After ``fit()`` has been called, this attribute will \
-         contain the mean squared errors (by default) or the values of the \
+-        contain the mean squared errors (by default) or the values of the \
 -        `{loss,score}_func` function (if provided in the constructor).
-+        ``{loss,score}_func`` function (if provided in the constructor).
++        Cross-validation values for each alpha (if ``store_cv_values=True``\
++        and ``cv=None``). After ``fit()`` has been called, this attribute \
++        will contain the mean squared errors (by default) or the values \
++        of the ``{loss,score}_func`` function (if provided in the constructor).
  
      coef_ : array, shape = [n_features] or [n_targets, n_features]
          Weight vector(s).
-@@ -1303,17 +1303,17 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
+@@ -1301,14 +1301,19 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
+         weights inversely proportional to class frequencies in the input data
+         as ``n_samples / (n_classes * np.bincount(y))``
  
-     store_cv_values : boolean, default=False
-         Flag indicating if the cross-validation values corresponding to
--        each alpha should be stored in the `cv_values_` attribute (see
--        below). This flag is only compatible with `cv=None` (i.e. using
++    store_cv_values : boolean, default=False
++        Flag indicating if the cross-validation values corresponding to
 +        each alpha should be stored in the ``cv_values_`` attribute (see
 +        below). This flag is only compatible with ``cv=None`` (i.e. using
-         Generalized Cross-Validation).
- 
++        Generalized Cross-Validation).
++
      Attributes
      ----------
-     cv_values_ : array, shape = [n_samples, n_targets, n_alphas], optional
+-    cv_values_ : array, shape = [n_samples, n_alphas] or \
+-    shape = [n_samples, n_responses, n_alphas], optional
 -        Cross-validation values for each alpha (if `store_cv_values=True` and
--        `cv=None`). After `fit()` has been called, this attribute will contain
--        the mean squared errors (by default) or the values of the
--        `{loss,score}_func` function (if provided in the constructor).
+-    `cv=None`). After `fit()` has been called, this attribute will contain \
+-    the mean squared errors (by default) or the values of the \
+-    `{loss,score}_func` function (if provided in the constructor).
++    cv_values_ : array, shape = [n_samples, n_targets, n_alphas], optional
 +        Cross-validation values for each alpha (if ``store_cv_values=True`` and
 +        ``cv=None``). After ``fit()`` has been called, this attribute will
 +        contain the mean squared errors (by default) or the values of the
@@ -312,131 +70,78 @@ index 09dce8567e656..90e370dbc4e7a 100644
  
      coef_ : array, shape = [n_features] or [n_targets, n_features]
          Weight vector(s).
-
-From cf4076f240781dedf82902751ff56745bb36b729 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Thu, 4 Jan 2018 00:12:54 +0100
-Subject: [PATCH 7/9] Fixes #10284 : Fixed documentation line exceeding 80
-
----
- sklearn/linear_model/ridge.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
-index 90e370dbc4e7a..d65ec6429212b 100644
---- a/sklearn/linear_model/ridge.py
-+++ b/sklearn/linear_model/ridge.py
-@@ -1221,9 +1221,9 @@ class RidgeCV(_BaseRidgeCV, RegressorMixin):
-     cv_values_ : array, shape = [n_samples, n_alphas] or \
-         shape = [n_samples, n_targets, n_alphas], optional
-         Cross-validation values for each alpha (if ``store_cv_values=True``\
--        and ``cv=None``). After ``fit()`` has been called, this attribute will \
--        contain the mean squared errors (by default) or the values of the \
--        ``{loss,score}_func`` function (if provided in the constructor).
-+        and ``cv=None``). After ``fit()`` has been called, this attribute \
-+        will contain the mean squared errors (by default) or the values \
-+        of the ``{loss,score}_func`` function (if provided in the constructor).
+@@ -1333,10 +1338,11 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
+     advantage of the multi-variate response support in Ridge.
+     """
+     def __init__(self, alphas=(0.1, 1.0, 10.0), fit_intercept=True,
+-                 normalize=False, scoring=None, cv=None, class_weight=None):
++                 normalize=False, scoring=None, cv=None, class_weight=None,
++                 store_cv_values=False):
+         super(RidgeClassifierCV, self).__init__(
+             alphas=alphas, fit_intercept=fit_intercept, normalize=normalize,
+-            scoring=scoring, cv=cv)
++            scoring=scoring, cv=cv, store_cv_values=store_cv_values)
+         self.class_weight = class_weight
  
-     coef_ : array, shape = [n_features] or [n_targets, n_features]
-         Weight vector(s).
-
-From 771ab2c406a4ef36033becb49c050015ad3f8b46 Mon Sep 17 00:00:00 2001
-From: Mabel Villalba <mabelvj@gmail.com>
-Date: Fri, 9 Feb 2018 10:21:32 +0100
-Subject: [PATCH 8/9] [WIP] Fixes #10284 Converted assert_equal to assert and
- corrected issue with doc v0.20
-
----
- doc/whats_new/v0.20.rst                  |  2 +-
- sklearn/linear_model/tests/test_ridge.py | 20 ++++++++------------
- 2 files changed, 9 insertions(+), 13 deletions(-)
-
-diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
-index 6bd087dad1cb1..6855c8ab7276b 100644
---- a/doc/whats_new/v0.20.rst
-+++ b/doc/whats_new/v0.20.rst
-@@ -27,7 +27,7 @@ random sampling procedures.
- - :class:`metrics.roc_auc_score` (bug fix)
- - :class:`metrics.roc_curve` (bug fix)
- - :class:`neural_network.BaseMultilayerPerceptron` (bug fix)
--- :class:`neural_network.MLPRidgeClassifierCV_store_cv_values_issue_10284Regressor` (bug fix)
-+- :class:`neural_network.MLPRegressor` (bug fix)
- - :class:`neural_network.MLPClassifier` (bug fix)
- 
- Details are listed in the changelog below.
+     def fit(self, X, y, sample_weight=None):
 diff --git a/sklearn/linear_model/tests/test_ridge.py b/sklearn/linear_model/tests/test_ridge.py
-index 3a77373bea9e8..8ce02899d0a1a 100644
+index ee44da5d56b86..d1865dfe72d85 100644
 --- a/sklearn/linear_model/tests/test_ridge.py
 +++ b/sklearn/linear_model/tests/test_ridge.py
-@@ -50,10 +50,8 @@
- y_iris = iris.target
- 
- 
--def DENSE_FILTER(X): return X
--
--
--def SPARSE_FILTER(X): return sp.csr_matrix(X)
-+DENSE_FILTER = lambda X: X
-+SPARSE_FILTER = lambda X: sp.csr_matrix(X)
- 
- 
- def test_ridge():
-@@ -355,7 +353,7 @@ def _test_ridge_loo(filter_):
-     assert_equal(ridge_gcv2.alpha_, alpha_)
- 
-     # check that we get same best alpha with custom score_func
--    def func(x, y): return -mean_squared_error(x, y)
-+    func = lambda x, y: -mean_squared_error(x, y)
-     scoring = make_scorer(func)
-     ridge_gcv3 = RidgeCV(fit_intercept=False, scoring=scoring)
-     f(ridge_gcv3.fit)(filter_(X_diabetes), y_diabetes)
-@@ -578,7 +576,6 @@ def test_class_weights_cv():
+@@ -575,8 +575,7 @@ def test_class_weights_cv():
  
  
  def test_ridgecv_store_cv_values():
 -    # Test _RidgeCV's store_cv_values attribute.
-     rng = np.random.RandomState(42)
+-    rng = rng = np.random.RandomState(42)
++    rng = np.random.RandomState(42)
  
      n_samples = 8
-@@ -592,17 +589,16 @@ def test_ridgecv_store_cv_values():
+     n_features = 5
+@@ -589,13 +588,38 @@ def test_ridgecv_store_cv_values():
      # with len(y.shape) == 1
      y = rng.randn(n_samples)
      r.fit(x, y)
 -    assert_equal(r.cv_values_.shape, (n_samples, n_alphas))
 +    assert r.cv_values_.shape == (n_samples, n_alphas)
- 
-     # with len(y.shape) == 2
-     n_targets = 3
-     y = rng.randn(n_samples, n_targets)
-     r.fit(x, y)
--    assert_equal(r.cv_values_.shape, (n_samples, n_targets, n_alphas))
++
++    # with len(y.shape) == 2
++    n_targets = 3
++    y = rng.randn(n_samples, n_targets)
++    r.fit(x, y)
++    assert r.cv_values_.shape == (n_samples, n_targets, n_alphas)
++
++
++def test_ridge_classifier_cv_store_cv_values():
++    x = np.array([[-1.0, -1.0], [-1.0, 0], [-.8, -1.0],
++                  [1.0, 1.0], [1.0, 0.0]])
++    y = np.array([1, 1, 1, -1, -1])
++
++    n_samples = x.shape[0]
++    alphas = [1e-1, 1e0, 1e1]
++    n_alphas = len(alphas)
++
++    r = RidgeClassifierCV(alphas=alphas, store_cv_values=True)
++
++    # with len(y.shape) == 1
++    n_targets = 1
++    r.fit(x, y)
 +    assert r.cv_values_.shape == (n_samples, n_targets, n_alphas)
  
- 
- def test_ridge_classifier_cv_store_cv_values():
--    # Test RidgeClassifier
-     x = np.array([[-1.0, -1.0], [-1.0, 0], [-.8, -1.0],
-                   [1.0, 1.0], [1.0, 0.0]])
-     y = np.array([1, 1, 1, -1, -1])
-@@ -617,7 +613,7 @@ def test_ridge_classifier_cv_store_cv_values():
-     # with len(y.shape) == 1
-     n_targets = 1
-     r.fit(x, y)
--    assert_equal(r.cv_values_.shape, (n_samples, n_targets, n_alphas))
-+    assert r.cv_values_.shape == (n_samples, n_targets, n_alphas)
- 
      # with len(y.shape) == 2
-     y = np.array([[1, 1, 1, -1, -1],
-@@ -625,7 +621,7 @@ def test_ridge_classifier_cv_store_cv_values():
-                   [-1, -1, 1, -1, -1]]).transpose()
-     n_targets = y.shape[1]
+-    n_responses = 3
+-    y = rng.randn(n_samples, n_responses)
++    y = np.array([[1, 1, 1, -1, -1],
++                  [1, -1, 1, -1, 1],
++                  [-1, -1, 1, -1, -1]]).transpose()
++    n_targets = y.shape[1]
      r.fit(x, y)
--    assert_equal(r.cv_values_.shape, (n_samples, n_targets, n_alphas))
+-    assert_equal(r.cv_values_.shape, (n_samples, n_responses, n_alphas))
 +    assert r.cv_values_.shape == (n_samples, n_targets, n_alphas)
  
  
  def test_ridgecv_sample_weight():
-@@ -648,7 +644,7 @@ def test_ridgecv_sample_weight():
+@@ -618,7 +642,7 @@ def test_ridgecv_sample_weight():
          gs = GridSearchCV(Ridge(), parameters, cv=cv)
          gs.fit(X, y, sample_weight=sample_weight)
  
@@ -444,61 +149,4 @@ index 3a77373bea9e8..8ce02899d0a1a 100644
 +        assert ridgecv.alpha_ == gs.best_estimator_.alpha
          assert_array_almost_equal(ridgecv.coef_, gs.best_estimator_.coef_)
  
- 
-
-From 992fd6e962606e1c64ecd1ba4fd8147d3fd4a29a Mon Sep 17 00:00:00 2001
-From: Hanmin Qin <qinhanmin2005@sina.com>
-Date: Thu, 15 Mar 2018 17:39:16 +0800
-Subject: [PATCH 9/9] revert some unrelevant changes
-
----
- doc/whats_new/v0.20.rst                  | 2 +-
- sklearn/linear_model/ridge.py            | 1 -
- sklearn/linear_model/tests/test_ridge.py | 2 --
- 3 files changed, 1 insertion(+), 4 deletions(-)
-
-diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
-index 65268f48ccfa8..b01ac19a4b6c4 100644
---- a/doc/whats_new/v0.20.rst
-+++ b/doc/whats_new/v0.20.rst
-@@ -222,7 +222,7 @@ Classifiers and regressors
-   :issue:`9579` by :user:`Thomas Kober <tttthomasssss>`.
- 
- - Fixed a bug in :class:`linear_model.RidgeClassifierCV` where
--  the parameter ``store_cv_values`` was not immplemented though
-+  the parameter ``store_cv_values`` was not implemented though
-   it was documented in ``cv_values`` as a way to set up the storage
-   of cross-validation values for different alphas. :issue:`10297` by 
-   :user:`Mabel Villalba-Jiménez <mabelvj>`.
-diff --git a/sklearn/linear_model/ridge.py b/sklearn/linear_model/ridge.py
-index d5bc82c0d49d3..1d80cacac9a1d 100644
---- a/sklearn/linear_model/ridge.py
-+++ b/sklearn/linear_model/ridge.py
-@@ -1337,7 +1337,6 @@ class RidgeClassifierCV(LinearClassifierMixin, _BaseRidgeCV):
-     a one-versus-all approach. Concretely, this is implemented by taking
-     advantage of the multi-variate response support in Ridge.
-     """
--
-     def __init__(self, alphas=(0.1, 1.0, 10.0), fit_intercept=True,
-                  normalize=False, scoring=None, cv=None, class_weight=None,
-                  store_cv_values=False):
-diff --git a/sklearn/linear_model/tests/test_ridge.py b/sklearn/linear_model/tests/test_ridge.py
-index 8ce02899d0a1a..d1865dfe72d85 100644
---- a/sklearn/linear_model/tests/test_ridge.py
-+++ b/sklearn/linear_model/tests/test_ridge.py
-@@ -49,7 +49,6 @@
- X_iris = sp.csr_matrix(iris.data)
- y_iris = iris.target
- 
--
- DENSE_FILTER = lambda X: X
- SPARSE_FILTER = lambda X: sp.csr_matrix(X)
- 
-@@ -604,7 +603,6 @@ def test_ridge_classifier_cv_store_cv_values():
-     y = np.array([1, 1, 1, -1, -1])
- 
-     n_samples = x.shape[0]
--
-     alphas = [1e-1, 1e0, 1e1]
-     n_alphas = len(alphas)
  

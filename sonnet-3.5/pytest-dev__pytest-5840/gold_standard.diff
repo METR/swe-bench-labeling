@@ -1,34 +1,13 @@
-From cf5b544db35478afe540eb78d75ef97ed798e1f1 Mon Sep 17 00:00:00 2001
-From: Bruno Oliveira <nicoddemus@gmail.com>
-Date: Wed, 11 Sep 2019 19:37:42 -0300
-Subject: [PATCH 1/4] Revert "Merge pull request #5792 from
- dynatrace-oss-contrib/bugfix/badcase"
-
-This reverts commit 955e54221008aba577ecbaefa15679f6777d3bf8, reversing
-changes made to 0215bcd84e900d9271558df98bed89f4b96187f8.
-
-Will attempt a simpler approach
----
- AUTHORS                        |  1 -
- src/_pytest/config/__init__.py | 16 ++++++----------
- src/_pytest/pathlib.py         | 10 ----------
- testing/test_conftest.py       | 25 ++++---------------------
- 4 files changed, 10 insertions(+), 42 deletions(-)
-
-diff --git a/AUTHORS b/AUTHORS
-index a64c95acb6b..ff47f9d7c51 100644
---- a/AUTHORS
-+++ b/AUTHORS
-@@ -56,7 +56,6 @@ Charnjit SiNGH (CCSJ)
- Chris Lamb
- Christian Boelsen
- Christian Fetzer
--Christian Neumüller
- Christian Theunert
- Christian Tismer
- Christopher Gilling
+diff --git a/changelog/5819.bugfix.rst b/changelog/5819.bugfix.rst
+new file mode 100644
+index 00000000000..aa953429ad1
+--- /dev/null
++++ b/changelog/5819.bugfix.rst
+@@ -0,0 +1,2 @@
++Windows: Fix regression with conftest whose qualified name contains uppercase
++characters (introduced by #5792).
 diff --git a/src/_pytest/config/__init__.py b/src/_pytest/config/__init__.py
-index 3a0eca546a3..b861563e99b 100644
+index 3a0eca546a3..e39c63c4b52 100644
 --- a/src/_pytest/config/__init__.py
 +++ b/src/_pytest/config/__init__.py
 @@ -30,7 +30,6 @@
@@ -48,7 +27,7 @@ index 3a0eca546a3..b861563e99b 100644
              if namespace.confcutdir
              else None
          )
-@@ -406,18 +405,19 @@ def _getconftestmodules(self, path):
+@@ -406,13 +405,11 @@ def _getconftestmodules(self, path):
          else:
              directory = path
  
@@ -63,26 +42,33 @@ index 3a0eca546a3..b861563e99b 100644
              if self._confcutdir and self._confcutdir.relto(parent):
                  continue
              conftestpath = parent.join("conftest.py")
-             if conftestpath.isfile():
--                mod = self._importconftest(conftestpath)
-+                # Use realpath to avoid loading the same conftest twice
-+                # with build systems that create build directories containing
-+                # symlinks to actual files.
-+                mod = self._importconftest(conftestpath.realpath())
-                 clist.append(mod)
-         self._dirpath2confmods[directory] = clist
-         return clist
-@@ -432,10 +432,6 @@ def _rget_with_confmod(self, name, path):
+@@ -432,12 +429,14 @@ def _rget_with_confmod(self, name, path):
          raise KeyError(name)
  
      def _importconftest(self, conftestpath):
 -        # Use realpath to avoid loading the same conftest twice
--        # with build systems that create build directories containing
--        # symlinks to actual files.
++        # Use a resolved Path object as key to avoid loading the same conftest twice
+         # with build systems that create build directories containing
+         # symlinks to actual files.
 -        conftestpath = unique_path(conftestpath)
++        # Using Path().resolve() is better than py.path.realpath because
++        # it resolves to the correct path/drive in case-insensitive file systems (#5792)
++        key = Path(str(conftestpath)).resolve()
          try:
-             return self._conftestpath2mod[conftestpath]
+-            return self._conftestpath2mod[conftestpath]
++            return self._conftestpath2mod[key]
          except KeyError:
+             pkgpath = conftestpath.pypkgpath()
+             if pkgpath is None:
+@@ -454,7 +453,7 @@ def _importconftest(self, conftestpath):
+                 raise ConftestImportFailure(conftestpath, sys.exc_info())
+ 
+             self._conftest_plugins.add(mod)
+-            self._conftestpath2mod[conftestpath] = mod
++            self._conftestpath2mod[key] = mod
+             dirpath = conftestpath.dirpath()
+             if dirpath in self._dirpath2confmods:
+                 for path, mods in self._dirpath2confmods.items():
 diff --git a/src/_pytest/pathlib.py b/src/_pytest/pathlib.py
 index 0403b694737..19f9c062f89 100644
 --- a/src/_pytest/pathlib.py
@@ -109,15 +95,17 @@ index 0403b694737..19f9c062f89 100644
 -    natively with ``resolve()``."""
 -    return type(path)(normcase(str(path.realpath())))
 diff --git a/testing/test_conftest.py b/testing/test_conftest.py
-index 9888f5457f3..447416f1076 100644
+index 9888f5457f3..3f08ee38169 100644
 --- a/testing/test_conftest.py
 +++ b/testing/test_conftest.py
-@@ -1,4 +1,3 @@
+@@ -1,12 +1,12 @@
 -import os.path
++import os
  import textwrap
++from pathlib import Path
  
  import py
-@@ -6,7 +5,6 @@
+ 
  import pytest
  from _pytest.config import PytestPluginManager
  from _pytest.main import ExitCode
@@ -125,7 +113,7 @@ index 9888f5457f3..447416f1076 100644
  
  
  def ConftestWithSetinitial(path):
-@@ -143,11 +141,11 @@ def test_conftestcutdir(testdir):
+@@ -143,11 +143,11 @@ def test_conftestcutdir(testdir):
      # but we can still import a conftest directly
      conftest._importconftest(conf)
      values = conftest._getconftestmodules(conf.dirpath())
@@ -139,7 +127,7 @@ index 9888f5457f3..447416f1076 100644
  
  
  def test_conftestcutdir_inplace_considered(testdir):
-@@ -156,7 +154,7 @@ def test_conftestcutdir_inplace_considered(testdir):
+@@ -156,7 +156,7 @@ def test_conftestcutdir_inplace_considered(testdir):
      conftest_setinitial(conftest, [conf.dirpath()], confcutdir=conf.dirpath())
      values = conftest._getconftestmodules(conf.dirpath())
      assert len(values) == 1
@@ -148,119 +136,13 @@ index 9888f5457f3..447416f1076 100644
  
  
  @pytest.mark.parametrize("name", "test tests whatever .dotdir".split())
-@@ -166,7 +164,7 @@ def test_setinitial_conftest_subdirs(testdir, name):
-     conftest = PytestPluginManager()
-     conftest_setinitial(conftest, [sub.dirpath()], confcutdir=testdir.tmpdir)
-     if name not in ("whatever", ".dotdir"):
--        assert unique_path(subconftest) in conftest._conftestpath2mod
-+        assert subconftest in conftest._conftestpath2mod
-         assert len(conftest._conftestpath2mod) == 1
-     else:
-         assert subconftest not in conftest._conftestpath2mod
-@@ -277,21 +275,6 @@ def fixture():
-     assert result.ret == ExitCode.OK
- 
- 
--@pytest.mark.skipif(
--    os.path.normcase("x") != os.path.normcase("X"),
--    reason="only relevant for case insensitive file systems",
--)
--def test_conftest_badcase(testdir):
--    """Check conftest.py loading when directory casing is wrong."""
--    testdir.tmpdir.mkdir("JenkinsRoot").mkdir("test")
--    source = {"setup.py": "", "test/__init__.py": "", "test/conftest.py": ""}
--    testdir.makepyfile(**{"JenkinsRoot/%s" % k: v for k, v in source.items()})
--
--    testdir.tmpdir.join("jenkinsroot/test").chdir()
--    result = testdir.runpytest()
--    assert result.ret == ExitCode.NO_TESTS_COLLECTED
--
--
- def test_no_conftest(testdir):
-     testdir.makeconftest("assert 0")
-     result = testdir.runpytest("--noconftest")
-
-From b48f51eb031f1b35b7fd4cd5d9da774541e10ec1 Mon Sep 17 00:00:00 2001
-From: Bruno Oliveira <nicoddemus@gmail.com>
-Date: Wed, 11 Sep 2019 20:09:08 -0300
-Subject: [PATCH 2/4] Use Path() objects to store conftest files
-
-Using Path().resolve() is better than py.path.realpath because
-it resolves to the correct path/drive in case-insensitive file systems (#5792):
-
->>> from py.path import local
->>> from pathlib import Path
->>>
->>> local('d:\\projects').realpath()
-local('d:\\projects')
->>> Path('d:\\projects').resolve()
-WindowsPath('D:/projects')
-
-Fix #5819
----
- src/_pytest/config/__init__.py | 15 +++++++++------
- testing/test_conftest.py       | 32 ++++++++++++++++++++++++++++++--
- 2 files changed, 39 insertions(+), 8 deletions(-)
-
-diff --git a/src/_pytest/config/__init__.py b/src/_pytest/config/__init__.py
-index b861563e99b..e39c63c4b52 100644
---- a/src/_pytest/config/__init__.py
-+++ b/src/_pytest/config/__init__.py
-@@ -414,10 +414,7 @@ def _getconftestmodules(self, path):
-                 continue
-             conftestpath = parent.join("conftest.py")
-             if conftestpath.isfile():
--                # Use realpath to avoid loading the same conftest twice
--                # with build systems that create build directories containing
--                # symlinks to actual files.
--                mod = self._importconftest(conftestpath.realpath())
-+                mod = self._importconftest(conftestpath)
-                 clist.append(mod)
-         self._dirpath2confmods[directory] = clist
-         return clist
-@@ -432,8 +429,14 @@ def _rget_with_confmod(self, name, path):
-         raise KeyError(name)
- 
-     def _importconftest(self, conftestpath):
-+        # Use a resolved Path object as key to avoid loading the same conftest twice
-+        # with build systems that create build directories containing
-+        # symlinks to actual files.
-+        # Using Path().resolve() is better than py.path.realpath because
-+        # it resolves to the correct path/drive in case-insensitive file systems (#5792)
-+        key = Path(str(conftestpath)).resolve()
-         try:
--            return self._conftestpath2mod[conftestpath]
-+            return self._conftestpath2mod[key]
-         except KeyError:
-             pkgpath = conftestpath.pypkgpath()
-             if pkgpath is None:
-@@ -450,7 +453,7 @@ def _importconftest(self, conftestpath):
-                 raise ConftestImportFailure(conftestpath, sys.exc_info())
- 
-             self._conftest_plugins.add(mod)
--            self._conftestpath2mod[conftestpath] = mod
-+            self._conftestpath2mod[key] = mod
-             dirpath = conftestpath.dirpath()
-             if dirpath in self._dirpath2confmods:
-                 for path, mods in self._dirpath2confmods.items():
-diff --git a/testing/test_conftest.py b/testing/test_conftest.py
-index 447416f1076..3f08ee38169 100644
---- a/testing/test_conftest.py
-+++ b/testing/test_conftest.py
-@@ -1,4 +1,6 @@
-+import os
- import textwrap
-+from pathlib import Path
- 
- import py
- 
-@@ -163,11 +165,12 @@ def test_setinitial_conftest_subdirs(testdir, name):
+@@ -165,11 +165,12 @@ def test_setinitial_conftest_subdirs(testdir, name):
      subconftest = sub.ensure("conftest.py")
      conftest = PytestPluginManager()
      conftest_setinitial(conftest, [sub.dirpath()], confcutdir=testdir.tmpdir)
 +    key = Path(str(subconftest)).resolve()
      if name not in ("whatever", ".dotdir"):
--        assert subconftest in conftest._conftestpath2mod
+-        assert unique_path(subconftest) in conftest._conftestpath2mod
 +        assert key in conftest._conftestpath2mod
          assert len(conftest._conftestpath2mod) == 1
      else:
@@ -269,25 +151,19 @@ index 447416f1076..3f08ee38169 100644
          assert len(conftest._conftestpath2mod) == 0
  
  
-@@ -275,6 +278,31 @@ def fixture():
-     assert result.ret == ExitCode.OK
- 
- 
-+@pytest.mark.skipif(
-+    os.path.normcase("x") != os.path.normcase("X"),
-+    reason="only relevant for case insensitive file systems",
-+)
-+def test_conftest_badcase(testdir):
+@@ -282,7 +283,7 @@ def fixture():
+     reason="only relevant for case insensitive file systems",
+ )
+ def test_conftest_badcase(testdir):
+-    """Check conftest.py loading when directory casing is wrong."""
 +    """Check conftest.py loading when directory casing is wrong (#5792)."""
-+    testdir.tmpdir.mkdir("JenkinsRoot").mkdir("test")
-+    source = {"setup.py": "", "test/__init__.py": "", "test/conftest.py": ""}
-+    testdir.makepyfile(**{"JenkinsRoot/%s" % k: v for k, v in source.items()})
-+
-+    testdir.tmpdir.join("jenkinsroot/test").chdir()
-+    result = testdir.runpytest()
-+    assert result.ret == ExitCode.NO_TESTS_COLLECTED
-+
-+
+     testdir.tmpdir.mkdir("JenkinsRoot").mkdir("test")
+     source = {"setup.py": "", "test/__init__.py": "", "test/conftest.py": ""}
+     testdir.makepyfile(**{"JenkinsRoot/%s" % k: v for k, v in source.items()})
+@@ -292,6 +293,16 @@ def test_conftest_badcase(testdir):
+     assert result.ret == ExitCode.NO_TESTS_COLLECTED
+ 
+ 
 +def test_conftest_uppercase(testdir):
 +    """Check conftest.py whose qualified name contains uppercase characters (#5819)"""
 +    source = {"__init__.py": "", "Foo/conftest.py": "", "Foo/__init__.py": ""}
@@ -301,50 +177,3 @@ index 447416f1076..3f08ee38169 100644
  def test_no_conftest(testdir):
      testdir.makeconftest("assert 0")
      result = testdir.runpytest("--noconftest")
-
-From 05850d73bd9dc77ad2c90cea9767523a2e9d18e0 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Christian=20Neum=C3=BCller?=
- <christian.neumueller@dynatrace.com>
-Date: Tue, 27 Aug 2019 16:25:24 +0200
-Subject: [PATCH 3/4] =?UTF-8?q?Re-introduce=20Christian=20Neum=C3=BCller?=
- =?UTF-8?q?=20to=20AUTHORS?=
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-The introduction was reverted by cd29d56
----
- AUTHORS | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/AUTHORS b/AUTHORS
-index ff47f9d7c51..a64c95acb6b 100644
---- a/AUTHORS
-+++ b/AUTHORS
-@@ -56,6 +56,7 @@ Charnjit SiNGH (CCSJ)
- Chris Lamb
- Christian Boelsen
- Christian Fetzer
-+Christian Neumüller
- Christian Theunert
- Christian Tismer
- Christopher Gilling
-
-From 5c3b4a6f528f206da449d3c379e33f549f3f66e8 Mon Sep 17 00:00:00 2001
-From: Bruno Oliveira <nicoddemus@gmail.com>
-Date: Wed, 11 Sep 2019 21:57:48 -0300
-Subject: [PATCH 4/4] Add CHANGELOG entry for #5792
-
----
- changelog/5819.bugfix.rst | 2 ++
- 1 file changed, 2 insertions(+)
- create mode 100644 changelog/5819.bugfix.rst
-
-diff --git a/changelog/5819.bugfix.rst b/changelog/5819.bugfix.rst
-new file mode 100644
-index 00000000000..aa953429ad1
---- /dev/null
-+++ b/changelog/5819.bugfix.rst
-@@ -0,0 +1,2 @@
-+Windows: Fix regression with conftest whose qualified name contains uppercase
-+characters (introduced by #5792).

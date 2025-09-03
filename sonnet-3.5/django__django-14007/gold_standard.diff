@@ -1,16 +1,3 @@
-From d9de74141e8a920940f1b91ed0a3ccb835b55729 Mon Sep 17 00:00:00 2001
-From: Adam Johnson <me@adamj.eu>
-Date: Sat, 13 Feb 2021 08:58:24 +0000
-Subject: [PATCH] Fixed #32442 -- Used converters on returning fields from
- INSERT statements.
-
----
- django/db/models/sql/compiler.py | 21 +++++++++++++++------
- tests/custom_pk/fields.py        | 14 +++++++++++++-
- tests/custom_pk/models.py        |  8 ++++++--
- tests/custom_pk/tests.py         | 15 +++++++++++++--
- 4 files changed, 47 insertions(+), 11 deletions(-)
-
 diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
 index f02199d97ca1..11ad4fde90df 100644
 --- a/django/db/models/sql/compiler.py

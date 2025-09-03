@@ -1,15 +1,3 @@
-From 333e7a447edfcb3092032ac801116e1eec193e44 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sat, 21 Nov 2020 01:30:17 +0900
-Subject: [PATCH] Fix #8452: autodoc_type_aliases doesn't work with
- autodoc_typehints
-
----
- CHANGES                           |  2 ++
- sphinx/ext/autodoc/typehints.py   |  2 +-
- tests/test_ext_autodoc_configs.py | 22 ++++++++++++++++++++++
- 3 files changed, 25 insertions(+), 1 deletion(-)
-
 diff --git a/CHANGES b/CHANGES
 index d9f1e06b20b..f44b28e19fb 100644
 --- a/CHANGES

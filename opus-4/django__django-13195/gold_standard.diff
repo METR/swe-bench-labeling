@@ -1,27 +1,3 @@
-From 0a4802ccceefbc8fb8534a5cea36d56bb4bc7a15 Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Wed, 15 Jul 2020 12:49:14 +0200
-Subject: [PATCH] Fixed #31790 -- Fixed setting SameSite and Secure cookies
- flags in HttpResponse.delete_cookie().
-
-Cookies with the "SameSite" flag set to None and without the "secure"
-flag will be soon rejected by latest browser versions.
-
-This affects sessions and messages cookies.
----
- django/contrib/messages/storage/cookie.py |  6 +++++-
- django/contrib/sessions/middleware.py     |  1 +
- django/http/response.py                   | 15 ++++++++++-----
- docs/ref/request-response.txt             |  6 +++++-
- docs/releases/2.2.15.txt                  | 17 +++++++++++++++++
- docs/releases/3.0.9.txt                   |  7 ++++++-
- docs/releases/index.txt                   |  1 +
- tests/messages_tests/test_cookie.py       |  5 +++++
- tests/responses/test_cookie.py            | 12 ++++++++++++
- tests/sessions_tests/tests.py             |  6 ++++--
- 10 files changed, 66 insertions(+), 10 deletions(-)
- create mode 100644 docs/releases/2.2.15.txt
-
 diff --git a/django/contrib/messages/storage/cookie.py b/django/contrib/messages/storage/cookie.py
 index 78256ca3b253..b51e292aa07e 100644
 --- a/django/contrib/messages/storage/cookie.py

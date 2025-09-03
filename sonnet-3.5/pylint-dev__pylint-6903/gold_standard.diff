@@ -1,166 +1,21 @@
-From cf15b86dc01264dc4036a48ebd07909f28a2ca05 Mon Sep 17 00:00:00 2001
-From: "paul.lichtenberger" <paul.lichtenberger.rgbg@gmail.com>
-Date: Thu, 9 Jun 2022 21:40:58 +0200
-Subject: [PATCH 01/10] Prevent pylint.run._cpu_count() from returning 0
-
----
- pylint/lint/run.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/pylint/lint/run.py b/pylint/lint/run.py
-index a7e5d55744..60029d5a39 100644
---- a/pylint/lint/run.py
-+++ b/pylint/lint/run.py
-@@ -75,7 +75,7 @@ def _cpu_count() -> int:
-         cpu_count = multiprocessing.cpu_count()
-     else:
-         cpu_count = 1
--    if cpu_share is not None:
-+    if cpu_share:
-         return min(cpu_share, cpu_count)
-     return cpu_count
- 
-
-From ad2a0761d90bba12ad13a7429842fd33252a155e Mon Sep 17 00:00:00 2001
-From: "paul.lichtenberger" <paul.lichtenberger.rgbg@gmail.com>
-Date: Fri, 10 Jun 2022 08:45:10 +0200
-Subject: [PATCH 02/10] Added testcase for issue-6902
-
----
- tests/test_pylint_runners.py | 17 +++++++++++++++++
- 1 file changed, 17 insertions(+)
-
-diff --git a/tests/test_pylint_runners.py b/tests/test_pylint_runners.py
-index b06046e225..bf4c3a8d51 100644
---- a/tests/test_pylint_runners.py
-+++ b/tests/test_pylint_runners.py
-@@ -11,9 +11,12 @@
- from unittest.mock import patch
- 
- import pytest
-+from _pytest.monkeypatch import MonkeyPatch
- from py._path.local import LocalPath  # type: ignore[import]
- 
- from pylint import run_epylint, run_pylint, run_pyreverse, run_symilar
-+from pylint.testutils import GenericTestReporter as Reporter
-+from pylint.lint import Run
- 
- 
- @pytest.mark.parametrize(
-@@ -40,3 +43,17 @@ def test_runner_with_arguments(runner: Callable, tmpdir: LocalPath) -> None:
-         with pytest.raises(SystemExit) as err:
-             runner(testargs)
-         assert err.value.code == 0
-+
-+
-+def test_pylint_run_jobs_equal_zero_not_crashing_in_docker(
-+        monkeypatch: MonkeyPatch,
-+        tmpdir: LocalPath
-+) -> None:
-+    """ Check that the pylint runner does not crash if `pylint.lint.run._query_cpu` yields 0. """
-+    monkeypatch.setattr("pylint.lint.run._query_cpu", lambda: 0)
-+    filepath = os.path.abspath(__file__)
-+    testargs = [filepath, "--jobs=0"]
-+    with tmpdir.as_cwd():
-+        with pytest.raises(SystemExit) as err:
-+            Run(testargs, reporter=Reporter())
-+        assert err.value.code == 0
-
-From 9b6f9bac4ceb7ffb59ba8ab52a7db14c41e70796 Mon Sep 17 00:00:00 2001
-From: "pre-commit-ci[bot]"
- <66853113+pre-commit-ci[bot]@users.noreply.github.com>
-Date: Fri, 10 Jun 2022 06:46:21 +0000
-Subject: [PATCH 03/10] [pre-commit.ci] auto fixes from pre-commit.com hooks
-
-for more information, see https://pre-commit.ci
----
- tests/test_pylint_runners.py | 9 +++++----
- 1 file changed, 5 insertions(+), 4 deletions(-)
-
-diff --git a/tests/test_pylint_runners.py b/tests/test_pylint_runners.py
-index bf4c3a8d51..5bc1689237 100644
---- a/tests/test_pylint_runners.py
-+++ b/tests/test_pylint_runners.py
-@@ -15,8 +15,8 @@
- from py._path.local import LocalPath  # type: ignore[import]
- 
- from pylint import run_epylint, run_pylint, run_pyreverse, run_symilar
--from pylint.testutils import GenericTestReporter as Reporter
- from pylint.lint import Run
-+from pylint.testutils import GenericTestReporter as Reporter
- 
- 
- @pytest.mark.parametrize(
-@@ -46,10 +46,11 @@ def test_runner_with_arguments(runner: Callable, tmpdir: LocalPath) -> None:
- 
- 
- def test_pylint_run_jobs_equal_zero_not_crashing_in_docker(
--        monkeypatch: MonkeyPatch,
--        tmpdir: LocalPath
-+    monkeypatch: MonkeyPatch, tmpdir: LocalPath
- ) -> None:
--    """ Check that the pylint runner does not crash if `pylint.lint.run._query_cpu` yields 0. """
-+    """Check that the pylint runner does not crash if `pylint.lint.run._query_cpu`
-+    yields 0.
-+    """
-     monkeypatch.setattr("pylint.lint.run._query_cpu", lambda: 0)
-     filepath = os.path.abspath(__file__)
-     testargs = [filepath, "--jobs=0"]
-
-From e49747936976f95fb2c19d00ce5c0af054a09f3c Mon Sep 17 00:00:00 2001
-From: "paul.lichtenberger" <paul.lichtenberger.rgbg@gmail.com>
-Date: Fri, 10 Jun 2022 09:04:53 +0200
-Subject: [PATCH 04/10] Added entry in changelog
-
----
- doc/whatsnew/2/2.14/full.rst | 4 ++++
- 1 file changed, 4 insertions(+)
-
 diff --git a/doc/whatsnew/2/2.14/full.rst b/doc/whatsnew/2/2.14/full.rst
-index 3734dd67c1..8ddf9fe0d0 100644
+index d39bc4b828..97cc20d252 100644
 --- a/doc/whatsnew/2/2.14/full.rst
 +++ b/doc/whatsnew/2/2.14/full.rst
-@@ -5,6 +5,10 @@ What's New in Pylint 2.14.2?
+@@ -5,6 +5,11 @@ What's New in Pylint 2.14.2?
  ----------------------------
  Release date: TBA
  
-+* Don't crash if ``lint.run._query_cpu()`` returns 0 for number of available
-+  cpus.
-+
-+  Closes #6902
- 
- What's New in Pylint 2.14.1?
- ----------------------------
-
-From d673d3f8982c34aebe751378c9e3d99818bf4a64 Mon Sep 17 00:00:00 2001
-From: "paul.lichtenberger" <paul.lichtenberger.rgbg@gmail.com>
-Date: Fri, 10 Jun 2022 11:45:15 +0200
-Subject: [PATCH 05/10] Reworked lint.run._query_cpu to return 1 if only a
- fraction of a cpu is available
-
----
- doc/whatsnew/2/2.14/full.rst | 4 ++--
- pylint/lint/run.py           | 9 ++++++++-
- tests/test_pylint_runners.py | 6 +-----
- 3 files changed, 11 insertions(+), 8 deletions(-)
-
-diff --git a/doc/whatsnew/2/2.14/full.rst b/doc/whatsnew/2/2.14/full.rst
-index 8ddf9fe0d0..2a07ca7244 100644
---- a/doc/whatsnew/2/2.14/full.rst
-+++ b/doc/whatsnew/2/2.14/full.rst
-@@ -5,8 +5,8 @@ What's New in Pylint 2.14.2?
- ----------------------------
- Release date: TBA
- 
--* Don't crash if ``lint.run._query_cpu()`` returns 0 for number of available
--  cpus.
 +* Don't crash if ``lint.run._query_cpu()`` is run within a Kubernetes Pod, that has only
 +  a fraction of a cpu core assigned. Just go with one process then.
++
++  Closes #6902
++
+ * Fixed a false positive in ``consider-using-f-string`` if the left side of a ``%`` is not a string.
  
-   Closes #6902
- 
+   Closes #6689
 diff --git a/pylint/lint/run.py b/pylint/lint/run.py
-index 60029d5a39..c6ce92e4d0 100644
+index a7e5d55744..27a4d9d84d 100644
 --- a/pylint/lint/run.py
 +++ b/pylint/lint/run.py
 @@ -58,6 +58,13 @@ def _query_cpu() -> int | None:
@@ -170,78 +25,18 @@ index 60029d5a39..c6ce92e4d0 100644
 +
 +    # In K8s Pods also a fraction of a single core could be available
 +    # As multiprocessing is not able to run only a "fraction" of process
-+    # assume we have 1 cpu available
++    # assume we have 1 CPU available
 +    if avail_cpu == 0:
 +        avail_cpu = 1
 +
      return avail_cpu
  
  
-@@ -75,7 +82,7 @@ def _cpu_count() -> int:
-         cpu_count = multiprocessing.cpu_count()
-     else:
-         cpu_count = 1
--    if cpu_share:
-+    if cpu_share is not None:
-         return min(cpu_share, cpu_count)
-     return cpu_count
- 
 diff --git a/tests/test_pylint_runners.py b/tests/test_pylint_runners.py
-index 5bc1689237..76fb90ba69 100644
+index b06046e225..9764ddbfdd 100644
 --- a/tests/test_pylint_runners.py
 +++ b/tests/test_pylint_runners.py
-@@ -11,7 +11,6 @@
- from unittest.mock import patch
- 
- import pytest
--from _pytest.monkeypatch import MonkeyPatch
- from py._path.local import LocalPath  # type: ignore[import]
- 
- from pylint import run_epylint, run_pylint, run_pyreverse, run_symilar
-@@ -45,13 +44,10 @@ def test_runner_with_arguments(runner: Callable, tmpdir: LocalPath) -> None:
-         assert err.value.code == 0
- 
- 
--def test_pylint_run_jobs_equal_zero_not_crashing_in_docker(
--    monkeypatch: MonkeyPatch, tmpdir: LocalPath
--) -> None:
-+def test_pylint_run_jobs_equal_zero_not_crashing_in_docker(tmpdir: LocalPath) -> None:
-     """Check that the pylint runner does not crash if `pylint.lint.run._query_cpu`
-     yields 0.
-     """
--    monkeypatch.setattr("pylint.lint.run._query_cpu", lambda: 0)
-     filepath = os.path.abspath(__file__)
-     testargs = [filepath, "--jobs=0"]
-     with tmpdir.as_cwd():
-
-From 9b062f5c504eed4a729bb3881544456c6457ef91 Mon Sep 17 00:00:00 2001
-From: "paul.lichtenberger" <paul.lichtenberger.rgbg@gmail.com>
-Date: Fri, 10 Jun 2022 12:52:05 +0200
-Subject: [PATCH 06/10] Reworked test
-
----
- pylint/lint/run.py           |  2 +-
- tests/test_pylint_runners.py | 29 +++++++++++++++++++++++++----
- 2 files changed, 26 insertions(+), 5 deletions(-)
-
-diff --git a/pylint/lint/run.py b/pylint/lint/run.py
-index c6ce92e4d0..27a4d9d84d 100644
---- a/pylint/lint/run.py
-+++ b/pylint/lint/run.py
-@@ -61,7 +61,7 @@ def _query_cpu() -> int | None:
- 
-     # In K8s Pods also a fraction of a single core could be available
-     # As multiprocessing is not able to run only a "fraction" of process
--    # assume we have 1 cpu available
-+    # assume we have 1 CPU available
-     if avail_cpu == 0:
-         avail_cpu = 1
- 
-diff --git a/tests/test_pylint_runners.py b/tests/test_pylint_runners.py
-index 76fb90ba69..9764ddbfdd 100644
---- a/tests/test_pylint_runners.py
-+++ b/tests/test_pylint_runners.py
-@@ -6,9 +6,10 @@
+@@ -6,14 +6,17 @@
  from __future__ import annotations
  
  import os
@@ -253,18 +48,25 @@ index 76fb90ba69..9764ddbfdd 100644
  
  import pytest
  from py._path.local import LocalPath  # type: ignore[import]
-@@ -44,13 +45,33 @@ def test_runner_with_arguments(runner: Callable, tmpdir: LocalPath) -> None:
+ 
+ from pylint import run_epylint, run_pylint, run_pyreverse, run_symilar
++from pylint.lint import Run
++from pylint.testutils import GenericTestReporter as Reporter
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -40,3 +43,35 @@ def test_runner_with_arguments(runner: Callable, tmpdir: LocalPath) -> None:
+         with pytest.raises(SystemExit) as err:
+             runner(testargs)
          assert err.value.code == 0
- 
- 
--def test_pylint_run_jobs_equal_zero_not_crashing_in_docker(tmpdir: LocalPath) -> None:
++
++
 +def test_pylint_run_jobs_equal_zero_dont_crash_with_cpu_fraction(
 +    tmpdir: LocalPath,
 +) -> None:
-     """Check that the pylint runner does not crash if `pylint.lint.run._query_cpu`
--    yields 0.
++    """Check that the pylint runner does not crash if `pylint.lint.run._query_cpu`
 +    determines only a fraction of a CPU core to be available.
-     """
++    """
 +    builtin_open = open
 +
 +    def _mock_open(*args, **kwargs):
@@ -281,116 +83,11 @@ index 76fb90ba69..9764ddbfdd 100644
 +            return MagicMock(is_file=lambda: True)
 +        return pathlib_path(*args, **kwargs)
 +
-     filepath = os.path.abspath(__file__)
-     testargs = [filepath, "--jobs=0"]
-     with tmpdir.as_cwd():
-         with pytest.raises(SystemExit) as err:
--            Run(testargs, reporter=Reporter())
++    filepath = os.path.abspath(__file__)
++    testargs = [filepath, "--jobs=0"]
++    with tmpdir.as_cwd():
++        with pytest.raises(SystemExit) as err:
 +            with patch("builtins.open", _mock_open):
 +                with patch("pylint.lint.run.Path", _mock_path):
 +                    Run(testargs, reporter=Reporter())
-         assert err.value.code == 0
-
-From 25cef7f350dba65418797a5a25f90e1c8f42c4aa Mon Sep 17 00:00:00 2001
-From: Paul Lichtenberger <paul.lichtenberger.rgbg@gmail.com>
-Date: Sat, 11 Jun 2022 14:49:26 +0200
-Subject: [PATCH 07/10] Prevent pylint.run._cpu_count() from returning 0, made
- more explicit
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-Co-authored-by: Daniël van Noord <13665637+DanielNoord@users.noreply.github.com>
----
- pylint/lint/run.py | 5 +----
- 1 file changed, 1 insertion(+), 4 deletions(-)
-
-diff --git a/pylint/lint/run.py b/pylint/lint/run.py
-index 27a4d9d84d..af0df82756 100644
---- a/pylint/lint/run.py
-+++ b/pylint/lint/run.py
-@@ -62,10 +62,7 @@ def _query_cpu() -> int | None:
-     # In K8s Pods also a fraction of a single core could be available
-     # As multiprocessing is not able to run only a "fraction" of process
-     # assume we have 1 CPU available
--    if avail_cpu == 0:
--        avail_cpu = 1
--
--    return avail_cpu
-+    return max(avail_cpu, 1)
- 
- 
- def _cpu_count() -> int:
-
-From bd33be652ae3164f38799e7cb8defcc5b865fbfb Mon Sep 17 00:00:00 2001
-From: "pre-commit-ci[bot]"
- <66853113+pre-commit-ci[bot]@users.noreply.github.com>
-Date: Sat, 11 Jun 2022 12:51:10 +0000
-Subject: [PATCH 08/10] [pre-commit.ci] auto fixes from pre-commit.com hooks
-
-for more information, see https://pre-commit.ci
----
- doc/whatsnew/2/2.14/full.rst | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/doc/whatsnew/2/2.14/full.rst b/doc/whatsnew/2/2.14/full.rst
-index 64962bbcd0..93953ce926 100644
---- a/doc/whatsnew/2/2.14/full.rst
-+++ b/doc/whatsnew/2/2.14/full.rst
-@@ -9,7 +9,7 @@ Release date: TBA
-   a fraction of a cpu core assigned. Just go with one process then.
- 
-   Closes #6902
--  
-+
- * Fixed a false positive in ``unnecessary-list-index-lookup`` and ``unnecessary-dict-index-lookup``
-   when the subscript is updated in the body of a nested loop.
- 
-
-From d7c8ee77d5fb83f72858d409dcbcdda1e153777a Mon Sep 17 00:00:00 2001
-From: "paul.lichtenberger" <paul.lichtenberger.rgbg@gmail.com>
-Date: Sat, 11 Jun 2022 15:27:38 +0200
-Subject: [PATCH 09/10] Reverted former review suggestion
-
----
- pylint/lint/run.py | 5 ++++-
- 1 file changed, 4 insertions(+), 1 deletion(-)
-
-diff --git a/pylint/lint/run.py b/pylint/lint/run.py
-index af0df82756..27a4d9d84d 100644
---- a/pylint/lint/run.py
-+++ b/pylint/lint/run.py
-@@ -62,7 +62,10 @@ def _query_cpu() -> int | None:
-     # In K8s Pods also a fraction of a single core could be available
-     # As multiprocessing is not able to run only a "fraction" of process
-     # assume we have 1 CPU available
--    return max(avail_cpu, 1)
-+    if avail_cpu == 0:
-+        avail_cpu = 1
-+
-+    return avail_cpu
- 
- 
- def _cpu_count() -> int:
-
-From 08540051511bac0892285988279d7e29281f6eb0 Mon Sep 17 00:00:00 2001
-From: Pierre Sassoulas <pierre.sassoulas@gmail.com>
-Date: Sat, 11 Jun 2022 21:31:47 +0200
-Subject: [PATCH 10/10] Update doc/whatsnew/2/2.14/full.rst
-
----
- doc/whatsnew/2/2.14/full.rst | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/doc/whatsnew/2/2.14/full.rst b/doc/whatsnew/2/2.14/full.rst
-index dd415bb5c5..97cc20d252 100644
---- a/doc/whatsnew/2/2.14/full.rst
-+++ b/doc/whatsnew/2/2.14/full.rst
-@@ -22,6 +22,7 @@ Release date: TBA
- * Fixed a false positive for ``used-before-assignment`` when a try block returns
-   but an except handler defines a name via type annotation.
- 
-+
- What's New in Pylint 2.14.1?
- ----------------------------
- Release date: 2022-06-06
++        assert err.value.code == 0

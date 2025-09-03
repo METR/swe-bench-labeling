@@ -1,17 +1,3 @@
-From 41850eec99366a51f98123f7c51e5bc5a8b2798c Mon Sep 17 00:00:00 2001
-From: Nick Pope <nick@nickpope.me.uk>
-Date: Fri, 19 Mar 2021 14:44:03 +0000
-Subject: [PATCH] Fixed #32572 -- Improved ResolverMatch.__repr__().
-
-When a partial function was passed as the view, the __repr__() would
-show the `func` argument as `functools.partial` which isn't very
-helpful, especially as it doesn't reveal the underlying function or
-arguments provided.
----
- django/urls/resolvers.py           | 13 ++++++++++---
- tests/urlpatterns_reverse/tests.py | 24 ++++++++++++++++++++++--
- 2 files changed, 32 insertions(+), 5 deletions(-)
-
 diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py
 index 9b00e24509cf..0912a82f14d3 100644
 --- a/django/urls/resolvers.py

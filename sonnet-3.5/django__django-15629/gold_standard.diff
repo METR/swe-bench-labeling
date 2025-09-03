@@ -1,18 +1,3 @@
-From aca9bb2a12b8985d0cb736d380db97439010cd98 Mon Sep 17 00:00:00 2001
-From: David Wobrock <david.wobrock@gmail.com>
-Date: Thu, 28 Apr 2022 17:23:15 +0200
-Subject: [PATCH] Fixed #33413 -- Made migrations propage collations to related
- fields.
-
----
- django/db/backends/base/schema.py     |  25 ++++--
- django/db/backends/oracle/features.py |   4 +
- django/db/backends/sqlite3/schema.py  |   6 +-
- django/db/models/fields/related.py    |   7 +-
- tests/migrations/test_base.py         |  10 +++
- tests/migrations/test_operations.py   | 117 ++++++++++++++++++++++++++
- 6 files changed, 161 insertions(+), 8 deletions(-)
-
 diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
 index 696bfd7742c1..2a37b1389547 100644
 --- a/django/db/backends/base/schema.py

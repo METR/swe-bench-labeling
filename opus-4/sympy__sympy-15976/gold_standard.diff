@@ -1,31 +1,25 @@
-From 075d3fc4d55fc195fbe84e92fdf898d2c970cc3a Mon Sep 17 00:00:00 2001
-From: Oscar Gustafsson <oscar.gustafsson@gmail.com>
-Date: Wed, 13 Feb 2019 16:00:06 +0100
-Subject: [PATCH] Corrected MathML-presentation symbols for sub and sup
-
----
- sympy/printing/mathml.py            |  25 +++---
- sympy/printing/tests/test_mathml.py | 135 ++++++++++++----------------
- 2 files changed, 70 insertions(+), 90 deletions(-)
-
 diff --git a/sympy/printing/mathml.py b/sympy/printing/mathml.py
-index 0d9473db6b82..d92df2383b87 100644
+index 3f8b8d49e01e..525a3a30d863 100644
 --- a/sympy/printing/mathml.py
 +++ b/sympy/printing/mathml.py
-@@ -738,7 +738,6 @@ def _print_Sum(self, e):
+@@ -743,11 +743,6 @@ def _print_Sum(self, e):
          return mrow
  
-     def _print_Symbol(self, sym):
+     def _print_Symbol(self, sym, style='plain'):
 -        x = self.dom.createElement('mi')
- 
+-
+-        if style == 'bold':
+-            x.setAttribute('mathvariant', 'bold')
+-
          def join(items):
              if len(items) > 1:
-@@ -773,24 +772,22 @@ def translate(s):
+                 mrow = self.dom.createElement('mrow')
+@@ -781,24 +776,24 @@ def translate(s):
          mname.appendChild(self.dom.createTextNode(name))
          if len(supers) == 0:
              if len(subs) == 0:
-+                x = self.dom.createElement('mi')
-                 x.appendChild(self.dom.createTextNode(name))
+-                x.appendChild(self.dom.createTextNode(name))
++                x = mname
              else:
 -                msub = self.dom.createElement('msub')
 -                msub.appendChild(mname)
@@ -53,14 +47,17 @@ index 0d9473db6b82..d92df2383b87 100644
 +                x.appendChild(mname)
 +                x.appendChild(join(subs))
 +                x.appendChild(join(supers))
++        # Set bold font?
++        if style == 'bold':
++            x.setAttribute('mathvariant', 'bold')
          return x
  
-     def _print_Pow(self, e):
+     def _print_MatrixSymbol(self, sym):
 diff --git a/sympy/printing/tests/test_mathml.py b/sympy/printing/tests/test_mathml.py
-index 8bf521d5fc9c..6c2d4fa4b49d 100644
+index 70c23a407893..365da4e02e42 100644
 --- a/sympy/printing/tests/test_mathml.py
 +++ b/sympy/printing/tests/test_mathml.py
-@@ -733,103 +733,86 @@ def test_presentation_symbol():
+@@ -735,103 +735,86 @@ def test_presentation_symbol():
      del mml
  
      mml = mpp._print(Symbol("x^2"))

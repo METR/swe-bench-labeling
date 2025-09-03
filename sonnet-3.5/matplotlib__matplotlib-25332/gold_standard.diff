@@ -1,13 +1,3 @@
-From ea2e9eaa02fcf94d55824c1b76b3366e88e081ee Mon Sep 17 00:00:00 2001
-From: Antony Lee <anntzer.lee@gmail.com>
-Date: Sun, 26 Feb 2023 12:17:28 +0100
-Subject: [PATCH] Support pickling of figures with aligned x/y labels.
-
----
- lib/matplotlib/cbook.py             | 13 +++++++++++++
- lib/matplotlib/tests/test_pickle.py |  4 ++++
- 2 files changed, 17 insertions(+)
-
 diff --git a/lib/matplotlib/cbook.py b/lib/matplotlib/cbook.py
 index c9699b2e21f5..1a64331e201d 100644
 --- a/lib/matplotlib/cbook.py

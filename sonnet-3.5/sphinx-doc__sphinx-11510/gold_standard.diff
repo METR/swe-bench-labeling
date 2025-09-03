@@ -1,658 +1,22 @@
-From 24974018efa9c4c0d4b51c81828b92cd32e1e70e Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 19:05:56 +0000
-Subject: [PATCH 01/22] Add test that exposes issue 10678
-
----
- tests/test_directive_other.py | 15 ++++++++++++++-
- 1 file changed, 14 insertions(+), 1 deletion(-)
-
-diff --git a/tests/test_directive_other.py b/tests/test_directive_other.py
-index f221db07578..d8eb50bede5 100644
---- a/tests/test_directive_other.py
-+++ b/tests/test_directive_other.py
-@@ -6,7 +6,7 @@
- from sphinx import addnodes
- from sphinx.testing import restructuredtext
- from sphinx.testing.util import assert_node
--
-+from sphinx.directives.other import Include
- 
- @pytest.mark.sphinx(testroot='toctree-glob')
- def test_toctree(app):
-@@ -148,3 +148,16 @@ def test_toctree_twice(app):
-     assert_node(doctree[0][0],
-                 entries=[(None, 'foo'), (None, 'foo')],
-                 includefiles=['foo', 'foo'])
-+
-+
-+@pytest.mark.sphinx(testroot='toctree-glob')
-+def test_include_source_read_event(app):
-+    files_signaled = []
-+    def source_read_handler(app, file_name, source):
-+        files_signaled.append(file_name)
-+    app.connect("source-read", source_read_handler)
-+    text = ".. include:: baz.rst\n"
-+    app.env.find_files(app.config, app.builder)
-+    doctree = restructuredtext.parse(app, text, 'index')
-+    assert("index" in files_signaled)
-+    assert("baz" in files_signaled)
-
-From 1e0c93c9722385f4910b32a0e856c7fd94a217f6 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 21:20:05 +0000
-Subject: [PATCH 02/22] Subclass docutils RSTParser to fix issue
-
-Our unit test is now passing.
----
- sphinx/parsers.py | 27 ++++++++++++++++++++++++---
- 1 file changed, 24 insertions(+), 3 deletions(-)
-
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index 3bcd69f52f0..8b83a388f31 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -7,8 +7,7 @@
- import docutils.parsers
- import docutils.parsers.rst
- from docutils import nodes
--from docutils.parsers.rst import states
--from docutils.statemachine import StringList
-+from docutils.statemachine import StringList, State
- from docutils.transforms import Transform
- from docutils.transforms.universal import SmartQuotes
- 
-@@ -20,6 +19,27 @@
-     from sphinx.application import Sphinx
- 
- 
-+class RSTStateMachine(docutils.parsers.rst.states.RSTStateMachine):
-+    def __init__(self, app: Sphinx, state_classes: list[State], initial_state: str, debug: bool=False):
-+        self.app = app
-+        super().__init__(state_classes=state_classes, initial_state=initial_state, debug=debug)
-+
-+    def insert_input(self, include_lines : StringList, path: str):
-+        # first we need to combine the lines back into text so we can send it with the source-read
-+        # event
-+        text = "\n".join(include_lines)
-+        # turn the path back to doc reference for source-read event
-+        doc = self.app.env.path2doc(path)
-+        # emit "source-read" event
-+        arg = [text]
-+        self.app.env.events.emit("source-read", doc, arg)
-+        text = arg[0]
-+        # split back into lines again:
-+        include_lines = text.splitlines()
-+        # call the parent implementation
-+        return super().insert_input(include_lines, path)
-+
-+
- class Parser(docutils.parsers.Parser):
-     """
-     A base class of source parsers.  The additional parsers should inherit this class instead
-@@ -61,7 +81,8 @@ def get_transforms(self) -> list[type[Transform]]:
-     def parse(self, inputstring: str | StringList, document: nodes.document) -> None:
-         """Parse text and generate a document tree."""
-         self.setup_parse(inputstring, document)  # type: ignore
--        self.statemachine = states.RSTStateMachine(
-+        self.statemachine = RSTStateMachine(
-+            self.env.app,
-             state_classes=self.state_classes,
-             initial_state=self.initial_state,
-             debug=document.reporter.debug_flag)
-
-From b61e2bf3155bfc52e159b9104dfe80e0108d7a7e Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 21:29:39 +0000
-Subject: [PATCH 03/22] Improve test
-
----
- tests/test_directive_other.py | 10 +++++-----
- 1 file changed, 5 insertions(+), 5 deletions(-)
-
-diff --git a/tests/test_directive_other.py b/tests/test_directive_other.py
-index d8eb50bede5..8d748c05ab2 100644
---- a/tests/test_directive_other.py
-+++ b/tests/test_directive_other.py
-@@ -152,12 +152,12 @@ def test_toctree_twice(app):
- 
- @pytest.mark.sphinx(testroot='toctree-glob')
- def test_include_source_read_event(app):
--    files_signaled = []
--    def source_read_handler(app, file_name, source):
--        files_signaled.append(file_name)
-+    sources_reported = {}
-+    def source_read_handler(app, doc, source):
-+        sources_reported[doc] = source[0]
-     app.connect("source-read", source_read_handler)
-     text = ".. include:: baz.rst\n"
-     app.env.find_files(app.config, app.builder)
-     doctree = restructuredtext.parse(app, text, 'index')
--    assert("index" in files_signaled)
--    assert("baz" in files_signaled)
-+    assert("index" in sources_reported)
-+    assert("baz" in sources_reported)
-
-From 552ecd585ce2a4ce626c574b3afcf4e63686bd17 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 22:35:07 +0000
-Subject: [PATCH 04/22] Improve test and fix issues uncovered.
-
-Fixes #10678
----
- sphinx/parsers.py                              | 14 ++++++++------
- tests/roots/test-directive-include/baz/baz.rst |  4 ++++
- tests/roots/test-directive-include/conf.py     |  2 ++
- tests/roots/test-directive-include/text.txt    |  1 +
- tests/test_directive_other.py                  | 11 ++++++++---
- 5 files changed, 23 insertions(+), 9 deletions(-)
- create mode 100644 tests/roots/test-directive-include/baz/baz.rst
- create mode 100644 tests/roots/test-directive-include/conf.py
- create mode 100644 tests/roots/test-directive-include/text.txt
-
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index 8b83a388f31..f6a6517c069 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -24,18 +24,20 @@ def __init__(self, app: Sphinx, state_classes: list[State], initial_state: str,
-         self.app = app
-         super().__init__(state_classes=state_classes, initial_state=initial_state, debug=debug)
- 
--    def insert_input(self, include_lines : StringList, path: str):
--        # first we need to combine the lines back into text so we can send it with the source-read
--        # event
--        text = "\n".join(include_lines)
-+    def insert_input(self, include_lines : list[str], path: str):
-+        # First we need to combine the lines back into text so we can send it with the source-read
-+        # event. In newer releases of docutils there are two lines at the end, that act as markers.
-+        # We must preserve them and leave them out of the source-read event:
-+        text = "\n".join(include_lines[:-2])
-         # turn the path back to doc reference for source-read event
-         doc = self.app.env.path2doc(path)
-         # emit "source-read" event
-         arg = [text]
-         self.app.env.events.emit("source-read", doc, arg)
-         text = arg[0]
--        # split back into lines again:
--        include_lines = text.splitlines()
-+        # split back into lines and reattach the two marker lines
-+        processed_lines = text.splitlines()
-+        processed_lines += include_lines[-2:]
-         # call the parent implementation
-         return super().insert_input(include_lines, path)
- 
-diff --git a/tests/roots/test-directive-include/baz/baz.rst b/tests/roots/test-directive-include/baz/baz.rst
-new file mode 100644
-index 00000000000..84c3f2c2cc8
---- /dev/null
-+++ b/tests/roots/test-directive-include/baz/baz.rst
-@@ -0,0 +1,4 @@
-+Baz
-+===
-+
-+Baz was here.
-\ No newline at end of file
-diff --git a/tests/roots/test-directive-include/conf.py b/tests/roots/test-directive-include/conf.py
-new file mode 100644
-index 00000000000..a4768582f36
---- /dev/null
-+++ b/tests/roots/test-directive-include/conf.py
-@@ -0,0 +1,2 @@
-+project = 'test-directive-include'
-+exclude_patterns = ['_build']
-diff --git a/tests/roots/test-directive-include/text.txt b/tests/roots/test-directive-include/text.txt
-new file mode 100644
-index 00000000000..b7ea15d7b02
---- /dev/null
-+++ b/tests/roots/test-directive-include/text.txt
-@@ -0,0 +1 @@
-+This is plain text.
-diff --git a/tests/test_directive_other.py b/tests/test_directive_other.py
-index 8d748c05ab2..466fd2f7980 100644
---- a/tests/test_directive_other.py
-+++ b/tests/test_directive_other.py
-@@ -150,14 +150,19 @@ def test_toctree_twice(app):
-                 includefiles=['foo', 'foo'])
- 
- 
--@pytest.mark.sphinx(testroot='toctree-glob')
-+@pytest.mark.sphinx(testroot='directive-include')
- def test_include_source_read_event(app):
-     sources_reported = {}
-     def source_read_handler(app, doc, source):
-         sources_reported[doc] = source[0]
-     app.connect("source-read", source_read_handler)
--    text = ".. include:: baz.rst\n"
-+    text = (".. include:: baz/baz.rst\n"
-+            "   :start-line: 2\n\n"
-+            ".. include:: text.txt\n"
-+            "   :literal:    \n")
-     app.env.find_files(app.config, app.builder)
-     doctree = restructuredtext.parse(app, text, 'index')
-     assert("index" in sources_reported)
--    assert("baz" in sources_reported)
-+    assert("text.txt" not in sources_reported)  # text was included as literal, no rst parsing
-+    assert("baz/baz" in sources_reported)
-+    assert("\nBaz was here." == sources_reported["baz/baz"])
-
-From 2fad0bce50b905228383f70aa069fdc5b4d43239 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 22:41:27 +0000
-Subject: [PATCH 05/22] Add CHANGES entry
-
----
- CHANGES | 2 ++
- 1 file changed, 2 insertions(+)
-
 diff --git a/CHANGES b/CHANGES
-index 2ece2cac673..174474a3159 100644
+index ce1185c767e..1ca5b16f386 100644
 --- a/CHANGES
 +++ b/CHANGES
-@@ -20,6 +20,8 @@ Features added
- Bugs fixed
- ----------
- 
-+* #10678: Emit "source-read" events for RST files read in via `include` directive. 
+@@ -48,6 +48,9 @@ Features added
+ * #11572: Improve ``debug`` logging of reasons why files are detected as out of
+   date.
+   Patch by Eric Larson.
++* #10678: Emit "source-read" events for files read via
++  the :dudir:`include` directive.
 +  Patch by Halldor Fannar.
- * #11418: Clean up remaining references to ``sphinx.setup_command``
-   following the removal of support for setuptools.
-   Patch by Willem Mulder.
-
-From 1ab3d66e9bf32e47de1c1e04de250e6b0ca920e2 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 23:05:58 +0000
-Subject: [PATCH 06/22] Address feedback from GitHub CI
-
----
- sphinx/parsers.py             | 12 +++++++-----
- tests/test_directive_other.py | 13 +++++++------
- 2 files changed, 14 insertions(+), 11 deletions(-)
-
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index f6a6517c069..cf5e82d07d9 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -2,12 +2,12 @@
  
- from __future__ import annotations
- 
--from typing import TYPE_CHECKING, Any
-+from typing import TYPE_CHECKING, Any, Type, Sequence
- 
- import docutils.parsers
- import docutils.parsers.rst
- from docutils import nodes
--from docutils.statemachine import StringList, State
-+from docutils.statemachine import State, StringList
- from docutils.transforms import Transform
- from docutils.transforms.universal import SmartQuotes
- 
-@@ -20,11 +20,13 @@
- 
- 
- class RSTStateMachine(docutils.parsers.rst.states.RSTStateMachine):
--    def __init__(self, app: Sphinx, state_classes: list[State], initial_state: str, debug: bool=False):
-+    def __init__(self, app: Sphinx, state_classes: Sequence[Type[State]], initial_state: str, 
-+                 debug: bool = False):
-         self.app = app
--        super().__init__(state_classes=state_classes, initial_state=initial_state, debug=debug)
-+        super().__init__(state_classes=state_classes, initial_state=initial_state, 
-+                         debug=debug)
- 
--    def insert_input(self, include_lines : list[str], path: str):
-+    def insert_input(self, include_lines, path):
-         # First we need to combine the lines back into text so we can send it with the source-read
-         # event. In newer releases of docutils there are two lines at the end, that act as markers.
-         # We must preserve them and leave them out of the source-read event:
-diff --git a/tests/test_directive_other.py b/tests/test_directive_other.py
-index 466fd2f7980..3f22a380745 100644
---- a/tests/test_directive_other.py
-+++ b/tests/test_directive_other.py
-@@ -6,7 +6,7 @@
- from sphinx import addnodes
- from sphinx.testing import restructuredtext
- from sphinx.testing.util import assert_node
--from sphinx.directives.other import Include
-+
- 
- @pytest.mark.sphinx(testroot='toctree-glob')
- def test_toctree(app):
-@@ -153,6 +153,7 @@ def test_toctree_twice(app):
- @pytest.mark.sphinx(testroot='directive-include')
- def test_include_source_read_event(app):
-     sources_reported = {}
-+
-     def source_read_handler(app, doc, source):
-         sources_reported[doc] = source[0]
-     app.connect("source-read", source_read_handler)
-@@ -161,8 +162,8 @@ def source_read_handler(app, doc, source):
-             ".. include:: text.txt\n"
-             "   :literal:    \n")
-     app.env.find_files(app.config, app.builder)
--    doctree = restructuredtext.parse(app, text, 'index')
--    assert("index" in sources_reported)
--    assert("text.txt" not in sources_reported)  # text was included as literal, no rst parsing
--    assert("baz/baz" in sources_reported)
--    assert("\nBaz was here." == sources_reported["baz/baz"])
-+    restructuredtext.parse(app, text, 'index')
-+    assert "index" in sources_reported
-+    assert "text.txt" not in sources_reported  # text was included as literal, no rst parsing
-+    assert "baz/baz" in sources_reported
-+    assert sources_reported["baz/baz"] == "\nBaz was here."
-
-From 78c1e3f3d51f009a1457125629112dbae076af04 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 23:17:13 +0000
-Subject: [PATCH 07/22] More clean-up to appease the style gods
-
-Why doesn't the project apply these changes automatically on the main branch?
----
- sphinx/io.py      |  4 ++--
- sphinx/parsers.py | 13 +++++++------
- 2 files changed, 9 insertions(+), 8 deletions(-)
-
-diff --git a/sphinx/io.py b/sphinx/io.py
-index 335502e57ba..efd2b4ea9cc 100644
---- a/sphinx/io.py
-+++ b/sphinx/io.py
-@@ -182,7 +182,7 @@ def create_publisher(app: Sphinx, filetype: str) -> Publisher:
-     defaults = {"traceback": True, **app.env.settings}
-     # Set default settings
-     if docutils.__version_info__[:2] >= (0, 19):
--        pub.get_settings(**defaults)  # type: ignore[arg-type]
-+        pub.get_settings(**defaults)
-     else:
--        pub.settings = pub.setup_option_parser(**defaults).get_default_values()  # type: ignore
-+        pub.settings = pub.setup_option_parser(**defaults).get_default_values()
-     return pub
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index cf5e82d07d9..58970332678 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -2,7 +2,7 @@
- 
- from __future__ import annotations
- 
--from typing import TYPE_CHECKING, Any, Type, Sequence
-+from typing import TYPE_CHECKING, Any, Sequence
- 
- import docutils.parsers
- import docutils.parsers.rst
-@@ -20,16 +20,17 @@
- 
- 
- class RSTStateMachine(docutils.parsers.rst.states.RSTStateMachine):
--    def __init__(self, app: Sphinx, state_classes: Sequence[Type[State]], initial_state: str, 
-+    def __init__(self, app: Sphinx, state_classes: Sequence[type[State]], initial_state: str,
-                  debug: bool = False):
-         self.app = app
--        super().__init__(state_classes=state_classes, initial_state=initial_state, 
-+        super().__init__(state_classes=state_classes, initial_state=initial_state,
-                          debug=debug)
- 
-     def insert_input(self, include_lines, path):
--        # First we need to combine the lines back into text so we can send it with the source-read
--        # event. In newer releases of docutils there are two lines at the end, that act as markers.
--        # We must preserve them and leave them out of the source-read event:
-+        # First we need to combine the lines back into text so we can send it with the 
-+        # source-read event. In newer releases of docutils there are two lines at the end, 
-+        # that act as markers. We must preserve them and leave them out of the source-read 
-+        # event:
-         text = "\n".join(include_lines[:-2])
-         # turn the path back to doc reference for source-read event
-         doc = self.app.env.path2doc(path)
-
-From a084948863189fcc0ec16e7d80a7b9eb391ee216 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 24 Jul 2023 23:19:35 +0000
-Subject: [PATCH 08/22] Trailing whitespaces removed
-
----
- sphinx/parsers.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index 58970332678..66fc231fe9b 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -27,9 +27,9 @@ def __init__(self, app: Sphinx, state_classes: Sequence[type[State]], initial_st
-                          debug=debug)
- 
-     def insert_input(self, include_lines, path):
--        # First we need to combine the lines back into text so we can send it with the 
--        # source-read event. In newer releases of docutils there are two lines at the end, 
--        # that act as markers. We must preserve them and leave them out of the source-read 
-+        # First we need to combine the lines back into text so we can send it with the
-+        # source-read event. In newer releases of docutils there are two lines at the end,
-+        # that act as markers. We must preserve them and leave them out of the source-read
-         # event:
-         text = "\n".join(include_lines[:-2])
-         # turn the path back to doc reference for source-read event
-
-From 4c727ceb7673afe74864736b30da44d4f655bdac Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 02:56:55 +0000
-Subject: [PATCH 09/22] Fix unit tests
-
-These tests needed to change with the introduction
-of the derived class `sphinx.parsers.RSTStateMachine`.
----
- tests/test_ext_inheritance_diagram.py | 4 ++--
- tests/test_parser.py                  | 2 +-
- 2 files changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/tests/test_ext_inheritance_diagram.py b/tests/test_ext_inheritance_diagram.py
-index 00b1d689798..ab1e8d5f4c5 100644
---- a/tests/test_ext_inheritance_diagram.py
-+++ b/tests/test_ext_inheritance_diagram.py
-@@ -210,7 +210,7 @@ def test_inheritance_diagram_latex_alias(app, status, warning):
- 
- 
- def test_import_classes(rootdir):
--    from sphinx.parsers import Parser, RSTParser
-+    from sphinx.parsers import Parser, RSTParser, RSTStateMachine
-     from sphinx.util.i18n import CatalogInfo
- 
-     try:
-@@ -241,7 +241,7 @@ def test_import_classes(rootdir):
- 
-         # all of classes in the module
-         classes = import_classes('sphinx.parsers', None)
--        assert set(classes) == {Parser, RSTParser}
-+        assert set(classes) == {Parser, RSTParser, RSTStateMachine}
- 
-         # specified class in the module
-         classes = import_classes('sphinx.parsers.Parser', None)
-diff --git a/tests/test_parser.py b/tests/test_parser.py
-index 86163c6ad3d..311f51977ce 100644
---- a/tests/test_parser.py
-+++ b/tests/test_parser.py
-@@ -9,7 +9,7 @@
- 
- 
- @pytest.mark.sphinx(testroot='basic')
--@patch('docutils.parsers.rst.states.RSTStateMachine')
-+@patch('sphinx.parsers.RSTStateMachine')
- def test_RSTParser_prolog_epilog(RSTStateMachine, app):
-     document = new_document('dummy.rst')
-     document.settings = Mock(tab_width=8, language_code='')
-
-From 1759ebdbed8e9beb17fd7aaacf2258d211cccf1c Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 03:38:50 +0000
-Subject: [PATCH 10/22] Fix formatting in CHANGE entry
-
----
- CHANGES | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/CHANGES b/CHANGES
-index 174474a3159..f353222a85c 100644
---- a/CHANGES
-+++ b/CHANGES
-@@ -20,7 +20,7 @@ Features added
  Bugs fixed
  ----------
- 
--* #10678: Emit "source-read" events for RST files read in via `include` directive. 
-+* #10678: Emit "source-read" events for RST files read in via ``include`` directive. 
-   Patch by Halldor Fannar.
- * #11418: Clean up remaining references to ``sphinx.setup_command``
-   following the removal of support for setuptools.
-
-From 68ca10bd8ebf4f8757940f96db48128b012e941b Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 03:48:49 +0000
-Subject: [PATCH 11/22] Improve comment
-
-Noting that docutils 0.18 introduced the marker.
----
- sphinx/parsers.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index 66fc231fe9b..d0cba6b3f88 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -28,7 +28,7 @@ def __init__(self, app: Sphinx, state_classes: Sequence[type[State]], initial_st
- 
-     def insert_input(self, include_lines, path):
-         # First we need to combine the lines back into text so we can send it with the
--        # source-read event. In newer releases of docutils there are two lines at the end,
-+        # source-read event. In docutils 0.18 and later, there are two lines at the end,
-         # that act as markers. We must preserve them and leave them out of the source-read
-         # event:
-         text = "\n".join(include_lines[:-2])
-
-From 8d2f487bb14f8c9e358a2562f04935eb2d15df82 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 16:57:04 +0000
-Subject: [PATCH 12/22] Fix test failure on Windows
-
----
- sphinx/parsers.py | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
-
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index 66fc231fe9b..19e4ccb8c65 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -13,6 +13,7 @@
- 
- from sphinx.config import Config
- from sphinx.environment import BuildEnvironment
-+from sphinx.util.osutil import os_path
- from sphinx.util.rst import append_epilog, prepend_prolog
- 
- if TYPE_CHECKING:
-@@ -33,7 +34,7 @@ def insert_input(self, include_lines, path):
-         # event:
-         text = "\n".join(include_lines[:-2])
-         # turn the path back to doc reference for source-read event
--        doc = self.app.env.path2doc(path)
-+        doc = self.app.env.path2doc(os_path(path))
-         # emit "source-read" event
-         arg = [text]
-         self.app.env.events.emit("source-read", doc, arg)
-
-From db5eef421becc0e304f668992be327326102c75f Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 10:39:47 +0000
-Subject: [PATCH 13/22] Use :dudir: to refer to include directive
-
----
- CHANGES | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/CHANGES b/CHANGES
-index f353222a85c..66ef91087f4 100644
---- a/CHANGES
-+++ b/CHANGES
-@@ -20,7 +20,7 @@ Features added
- Bugs fixed
- ----------
- 
--* #10678: Emit "source-read" events for RST files read in via ``include`` directive. 
-+* #10678: Emit "source-read" events for RST files read in via :dudir:`include` directive. 
-   Patch by Halldor Fannar.
- * #11418: Clean up remaining references to ``sphinx.setup_command``
-   following the removal of support for setuptools.
-
-From a76918feaa5cdec4d39e981f7ab6ef9b25a5dd75 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 14:58:21 +0000
-Subject: [PATCH 14/22] Revert "Fix unit tests"
-
-This reverts commit 4c727ceb7673afe74864736b30da44d4f655bdac.
----
- tests/test_ext_inheritance_diagram.py | 4 ++--
- tests/test_parser.py                  | 2 +-
- 2 files changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/tests/test_ext_inheritance_diagram.py b/tests/test_ext_inheritance_diagram.py
-index ab1e8d5f4c5..00b1d689798 100644
---- a/tests/test_ext_inheritance_diagram.py
-+++ b/tests/test_ext_inheritance_diagram.py
-@@ -210,7 +210,7 @@ def test_inheritance_diagram_latex_alias(app, status, warning):
- 
- 
- def test_import_classes(rootdir):
--    from sphinx.parsers import Parser, RSTParser, RSTStateMachine
-+    from sphinx.parsers import Parser, RSTParser
-     from sphinx.util.i18n import CatalogInfo
- 
-     try:
-@@ -241,7 +241,7 @@ def test_import_classes(rootdir):
- 
-         # all of classes in the module
-         classes = import_classes('sphinx.parsers', None)
--        assert set(classes) == {Parser, RSTParser, RSTStateMachine}
-+        assert set(classes) == {Parser, RSTParser}
- 
-         # specified class in the module
-         classes = import_classes('sphinx.parsers.Parser', None)
-diff --git a/tests/test_parser.py b/tests/test_parser.py
-index 311f51977ce..86163c6ad3d 100644
---- a/tests/test_parser.py
-+++ b/tests/test_parser.py
-@@ -9,7 +9,7 @@
- 
- 
- @pytest.mark.sphinx(testroot='basic')
--@patch('sphinx.parsers.RSTStateMachine')
-+@patch('docutils.parsers.rst.states.RSTStateMachine')
- def test_RSTParser_prolog_epilog(RSTStateMachine, app):
-     document = new_document('dummy.rst')
-     document.settings = Mock(tab_width=8, language_code='')
-
-From 9cd720528583a8acf507c5a06dd093699e5d9b4a Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Tue, 25 Jul 2023 15:26:43 +0000
-Subject: [PATCH 15/22] Change approach
-
-The subclassing will not work because docutils doesn't use Sphinx's rst
-parser for processing the included
-rst text.  This is a shame, and
-strictly speaking an issue in Sphinx/docutils.
-So we go back to monkey patching.
-It works, the change is now better contained inside Sphinx Include directive.
-Added a unit test to verify that
-includes of includes are correctly
-handled.
----
- sphinx/directives/other.py                    | 25 +++++++++++++
- sphinx/parsers.py                             | 35 +++----------------
- .../roots/test-directive-include/baz/baz.rst  |  2 ++
- tests/roots/test-directive-include/foo.rst    |  1 +
- tests/test_directive_other.py                 | 20 ++++++++++-
- 5 files changed, 51 insertions(+), 32 deletions(-)
- create mode 100644 tests/roots/test-directive-include/foo.rst
-
 diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
-index 7f9930e51ce..39c133624f4 100644
+index 19f7c0a8dff..e65cbfdfe68 100644
 --- a/sphinx/directives/other.py
 +++ b/sphinx/directives/other.py
-@@ -9,6 +9,7 @@
+@@ -8,6 +8,7 @@
  from docutils.parsers.rst.directives.admonitions import BaseAdmonition
  from docutils.parsers.rst.directives.misc import Class
  from docutils.parsers.rst.directives.misc import Include as BaseInclude
@@ -665,119 +29,71 @@ index 7f9930e51ce..39c133624f4 100644
  from sphinx.util.matching import Matcher, patfilter
  from sphinx.util.nodes import explicit_title_re
 +from sphinx.util.osutil import os_path
- from sphinx.util.typing import OptionSpec
  
  if TYPE_CHECKING:
-@@ -357,6 +359,29 @@ class Include(BaseInclude, SphinxDirective):
+     from docutils.nodes import Element, Node
+@@ -369,6 +371,40 @@ class Include(BaseInclude, SphinxDirective):
      """
  
      def run(self) -> list[Node]:
-+        # To properly emit "source-read" events from included RST text we
-+        # must patch the state_machine.insert_input method. In the future docutils
-+        # will hopefully offer a way for Sphinx to provide the RST parser to use
++
++        # To properly emit "source-read" events from included RST text,
++        # we must patch the ``StateMachine.insert_input()`` method.
++        # In the future, docutils will hopefully offer a way for Sphinx
++        # to provide the RST parser to use
 +        # when parsing RST text that comes in via Include directive.
-+        def insert_input(include_lines, path):
-+            # First we need to combine the lines back into text so we can send it with the
-+            # source-read event. In docutils 0.18 and later, there are two lines at the end,
-+            # that act as markers. We must preserve them and leave them out of the source-read
-+            # event:
++        def _insert_input(include_lines, path):
++            # First, we need to combine the lines back into text so that
++            # we can send it with the source-read event.
++            # In docutils 0.18 and later, there are two lines at the end
++            # that act as markers.
++            # We must preserve them and leave them out of the source-read event:
 +            text = "\n".join(include_lines[:-2])
-+            # the docname to pass into the source-read event
++
++            # The docname to pass into the source-read event
 +            docname = self.env.path2doc(os_path(path))
-+            # emit "source-read" event
++            # Emit the "source-read" event
 +            arg = [text]
 +            self.env.app.events.emit("source-read", docname, arg)
 +            text = arg[0]
-+            # split back into lines and reattach the two marker lines
++
++            # Split back into lines and reattach the two marker lines
 +            include_lines = text.splitlines() + include_lines[-2:]
-+            # Call the parent implementation. Note that this snake does not eat its tail
-+            # because we patch the Instance method and this call is to the Class method
++
++            # Call the parent implementation.
++            # Note that this snake does not eat its tail because we patch
++            # the *Instance* method and this call is to the *Class* method.
 +            return StateMachine.insert_input(self.state_machine, include_lines, path)
 +
-+        self.state_machine.insert_input = insert_input
++        # Only enable this patch if there are listeners for 'source-read'.
++        if self.env.app.events.listeners.get('source-read'):
++            # See https://github.com/python/mypy/issues/2427 for details on the mypy issue
++            self.state_machine.insert_input = _insert_input  # type: ignore[method-assign]
++
          if self.arguments[0].startswith('<') and \
             self.arguments[0].endswith('>'):
              # docutils "standard" includes, do not do path processing
-diff --git a/sphinx/parsers.py b/sphinx/parsers.py
-index 04b4538b5da..3bcd69f52f0 100644
---- a/sphinx/parsers.py
-+++ b/sphinx/parsers.py
-@@ -2,50 +2,24 @@
- 
- from __future__ import annotations
- 
--from typing import TYPE_CHECKING, Any, Sequence
-+from typing import TYPE_CHECKING, Any
- 
- import docutils.parsers
- import docutils.parsers.rst
- from docutils import nodes
--from docutils.statemachine import State, StringList
-+from docutils.parsers.rst import states
-+from docutils.statemachine import StringList
- from docutils.transforms import Transform
- from docutils.transforms.universal import SmartQuotes
- 
- from sphinx.config import Config
- from sphinx.environment import BuildEnvironment
--from sphinx.util.osutil import os_path
- from sphinx.util.rst import append_epilog, prepend_prolog
- 
- if TYPE_CHECKING:
-     from sphinx.application import Sphinx
- 
- 
--class RSTStateMachine(docutils.parsers.rst.states.RSTStateMachine):
--    def __init__(self, app: Sphinx, state_classes: Sequence[type[State]], initial_state: str,
--                 debug: bool = False):
--        self.app = app
--        super().__init__(state_classes=state_classes, initial_state=initial_state,
--                         debug=debug)
--
--    def insert_input(self, include_lines, path):
--        # First we need to combine the lines back into text so we can send it with the
--        # source-read event. In docutils 0.18 and later, there are two lines at the end,
--        # that act as markers. We must preserve them and leave them out of the source-read
--        # event:
--        text = "\n".join(include_lines[:-2])
--        # turn the path back to doc reference for source-read event
--        doc = self.app.env.path2doc(os_path(path))
--        # emit "source-read" event
--        arg = [text]
--        self.app.env.events.emit("source-read", doc, arg)
--        text = arg[0]
--        # split back into lines and reattach the two marker lines
--        processed_lines = text.splitlines()
--        processed_lines += include_lines[-2:]
--        # call the parent implementation
--        return super().insert_input(include_lines, path)
--
--
- class Parser(docutils.parsers.Parser):
-     """
-     A base class of source parsers.  The additional parsers should inherit this class instead
-@@ -87,8 +61,7 @@ def get_transforms(self) -> list[type[Transform]]:
-     def parse(self, inputstring: str | StringList, document: nodes.document) -> None:
-         """Parse text and generate a document tree."""
-         self.setup_parse(inputstring, document)  # type: ignore
--        self.statemachine = RSTStateMachine(
--            self.env.app,
-+        self.statemachine = states.RSTStateMachine(
-             state_classes=self.state_classes,
-             initial_state=self.initial_state,
-             debug=document.reporter.debug_flag)
 diff --git a/tests/roots/test-directive-include/baz/baz.rst b/tests/roots/test-directive-include/baz/baz.rst
-index 84c3f2c2cc8..d8207261afc 100644
---- a/tests/roots/test-directive-include/baz/baz.rst
+new file mode 100644
+index 00000000000..d8207261afc
+--- /dev/null
 +++ b/tests/roots/test-directive-include/baz/baz.rst
-@@ -1,4 +1,6 @@
- Baz
- ===
- 
+@@ -0,0 +1,6 @@
++Baz
++===
++
 +.. include:: foo.rst
 +
- Baz was here.
++Baz was here.
 \ No newline at end of file
+diff --git a/tests/roots/test-directive-include/conf.py b/tests/roots/test-directive-include/conf.py
+new file mode 100644
+index 00000000000..a4768582f36
+--- /dev/null
++++ b/tests/roots/test-directive-include/conf.py
+@@ -0,0 +1,2 @@
++project = 'test-directive-include'
++exclude_patterns = ['_build']
 diff --git a/tests/roots/test-directive-include/foo.rst b/tests/roots/test-directive-include/foo.rst
 new file mode 100644
 index 00000000000..0f82e661be4
@@ -785,26 +101,41 @@ index 00000000000..0f82e661be4
 +++ b/tests/roots/test-directive-include/foo.rst
 @@ -0,0 +1 @@
 +The #magical foo.
+diff --git a/tests/roots/test-directive-include/text.txt b/tests/roots/test-directive-include/text.txt
+new file mode 100644
+index 00000000000..b7ea15d7b02
+--- /dev/null
++++ b/tests/roots/test-directive-include/text.txt
+@@ -0,0 +1 @@
++This is plain text.
 diff --git a/tests/test_directive_other.py b/tests/test_directive_other.py
-index 3f22a380745..45bd033045a 100644
+index f221db07578..45bd033045a 100644
 --- a/tests/test_directive_other.py
 +++ b/tests/test_directive_other.py
-@@ -156,9 +156,10 @@ def test_include_source_read_event(app):
- 
-     def source_read_handler(app, doc, source):
-         sources_reported[doc] = source[0]
+@@ -148,3 +148,40 @@ def test_toctree_twice(app):
+     assert_node(doctree[0][0],
+                 entries=[(None, 'foo'), (None, 'foo')],
+                 includefiles=['foo', 'foo'])
 +
-     app.connect("source-read", source_read_handler)
-     text = (".. include:: baz/baz.rst\n"
--            "   :start-line: 2\n\n"
++
++@pytest.mark.sphinx(testroot='directive-include')
++def test_include_source_read_event(app):
++    sources_reported = {}
++
++    def source_read_handler(app, doc, source):
++        sources_reported[doc] = source[0]
++
++    app.connect("source-read", source_read_handler)
++    text = (".. include:: baz/baz.rst\n"
 +            "   :start-line: 4\n\n"
-             ".. include:: text.txt\n"
-             "   :literal:    \n")
-     app.env.find_files(app.config, app.builder)
-@@ -167,3 +168,20 @@ def source_read_handler(app, doc, source):
-     assert "text.txt" not in sources_reported  # text was included as literal, no rst parsing
-     assert "baz/baz" in sources_reported
-     assert sources_reported["baz/baz"] == "\nBaz was here."
++            ".. include:: text.txt\n"
++            "   :literal:    \n")
++    app.env.find_files(app.config, app.builder)
++    restructuredtext.parse(app, text, 'index')
++    assert "index" in sources_reported
++    assert "text.txt" not in sources_reported  # text was included as literal, no rst parsing
++    assert "baz/baz" in sources_reported
++    assert sources_reported["baz/baz"] == "\nBaz was here."
 +
 +
 +@pytest.mark.sphinx(testroot='directive-include')
@@ -822,244 +153,3 @@ index 3f22a380745..45bd033045a 100644
 +    assert len(doctree.children) == 3
 +    assert_node(doctree.children[1], nodes.paragraph)
 +    assert doctree.children[1].rawsource == "The amazing foo."
-
-From 9712e58906b5efcf032fc520d68936dcb7967717 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 31 Jul 2023 09:44:38 +0000
-Subject: [PATCH 16/22] Add type: ignore to work around known issue
-
----
- sphinx/directives/other.py | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
-
-diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
-index 39c133624f4..356f4cdecf6 100644
---- a/sphinx/directives/other.py
-+++ b/sphinx/directives/other.py
-@@ -381,7 +381,8 @@ def insert_input(include_lines, path):
-             # because we patch the Instance method and this call is to the Class method
-             return StateMachine.insert_input(self.state_machine, include_lines, path)
- 
--        self.state_machine.insert_input = insert_input
-+        # See https://github.com/python/mypy/issues/2427 for details on the mypy issue
-+        self.state_machine.insert_input = insert_input  # type: ignore[method-assign]
-         if self.arguments[0].startswith('<') and \
-            self.arguments[0].endswith('>'):
-             # docutils "standard" includes, do not do path processing
-
-From 876e039d61abb146874abb70ca0da12e44236344 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 31 Jul 2023 10:01:45 +0000
-Subject: [PATCH 17/22] Address flake8 issue
-
-These are not part of my change but mysteriously now
-cause failure in CI.
----
- sphinx/builders/linkcheck.py  | 2 +-
- tests/test_build_linkcheck.py | 2 +-
- 2 files changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
-index 6c99f96e685..6e41e2c7483 100644
---- a/sphinx/builders/linkcheck.py
-+++ b/sphinx/builders/linkcheck.py
-@@ -189,7 +189,7 @@ def finish(self) -> None:
- 
-         output_text = path.join(self.outdir, 'output.txt')
-         output_json = path.join(self.outdir, 'output.json')
--        with open(output_text, 'w', encoding="utf-8") as self.txt_outfile,\
-+        with open(output_text, 'w', encoding="utf-8") as self.txt_outfile, \
-              open(output_json, 'w', encoding="utf-8") as self.json_outfile:
-             for result in checker.check(self.hyperlinks):
-                 self.process_result(result)
-diff --git a/tests/test_build_linkcheck.py b/tests/test_build_linkcheck.py
-index 260cf2c4214..6d17f25a1fa 100644
---- a/tests/test_build_linkcheck.py
-+++ b/tests/test_build_linkcheck.py
-@@ -592,7 +592,7 @@ def test_too_many_requests_retry_after_HTTP_date(app, capsys):
- 
- @pytest.mark.sphinx('linkcheck', testroot='linkcheck-localserver', freshenv=True)
- def test_too_many_requests_retry_after_without_header(app, capsys):
--    with http_server(make_retry_after_handler([(429, None), (200, None)])),\
-+    with http_server(make_retry_after_handler([(429, None), (200, None)])), \
-          mock.patch("sphinx.builders.linkcheck.DEFAULT_DELAY", 0):
-         app.build()
-     content = (app.outdir / 'output.json').read_text(encoding='utf8')
-
-From 3f165cd4527d323cb3e7059cb91f80322314f08b Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 31 Jul 2023 16:51:17 +0000
-Subject: [PATCH 18/22] Adjust CHANGES
-
-created Unreleased section and
-moved my change notes to it.
----
- CHANGES | 10 ++++++++--
- 1 file changed, 8 insertions(+), 2 deletions(-)
-
-diff --git a/CHANGES b/CHANGES
-index 08ea93db478..fd396150bdc 100644
---- a/CHANGES
-+++ b/CHANGES
-@@ -1,3 +1,11 @@
-+Unreleased
-+=====================================
-+
-+Bugs fixed
-+----------
-+* #10678: Emit "source-read" events for RST files read in via :dudir:`include` directive. 
-+  Patch by Halldor Fannar.
-+
- Release 7.1.1 (released Jul 27, 2023)
- =====================================
- 
-@@ -111,8 +119,6 @@ Dependencies
- Bugs fixed
- ----------
- 
--* #10678: Emit "source-read" events for RST files read in via :dudir:`include` directive. 
--  Patch by Halldor Fannar.
- * #11418: Clean up remaining references to ``sphinx.setup_command``
-   following the removal of support for setuptools.
-   Patch by Willem Mulder.
-
-From db8c4e92c4d3a62c11a6f9ed5cf6c1e95634fce2 Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <hfannar@nvidia.com>
-Date: Mon, 31 Jul 2023 16:53:40 +0000
-Subject: [PATCH 19/22] Add space to silence flake8
-
----
- sphinx/builders/linkcheck.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
-index 3592f9551fd..1b7b56eeea3 100644
---- a/sphinx/builders/linkcheck.py
-+++ b/sphinx/builders/linkcheck.py
-@@ -65,7 +65,7 @@ def finish(self) -> None:
- 
-         output_text = path.join(self.outdir, 'output.txt')
-         output_json = path.join(self.outdir, 'output.json')
--        with open(output_text, 'w', encoding='utf-8') as self.txt_outfile,\
-+        with open(output_text, 'w', encoding='utf-8') as self.txt_outfile, \
-              open(output_json, 'w', encoding='utf-8') as self.json_outfile:
-             for result in checker.check(self.hyperlinks):
-                 self.process_result(result)
-
-From c87cf130f8234f35c19de75a3d34c6d417f555fe Mon Sep 17 00:00:00 2001
-From: Halldor Fannar <halldorfannar@users.noreply.github.com>
-Date: Mon, 7 Aug 2023 17:01:40 +0200
-Subject: [PATCH 20/22] Update sphinx/directives/other.py
-
-Co-authored-by: picnixz <10796600+picnixz@users.noreply.github.com>
----
- sphinx/directives/other.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
-index 356f4cdecf6..51ebf20bbb3 100644
---- a/sphinx/directives/other.py
-+++ b/sphinx/directives/other.py
-@@ -365,7 +365,7 @@ def run(self) -> list[Node]:
-         # when parsing RST text that comes in via Include directive.
-         def insert_input(include_lines, path):
-             # First we need to combine the lines back into text so we can send it with the
--            # source-read event. In docutils 0.18 and later, there are two lines at the end,
-+            # source-read event. In docutils 0.18 and later, there are two lines at the end
-             # that act as markers. We must preserve them and leave them out of the source-read
-             # event:
-             text = "\n".join(include_lines[:-2])
-
-From 1dba6ff2e92e15c11f6b99351f3aea26f7b15953 Mon Sep 17 00:00:00 2001
-From: Adam Turner <9087854+aa-turner@users.noreply.github.com>
-Date: Fri, 11 Aug 2023 02:32:32 +0100
-Subject: [PATCH 21/22] Formatting
-
----
- sphinx/directives/other.py | 36 ++++++++++++++++++++++--------------
- 1 file changed, 22 insertions(+), 14 deletions(-)
-
-diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
-index f7275b2d50d..d10c4c6fcf2 100644
---- a/sphinx/directives/other.py
-+++ b/sphinx/directives/other.py
-@@ -370,30 +370,38 @@ class Include(BaseInclude, SphinxDirective):
-     """
- 
-     def run(self) -> list[Node]:
--        # To properly emit "source-read" events from included RST text we
--        # must patch the state_machine.insert_input method. In the future docutils
--        # will hopefully offer a way for Sphinx to provide the RST parser to use
-+
-+        # To properly emit "source-read" events from included RST text,
-+        # we must patch the ``StateMachine.insert_input()`` method.
-+        # In the future, docutils will hopefully offer a way for Sphinx
-+        # to provide the RST parser to use
-         # when parsing RST text that comes in via Include directive.
--        def insert_input(include_lines, path):
--            # First we need to combine the lines back into text so we can send it with the
--            # source-read event. In docutils 0.18 and later, there are two lines at the end
--            # that act as markers. We must preserve them and leave them out of the source-read
--            # event:
-+        def _insert_input(include_lines, path):
-+            # First, we need to combine the lines back into text so that
-+            # we can send it with the source-read event.
-+            # In docutils 0.18 and later, there are two lines at the end
-+            # that act as markers.
-+            # We must preserve them and leave them out of the source-read event:
-             text = "\n".join(include_lines[:-2])
--            # the docname to pass into the source-read event
-+
-+            # The docname to pass into the source-read event
-             docname = self.env.path2doc(os_path(path))
--            # emit "source-read" event
-+            # Emit the "source-read" event
-             arg = [text]
-             self.env.app.events.emit("source-read", docname, arg)
-             text = arg[0]
--            # split back into lines and reattach the two marker lines
-+
-+            # Split back into lines and reattach the two marker lines
-             include_lines = text.splitlines() + include_lines[-2:]
--            # Call the parent implementation. Note that this snake does not eat its tail
--            # because we patch the Instance method and this call is to the Class method
-+
-+            # Call the parent implementation.
-+            # Note that this snake does not eat its tail because we patch
-+            # the *Instance* method and this call is to the *Class* method.
-             return StateMachine.insert_input(self.state_machine, include_lines, path)
- 
-         # See https://github.com/python/mypy/issues/2427 for details on the mypy issue
--        self.state_machine.insert_input = insert_input  # type: ignore[method-assign]
-+        self.state_machine.insert_input = _insert_input  # type: ignore[method-assign]
-+
-         if self.arguments[0].startswith('<') and \
-            self.arguments[0].endswith('>'):
-             # docutils "standard" includes, do not do path processing
-
-From 9550b09bc908f957ba0c387efdf04f341d4bb315 Mon Sep 17 00:00:00 2001
-From: Adam Turner <9087854+aa-turner@users.noreply.github.com>
-Date: Mon, 14 Aug 2023 15:53:32 +0100
-Subject: [PATCH 22/22] Only patch if there are source-read listeners
-
----
- sphinx/directives/other.py | 6 ++++--
- 1 file changed, 4 insertions(+), 2 deletions(-)
-
-diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
-index 9e55ac17de7..e65cbfdfe68 100644
---- a/sphinx/directives/other.py
-+++ b/sphinx/directives/other.py
-@@ -400,8 +400,10 @@ def _insert_input(include_lines, path):
-             # the *Instance* method and this call is to the *Class* method.
-             return StateMachine.insert_input(self.state_machine, include_lines, path)
- 
--        # See https://github.com/python/mypy/issues/2427 for details on the mypy issue
--        self.state_machine.insert_input = _insert_input  # type: ignore[method-assign]
-+        # Only enable this patch if there are listeners for 'source-read'.
-+        if self.env.app.events.listeners.get('source-read'):
-+            # See https://github.com/python/mypy/issues/2427 for details on the mypy issue
-+            self.state_machine.insert_input = _insert_input  # type: ignore[method-assign]
- 
-         if self.arguments[0].startswith('<') and \
-            self.arguments[0].endswith('>'):

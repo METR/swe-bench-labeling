@@ -1,18 +1,3 @@
-From 51c84e041f8e581eb04a041fb410341d152deafb Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Mon, 23 May 2022 00:37:45 +0900
-Subject: [PATCH] Fix #10104: gettext: Duplicated locations are output to pot
- file
-
-When 3rd party extension does not provide line number for each message,
-duplicated locations are output to pot file unexpectedly.  This filters
-duplicated locations before generationg pot file.
----
- CHANGES                     |  2 ++
- sphinx/builders/gettext.py  |  3 ++-
- tests/test_build_gettext.py | 20 ++++++++++++++++++++
- 3 files changed, 24 insertions(+), 1 deletion(-)
-
 diff --git a/CHANGES b/CHANGES
 index ed47709e539..69e6fdd097a 100644
 --- a/CHANGES

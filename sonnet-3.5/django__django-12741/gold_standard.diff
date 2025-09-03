@@ -1,17 +1,3 @@
-From 8d4eccb3e5b67dfed993f566472e9d59ac09e5a8 Mon Sep 17 00:00:00 2001
-From: Jon Dufresne <jon.dufresne@gmail.com>
-Date: Fri, 17 Apr 2020 15:30:57 -0700
-Subject: [PATCH] Fixed #31477 -- Simplified
- DatabaseOperations.execute_sql_flush() signature.
-
----
- django/core/management/commands/flush.py | 2 +-
- django/db/backends/base/operations.py    | 7 +++++--
- docs/releases/3.1.txt                    | 4 ++++
- tests/backends/base/test_operations.py   | 2 +-
- tests/backends/tests.py                  | 2 +-
- 5 files changed, 12 insertions(+), 5 deletions(-)
-
 diff --git a/django/core/management/commands/flush.py b/django/core/management/commands/flush.py
 index e8ed3967f70e..bc8021cf4eb2 100644
 --- a/django/core/management/commands/flush.py

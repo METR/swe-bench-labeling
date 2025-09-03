@@ -1,47 +1,28 @@
-From 3a87abbfdac36ca6ead627c47c1876889bf79948 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Fri, 17 Nov 2017 01:40:44 +0530
-Subject: [PATCH 1/9] fixed bug in finding Complement
-
----
- sympy/sets/sets.py | 12 ++++++++++--
- 1 file changed, 10 insertions(+), 2 deletions(-)
-
 diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index 773096d6e9b2..4268d55fa20e 100644
+index 917717bb7429..659b778808ae 100644
 --- a/sympy/sets/sets.py
 +++ b/sympy/sets/sets.py
-@@ -215,8 +215,16 @@ def _complement(self, other):
-         elif isinstance(other, EmptySet):
+@@ -217,7 +217,17 @@ def _complement(self, other):
              return S.EmptySet
  
--        elif isinstance(other, FiniteSet):
+         elif isinstance(other, FiniteSet):
 -            return FiniteSet(*[el for el in other if self.contains(el) != True])
-+        elif isinstance(other, FiniteSet): 
-+            both_l = non_num, num = [], []
-+            for el in other:
-+                both_l[el.is_number].append(el)
-+            non_num = FiniteSet(*non_num)
-+            out_range = FiniteSet(*[el for el in num if self.contains(el) != True])
-+            if non_num:
-+                return Union(out_range, Complement(non_num , self , evaluate =False))
-+            else:
-+                return out_range
++            from sympy.utilities.iterables import sift
++
++            def ternary_sift(el):
++                contains = self.contains(el)
++                return contains if contains in [True, False] else None
++
++            sifted = sift(other, ternary_sift)
++            # ignore those that are contained in self
++            return Union(FiniteSet(*(sifted[False])),
++                Complement(FiniteSet(*(sifted[None])), self, evaluate=False)
++                if sifted[None] else S.EmptySet)
  
      def symmetric_difference(self, other):
          """
-
-From afd1e1a6390a8e693f19cd32b357041513058dc6 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Fri, 17 Nov 2017 01:41:02 +0530
-Subject: [PATCH 2/9] added tests
-
----
- sympy/sets/tests/test_sets.py | 4 ++++
- 1 file changed, 4 insertions(+)
-
 diff --git a/sympy/sets/tests/test_sets.py b/sympy/sets/tests/test_sets.py
-index 8c59d85b2045..8673d56db3cd 100644
+index 8c59d85b2045..f4d0483197ed 100644
 --- a/sympy/sets/tests/test_sets.py
 +++ b/sympy/sets/tests/test_sets.py
 @@ -187,6 +187,10 @@ def test_Complement():
@@ -50,208 +31,8 @@ index 8c59d85b2045..8673d56db3cd 100644
              Intersection(S.Reals - S.Naturals, S.Reals - FiniteSet(pi))
 +    # isssue 12712
 +    assert Complement(FiniteSet(x, y, 2), Interval(-10, 10)) == \
-+            Complement(FiniteSet(x, y), Interval(-10, 10)) 
++            Complement(FiniteSet(x, y), Interval(-10, 10))
 +
  
  def test_complement():
      assert Interval(0, 1).complement(S.Reals) == \
-
-From f18d22c8bf95c5d11d43cc9fcbb14b8f900ac7a9 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Fri, 17 Nov 2017 01:43:25 +0530
-Subject: [PATCH 3/9] removed whitespace errors
-
----
- sympy/sets/sets.py            | 2 +-
- sympy/sets/tests/test_sets.py | 2 +-
- 2 files changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index 4268d55fa20e..e3b40838a277 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -215,7 +215,7 @@ def _complement(self, other):
-         elif isinstance(other, EmptySet):
-             return S.EmptySet
- 
--        elif isinstance(other, FiniteSet): 
-+        elif isinstance(other, FiniteSet):
-             both_l = non_num, num = [], []
-             for el in other:
-                 both_l[el.is_number].append(el)
-diff --git a/sympy/sets/tests/test_sets.py b/sympy/sets/tests/test_sets.py
-index 8673d56db3cd..f4d0483197ed 100644
---- a/sympy/sets/tests/test_sets.py
-+++ b/sympy/sets/tests/test_sets.py
-@@ -189,7 +189,7 @@ def test_Complement():
-             Intersection(S.Reals - S.Naturals, S.Reals - FiniteSet(pi))
-     # isssue 12712
-     assert Complement(FiniteSet(x, y, 2), Interval(-10, 10)) == \
--            Complement(FiniteSet(x, y), Interval(-10, 10)) 
-+            Complement(FiniteSet(x, y), Interval(-10, 10))
- 
- 
- def test_complement():
-
-From 3d5846014f8c6074cd8adc3f91e0bce12ed5f064 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Fri, 17 Nov 2017 12:51:15 +0530
-Subject: [PATCH 4/9] improved code qulaity
-
----
- sympy/sets/sets.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index e3b40838a277..6876985fdcef 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -222,7 +222,7 @@ def _complement(self, other):
-             non_num = FiniteSet(*non_num)
-             out_range = FiniteSet(*[el for el in num if self.contains(el) != True])
-             if non_num:
--                return Union(out_range, Complement(non_num , self , evaluate =False))
-+                return Union(out_range, Complement(non_num, self, evaluate = False))
-             else:
-                 return out_range
- 
-
-From 2c6c7e4dd3311e43d22764f4522a1657ccc0a1fd Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Fri, 17 Nov 2017 16:13:38 +0530
-Subject: [PATCH 5/9] updated condition
-
----
- sympy/sets/sets.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index 6876985fdcef..d05ceb9a826e 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -220,7 +220,7 @@ def _complement(self, other):
-             for el in other:
-                 both_l[el.is_number].append(el)
-             non_num = FiniteSet(*non_num)
--            out_range = FiniteSet(*[el for el in num if self.contains(el) != True])
-+            out_range = FiniteSet(*[el for el in num if self.contains(el) == False])
-             if non_num:
-                 return Union(out_range, Complement(non_num, self, evaluate = False))
-             else:
-
-From d25a5983752629f55d5ba191c79c66d15c3069d2 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Fri, 17 Nov 2017 20:46:22 +0530
-Subject: [PATCH 6/9] updated condition for None
-
----
- sympy/sets/sets.py | 12 +++++-------
- 1 file changed, 5 insertions(+), 7 deletions(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index d05ceb9a826e..a8aec26d73f8 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -216,13 +216,11 @@ def _complement(self, other):
-             return S.EmptySet
- 
-         elif isinstance(other, FiniteSet):
--            both_l = non_num, num = [], []
--            for el in other:
--                both_l[el.is_number].append(el)
--            non_num = FiniteSet(*non_num)
--            out_range = FiniteSet(*[el for el in num if self.contains(el) == False])
--            if non_num:
--                return Union(out_range, Complement(non_num, self, evaluate = False))
-+
-+            none_range = FiniteSet(*[el for el in other if self.contains(el) not in [True, False]])
-+            out_range = FiniteSet(*[el for el in other if self.contains(el) == False])
-+            if none_range:
-+                return Union(out_range, Complement(none_range, self, evaluate = False))
-             else:
-                 return out_range
- 
-
-From 0792dc0ada835c1b9285148bdf982bd2f1cf3feb Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Sun, 19 Nov 2017 06:26:48 +0530
-Subject: [PATCH 7/9] removed spaces
-
----
- sympy/sets/sets.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index a8aec26d73f8..b28bfb99af20 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -220,7 +220,7 @@ def _complement(self, other):
-             none_range = FiniteSet(*[el for el in other if self.contains(el) not in [True, False]])
-             out_range = FiniteSet(*[el for el in other if self.contains(el) == False])
-             if none_range:
--                return Union(out_range, Complement(none_range, self, evaluate = False))
-+                return Union(out_range, Complement(none_range, self, evaluate=False))
-             else:
-                 return out_range
- 
-
-From 0837cd5448f03575eaccd3f4ef4178ed03946cf7 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Mon, 20 Nov 2017 11:11:45 +0530
-Subject: [PATCH 8/9] added a ternary_sift function
-
----
- sympy/sets/sets.py | 16 ++++++++++------
- 1 file changed, 10 insertions(+), 6 deletions(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index 632ea858532f..ee05e00f421e 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -217,13 +217,17 @@ def _complement(self, other):
-             return S.EmptySet
- 
-         elif isinstance(other, FiniteSet):
-+            from sympy.utilities.iterables import sift
- 
--            none_range = FiniteSet(*[el for el in other if self.contains(el) not in [True, False]])
--            out_range = FiniteSet(*[el for el in other if self.contains(el) == False])
--            if none_range:
--                return Union(out_range, Complement(none_range, self, evaluate=False))
--            else:
--                return out_range
-+            def ternary_sift(el):
-+                contains = self.contains(el)
-+                return contains if contains in [True, False] else None
-+
-+            sifted = sift(other, lambda i: ternary_sift(i))
-+            # ignore those that are contained in self
-+            return Union(FiniteSet(*(sifted[False])),
-+                Complement(FiniteSet(*(sifted[None])), self, evaluate=False)
-+                if sifted[None] else S.EmptySet)
- 
-     def symmetric_difference(self, other):
-         """
-
-From 98df0946fba625988de13eed6ef414ab7e29b183 Mon Sep 17 00:00:00 2001
-From: ashishkg0022 <ashishkg0022@gmail.com>
-Date: Mon, 20 Nov 2017 17:34:14 +0530
-Subject: [PATCH 9/9] update function passing
-
----
- sympy/sets/sets.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
-index ee05e00f421e..659b778808ae 100644
---- a/sympy/sets/sets.py
-+++ b/sympy/sets/sets.py
-@@ -223,7 +223,7 @@ def ternary_sift(el):
-                 contains = self.contains(el)
-                 return contains if contains in [True, False] else None
- 
--            sifted = sift(other, lambda i: ternary_sift(i))
-+            sifted = sift(other, ternary_sift)
-             # ignore those that are contained in self
-             return Union(FiniteSet(*(sifted[False])),
-                 Complement(FiniteSet(*(sifted[None])), self, evaluate=False)

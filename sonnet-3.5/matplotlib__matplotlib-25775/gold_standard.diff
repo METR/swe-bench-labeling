@@ -1,30 +1,13 @@
-From 18c7a4be959a11caa01fe233c99dfbc0f1dd3db8 Mon Sep 17 00:00:00 2001
-From: stevezhang <lilacs@DESKTOP-IO90IQ2.localdomain>
-Date: Wed, 26 Apr 2023 14:59:42 -0400
-Subject: [PATCH 1/4] Support customizing antialiasing for text and annotation
-
----
- .../next_api_changes/behavior/25775-HZ.rst    | 29 ++++++++
- .../antialiasing_text_annotation.rst          | 39 ++++++++++
- lib/matplotlib/backends/backend_agg.py        |  2 +-
- lib/matplotlib/backends/backend_cairo.py      |  8 +-
- lib/matplotlib/tests/test_text.py             | 73 ++++++++++++++++++-
- lib/matplotlib/text.py                        | 29 ++++++++
- lib/matplotlib/text.pyi                       |  3 +
- 7 files changed, 177 insertions(+), 6 deletions(-)
- create mode 100644 doc/api/next_api_changes/behavior/25775-HZ.rst
- create mode 100644 doc/users/next_whats_new/antialiasing_text_annotation.rst
-
 diff --git a/doc/api/next_api_changes/behavior/25775-HZ.rst b/doc/api/next_api_changes/behavior/25775-HZ.rst
 new file mode 100644
-index 000000000000..c82109cdf1ff
+index 000000000000..118195811b98
 --- /dev/null
 +++ b/doc/api/next_api_changes/behavior/25775-HZ.rst
 @@ -0,0 +1,29 @@
 +Default antialiasing behavior changes for ``Text`` and ``Annotation``
 +~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 +
-+``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter ``antialiased`` when initializing.
++``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter *antialiased* when initializing.
 +Examples:
 +
 +.. code-block::
@@ -49,19 +32,19 @@ index 000000000000..c82109cdf1ff
 +    with rccontext(text.antialiased=False):
 +        fig.savefig('/tmp/test.png')
 +
-+Also note that antialiasing for tick labeles will be set with ``rcParams['text.antialiased']`` when they are created (usually when a ``Figure`` is created) - This means antialiasing for them can no longer be changed by modifying ``rcParams['text.antialiased']``.
++Also note that antialiasing for tick labels will be set with :rc:`text.antialiased` when they are created (usually when a ``Figure`` is created) - This means antialiasing for them can no longer be changed by modifying :rc:`text.antialiased`.
 diff --git a/doc/users/next_whats_new/antialiasing_text_annotation.rst b/doc/users/next_whats_new/antialiasing_text_annotation.rst
 new file mode 100644
-index 000000000000..0d9df81db284
+index 000000000000..7e6489e9803f
 --- /dev/null
 +++ b/doc/users/next_whats_new/antialiasing_text_annotation.rst
 @@ -0,0 +1,39 @@
 +Support customizing antialiasing for text and annotation
 +--------------------------------------------------------
-+``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter ``antialiased``.
-+When ``antialiased`` is set to ``True``, antialiasing will be applied to the text.
-+When ``antialiased`` is set to ``False``, antialiasing will not be applied to the text.
-+When ``antialiased`` is not specified, antialiasing will be set by ``rcParams['text.antialiased']`` at the creation time of ``Text`` and ``Annotation`` object.
++``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter *antialiased*.
++When *antialiased* is set to ``True``, antialiasing will be applied to the text.
++When *antialiased* is set to ``False``, antialiasing will not be applied to the text.
++When *antialiased* is not specified, antialiasing will be set by :rc:`text.antialiased` at the creation time of ``Text`` and ``Annotation`` object.
 +Examples:
 +
 +.. code-block::
@@ -70,7 +53,7 @@ index 000000000000..0d9df81db284
 +    plt.text(0.5, 0.5, '6 inches x 2 inches', antialiased=True)
 +    ax.annotate('local max', xy=(2, 1), xytext=(3, 1.5), antialiased=False)
 +
-+If the text contains math expression, then anaialiasing will be set by ``rcParams['text.antialiased']``, and ``antialiased`` will have no effect
++If the text contains math expression, then antialiasing will be set by :rc:`text.antialiased`, and *antialiased* will have no effect
 +This applies to the whole text.
 +Examples:
 +
@@ -79,7 +62,7 @@ index 000000000000..0d9df81db284
 +    # no part will be antialiased for the text below
 +    plt.text(0.5, 0.25, r"$I'm \sqrt{x}$", antialiased=False)
 +
-+Also note that antialiasing for tick labeles will be set with ``rcParams['text.antialiased']`` when they are created (usually when a ``Figure`` is created) and cannot be changed afterwards.
++Also note that antialiasing for tick labels will be set with :rc:`text.antialiased` when they are created (usually when a ``Figure`` is created) and cannot be changed afterwards.
 +
 +Furthermore, with this new feature, you may want to make sure that you are creating and saving/showing the figure under the same context::
 +
@@ -142,7 +125,7 @@ index 9ccadcdf1c10..c733f3f9d3d7 100644
          self.ctx.set_line_cap(_api.check_getitem(self._capd, capstyle=cs))
          self._capstyle = cs
 diff --git a/lib/matplotlib/tests/test_text.py b/lib/matplotlib/tests/test_text.py
-index f86b9f111b24..41ffb635896e 100644
+index f86b9f111b24..4215927f05fe 100644
 --- a/lib/matplotlib/tests/test_text.py
 +++ b/lib/matplotlib/tests/test_text.py
 @@ -14,7 +14,7 @@
@@ -154,7 +137,7 @@ index f86b9f111b24..41ffb635896e 100644
  
  
  @image_comparison(['font_styles'])
-@@ -902,3 +902,74 @@ def test_annotate_offset_fontsize():
+@@ -902,3 +902,63 @@ def test_annotate_offset_fontsize():
      points_coords, fontsize_coords = [ann.get_window_extent() for ann in anns]
      fig.canvas.draw()
      assert str(points_coords) == str(fontsize_coords)
@@ -205,32 +188,21 @@ index f86b9f111b24..41ffb635896e 100644
 +
 +@check_figures_equal()
 +def test_text_antialiased_off_default_vs_manual(fig_test, fig_ref):
-+    # note that the field antialiased is for Text object
-+    # therefore in the test we will make axis antialiasing identical
-+    # which is determined by rcParams['text.antialiased'] when axis is created
-+    # also note that there is no way to change this for axis after creating it
-+
-+    mpl.rcParams['text.antialiased'] = False
-+    # axis: antialiased == rcParams['text.antialiased'] == False
-+    # text: antialiased == False
-+    fig_test.subplots().text(0.5, 0.5, '6 inches x 2 inches',
++    fig_test.text(0.5, 0.5, '6 inches x 2 inches',
 +                             antialiased=False)
 +
 +    mpl.rcParams['text.antialiased'] = False
-+    # axis: antialiased == rcParams['text.antialiased'] == False
-+    # text: antialiased == rcParams['text.antialiased'] == False
-+    fig_ref.subplots().text(0.5, 0.5, '6 inches x 2 inches')
++    fig_ref.text(0.5, 0.5, '6 inches x 2 inches')
 +
 +
 +@check_figures_equal()
 +def test_text_antialiased_on_default_vs_manual(fig_test, fig_ref):
-+    mpl.rcParams['text.antialiased'] = True
-+    fig_test.subplots().text(0.5, 0.5, '6 inches x 2 inches', antialiased=True)
++    fig_test.text(0.5, 0.5, '6 inches x 2 inches', antialiased=True)
 +
 +    mpl.rcParams['text.antialiased'] = True
-+    fig_ref.subplots().text(0.5, 0.5, '6 inches x 2 inches')
++    fig_ref.text(0.5, 0.5, '6 inches x 2 inches')
 diff --git a/lib/matplotlib/text.py b/lib/matplotlib/text.py
-index 4591316cf961..cdc3da8edcaf 100644
+index 4591316cf961..4e377f48561f 100644
 --- a/lib/matplotlib/text.py
 +++ b/lib/matplotlib/text.py
 @@ -115,6 +115,7 @@ def __init__(self,
@@ -278,21 +250,21 @@ index 4591316cf961..cdc3da8edcaf 100644
          """Return the text rotation mode."""
          return self._rotation_mode
  
-+    def set_antialiased(self, b):
++    def set_antialiased(self, antialiased):
 +        """
 +        Set whether to use antialiased rendering.
 +
 +        Parameters
 +        ----------
-+        b : bool
++        antialiased : bool
 +
 +        Notes
 +        -----
-+        Antialiasing will be determined by ``rcParams['text.antialiased']``
-+        and parameter ``antialiased`` will have no effect if the text contains
++        Antialiasing will be determined by :rc:`text.antialiased`
++        and the parameter *antialiased* will have no effect if the text contains
 +        math expressions.
 +        """
-+        self._antialiased = b
++        self._antialiased = antialiased
 +        self.stale = True
 +
 +    def get_antialiased(self):
@@ -319,7 +291,7 @@ index 4591316cf961..cdc3da8edcaf 100644
  
              angle = self.get_rotation()
 diff --git a/lib/matplotlib/text.pyi b/lib/matplotlib/text.pyi
-index bb2f52992008..465ad58f2f01 100644
+index bb2f52992008..ff9f0314b7c9 100644
 --- a/lib/matplotlib/text.pyi
 +++ b/lib/matplotlib/text.pyi
 @@ -36,6 +36,7 @@ class Text(Artist):
@@ -335,173 +307,6 @@ index bb2f52992008..465ad58f2f01 100644
      def get_parse_math(self) -> bool: ...
      def set_fontname(self, fontname: str | Iterable[str]): ...
 +    def get_antialiased(self) -> bool: ...
-+    def set_antialiased(self, b: bool): ...
- 
- class OffsetFrom:
-     def __init__(
-
-From 5e5a03db4033cf627520e7bb2b9f037e35d184d3 Mon Sep 17 00:00:00 2001
-From: stevezhang1999 <stevezhang1999@gmail.com>
-Date: Sat, 27 May 2023 19:56:01 +0800
-Subject: [PATCH 2/4] streamlined image comparison tests for text antialiasing
-
----
- lib/matplotlib/tests/test_text.py | 19 ++++---------------
- 1 file changed, 4 insertions(+), 15 deletions(-)
-
-diff --git a/lib/matplotlib/tests/test_text.py b/lib/matplotlib/tests/test_text.py
-index 41ffb635896e..4215927f05fe 100644
---- a/lib/matplotlib/tests/test_text.py
-+++ b/lib/matplotlib/tests/test_text.py
-@@ -949,27 +949,16 @@ def test_annotation_antialiased():
- 
- @check_figures_equal()
- def test_text_antialiased_off_default_vs_manual(fig_test, fig_ref):
--    # note that the field antialiased is for Text object
--    # therefore in the test we will make axis antialiasing identical
--    # which is determined by rcParams['text.antialiased'] when axis is created
--    # also note that there is no way to change this for axis after creating it
--
--    mpl.rcParams['text.antialiased'] = False
--    # axis: antialiased == rcParams['text.antialiased'] == False
--    # text: antialiased == False
--    fig_test.subplots().text(0.5, 0.5, '6 inches x 2 inches',
-+    fig_test.text(0.5, 0.5, '6 inches x 2 inches',
-                              antialiased=False)
- 
-     mpl.rcParams['text.antialiased'] = False
--    # axis: antialiased == rcParams['text.antialiased'] == False
--    # text: antialiased == rcParams['text.antialiased'] == False
--    fig_ref.subplots().text(0.5, 0.5, '6 inches x 2 inches')
-+    fig_ref.text(0.5, 0.5, '6 inches x 2 inches')
- 
- 
- @check_figures_equal()
- def test_text_antialiased_on_default_vs_manual(fig_test, fig_ref):
--    mpl.rcParams['text.antialiased'] = True
--    fig_test.subplots().text(0.5, 0.5, '6 inches x 2 inches', antialiased=True)
-+    fig_test.text(0.5, 0.5, '6 inches x 2 inches', antialiased=True)
- 
-     mpl.rcParams['text.antialiased'] = True
--    fig_ref.subplots().text(0.5, 0.5, '6 inches x 2 inches')
-+    fig_ref.text(0.5, 0.5, '6 inches x 2 inches')
-
-From 5e3bab499fe82f043601743b2410eac926539af8 Mon Sep 17 00:00:00 2001
-From: stevezhang1999 <stevezhang1999@gmail.com>
-Date: Fri, 2 Jun 2023 18:57:09 +0800
-Subject: [PATCH 3/4] fix doc formatting, parameter name and spells
-
----
- doc/api/next_api_changes/behavior/25775-HZ.rst       |  4 ++--
- .../next_whats_new/antialiasing_text_annotation.rst  | 12 ++++++------
- lib/matplotlib/text.py                               | 10 +++++-----
- 3 files changed, 13 insertions(+), 13 deletions(-)
-
-diff --git a/doc/api/next_api_changes/behavior/25775-HZ.rst b/doc/api/next_api_changes/behavior/25775-HZ.rst
-index c82109cdf1ff..118195811b98 100644
---- a/doc/api/next_api_changes/behavior/25775-HZ.rst
-+++ b/doc/api/next_api_changes/behavior/25775-HZ.rst
-@@ -1,7 +1,7 @@
- Default antialiasing behavior changes for ``Text`` and ``Annotation``
- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- 
--``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter ``antialiased`` when initializing.
-+``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter *antialiased* when initializing.
- Examples:
- 
- .. code-block::
-@@ -26,4 +26,4 @@ With this new feature, you may want to make sure that you are creating and savin
-     with rccontext(text.antialiased=False):
-         fig.savefig('/tmp/test.png')
- 
--Also note that antialiasing for tick labeles will be set with ``rcParams['text.antialiased']`` when they are created (usually when a ``Figure`` is created) - This means antialiasing for them can no longer be changed by modifying ``rcParams['text.antialiased']``.
-+Also note that antialiasing for tick labels will be set with :rc:`text.antialiased` when they are created (usually when a ``Figure`` is created) - This means antialiasing for them can no longer be changed by modifying :rc:`text.antialiased`.
-diff --git a/doc/users/next_whats_new/antialiasing_text_annotation.rst b/doc/users/next_whats_new/antialiasing_text_annotation.rst
-index 0d9df81db284..7e6489e9803f 100644
---- a/doc/users/next_whats_new/antialiasing_text_annotation.rst
-+++ b/doc/users/next_whats_new/antialiasing_text_annotation.rst
-@@ -1,9 +1,9 @@
- Support customizing antialiasing for text and annotation
- --------------------------------------------------------
--``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter ``antialiased``.
--When ``antialiased`` is set to ``True``, antialiasing will be applied to the text.
--When ``antialiased`` is set to ``False``, antialiasing will not be applied to the text.
--When ``antialiased`` is not specified, antialiasing will be set by ``rcParams['text.antialiased']`` at the creation time of ``Text`` and ``Annotation`` object.
-+``matplotlib.pyplot.annotate()`` and ``matplotlib.pyplot.text()`` now support parameter *antialiased*.
-+When *antialiased* is set to ``True``, antialiasing will be applied to the text.
-+When *antialiased* is set to ``False``, antialiasing will not be applied to the text.
-+When *antialiased* is not specified, antialiasing will be set by :rc:`text.antialiased` at the creation time of ``Text`` and ``Annotation`` object.
- Examples:
- 
- .. code-block::
-@@ -12,7 +12,7 @@ Examples:
-     plt.text(0.5, 0.5, '6 inches x 2 inches', antialiased=True)
-     ax.annotate('local max', xy=(2, 1), xytext=(3, 1.5), antialiased=False)
- 
--If the text contains math expression, then anaialiasing will be set by ``rcParams['text.antialiased']``, and ``antialiased`` will have no effect
-+If the text contains math expression, then antialiasing will be set by :rc:`text.antialiased`, and *antialiased* will have no effect
- This applies to the whole text.
- Examples:
- 
-@@ -21,7 +21,7 @@ Examples:
-     # no part will be antialiased for the text below
-     plt.text(0.5, 0.25, r"$I'm \sqrt{x}$", antialiased=False)
- 
--Also note that antialiasing for tick labeles will be set with ``rcParams['text.antialiased']`` when they are created (usually when a ``Figure`` is created) and cannot be changed afterwards.
-+Also note that antialiasing for tick labels will be set with :rc:`text.antialiased` when they are created (usually when a ``Figure`` is created) and cannot be changed afterwards.
- 
- Furthermore, with this new feature, you may want to make sure that you are creating and saving/showing the figure under the same context::
- 
-diff --git a/lib/matplotlib/text.py b/lib/matplotlib/text.py
-index cdc3da8edcaf..4e377f48561f 100644
---- a/lib/matplotlib/text.py
-+++ b/lib/matplotlib/text.py
-@@ -315,21 +315,21 @@ def get_rotation_mode(self):
-         """Return the text rotation mode."""
-         return self._rotation_mode
- 
--    def set_antialiased(self, b):
-+    def set_antialiased(self, antialiased):
-         """
-         Set whether to use antialiased rendering.
- 
-         Parameters
-         ----------
--        b : bool
-+        antialiased : bool
- 
-         Notes
-         -----
--        Antialiasing will be determined by ``rcParams['text.antialiased']``
--        and parameter ``antialiased`` will have no effect if the text contains
-+        Antialiasing will be determined by :rc:`text.antialiased`
-+        and the parameter *antialiased* will have no effect if the text contains
-         math expressions.
-         """
--        self._antialiased = b
-+        self._antialiased = antialiased
-         self.stale = True
- 
-     def get_antialiased(self):
-
-From 95e070962451d2546da87853e2034de8f720e0fb Mon Sep 17 00:00:00 2001
-From: stevezhang1999 <stevezhang1999@gmail.com>
-Date: Fri, 2 Jun 2023 19:15:07 +0800
-Subject: [PATCH 4/4] update text.pyi
-
----
- lib/matplotlib/text.pyi | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/lib/matplotlib/text.pyi b/lib/matplotlib/text.pyi
-index 465ad58f2f01..ff9f0314b7c9 100644
---- a/lib/matplotlib/text.pyi
-+++ b/lib/matplotlib/text.pyi
-@@ -101,7 +101,7 @@ class Text(Artist):
-     def get_parse_math(self) -> bool: ...
-     def set_fontname(self, fontname: str | Iterable[str]): ...
-     def get_antialiased(self) -> bool: ...
--    def set_antialiased(self, b: bool): ...
 +    def set_antialiased(self, antialiased: bool): ...
  
  class OffsetFrom:

@@ -1,18 +1,5 @@
-From a5dadeb890beca64bb9eabe86e6634c9dd3e1d50 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Wed, 8 Apr 2020 22:46:03 +0900
-Subject: [PATCH] Fix #7418: std domain: duplication warning for glossary terms
- is case insensitive
-
----
- CHANGES                  | 3 +++
- doc/extdev/index.rst     | 2 +-
- sphinx/domains/std.py    | 4 ++--
- tests/test_domain_std.py | 8 ++++----
- 4 files changed, 10 insertions(+), 7 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
-index 7d5f801863a..c9c962380b5 100644
+index a7950b8e041..b12cfd398c6 100644
 --- a/CHANGES
 +++ b/CHANGES
 @@ -7,6 +7,8 @@ Dependencies
@@ -29,9 +16,9 @@ index 7d5f801863a..c9c962380b5 100644
  
  * #7428: py domain: a reference to class ``None`` emits a nitpicky warning
 +* #7418: std domain: duplication warning for glossary terms is case insensitive
+ * #7438: C++, fix merging overloaded functions in parallel builds.
+ * #7422: autodoc: fails with ValueError when using autodoc_mock_imports
  
- Testing
- --------
 diff --git a/doc/extdev/index.rst b/doc/extdev/index.rst
 index 8c909e31504..266da52b73a 100644
 --- a/doc/extdev/index.rst

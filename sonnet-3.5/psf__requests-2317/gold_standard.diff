@@ -1,14 +1,3 @@
-From 29ef1081583115c8bb2c8a592b883dc7c835240c Mon Sep 17 00:00:00 2001
-From: Ian Cordasco <ian.cordasco@rackspace.com>
-Date: Fri, 31 Oct 2014 21:20:04 -0500
-Subject: [PATCH] Use to_native_string instead of builtin_str
-
-Fixes #2316
----
- requests/sessions.py | 4 ++--
- test_requests.py     | 5 +++++
- 2 files changed, 7 insertions(+), 2 deletions(-)
-
 diff --git a/requests/sessions.py b/requests/sessions.py
 index d701ff2ef8..dfce7cf953 100644
 --- a/requests/sessions.py

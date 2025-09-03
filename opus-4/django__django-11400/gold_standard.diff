@@ -1,21 +1,35 @@
-From 00035672a460b6eb5442d2837bc783f8af28c6f3 Mon Sep 17 00:00:00 2001
-From: zeyneloz <ozdemir.zynl@gmail.com>
-Date: Thu, 15 Aug 2019 06:54:41 +0200
-Subject: [PATCH 1/2] Fixed #30449 -- Fixed
- RelatedFieldListFilter/RelatedOnlyFieldListFilter to respect model's
- Meta.ordering.
-
-Regression in 6d4e5feb79f7eabe8a0c7c4b87f25b1a7f87ca0b.
-
-Co-Authored-By: Mariusz Felisiak <felisiak.mariusz@gmail.com>
----
- django/db/models/fields/__init__.py        |  6 ++-
- django/db/models/fields/reverse_related.py |  5 +-
- docs/releases/2.2.5.txt                    |  5 ++
- tests/admin_filters/tests.py               | 57 ++++++++++++++++++++++
- tests/model_fields/tests.py                | 20 +++++++-
- 5 files changed, 88 insertions(+), 5 deletions(-)
-
+diff --git a/django/contrib/admin/filters.py b/django/contrib/admin/filters.py
+index d65e01d5e2fe..a9e5563c6cbf 100644
+--- a/django/contrib/admin/filters.py
++++ b/django/contrib/admin/filters.py
+@@ -193,11 +193,17 @@ def has_output(self):
+     def expected_parameters(self):
+         return [self.lookup_kwarg, self.lookup_kwarg_isnull]
+ 
+-    def field_choices(self, field, request, model_admin):
+-        ordering = ()
++    def field_admin_ordering(self, field, request, model_admin):
++        """
++        Return the model admin's ordering for related field, if provided.
++        """
+         related_admin = model_admin.admin_site._registry.get(field.remote_field.model)
+         if related_admin is not None:
+-            ordering = related_admin.get_ordering(request)
++            return related_admin.get_ordering(request)
++        return ()
++
++    def field_choices(self, field, request, model_admin):
++        ordering = self.field_admin_ordering(field, request, model_admin)
+         return field.get_choices(include_blank=False, ordering=ordering)
+ 
+     def choices(self, changelist):
+@@ -419,4 +425,5 @@ def choices(self, changelist):
+ class RelatedOnlyFieldListFilter(RelatedFieldListFilter):
+     def field_choices(self, field, request, model_admin):
+         pk_qs = model_admin.get_queryset(request).distinct().values_list('%s__pk' % self.field_path, flat=True)
+-        return field.get_choices(include_blank=False, limit_choices_to={'pk__in': pk_qs})
++        ordering = self.field_admin_ordering(field, request, model_admin)
++        return field.get_choices(include_blank=False, limit_choices_to={'pk__in': pk_qs}, ordering=ordering)
 diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
 index 194514c90008..1aad845470f4 100644
 --- a/django/db/models/fields/__init__.py
@@ -65,7 +79,7 @@ index 0b9310a34471..9f143c8d96d4 100644
 +  choices to foreign objects don't respect a model's ``Meta.ordering``
 +  (:ticket:`30449`).
 diff --git a/tests/admin_filters/tests.py b/tests/admin_filters/tests.py
-index 4ff7d012e553..75563bbaaf79 100644
+index 4ff7d012e553..4e6f1f4732c9 100644
 --- a/tests/admin_filters/tests.py
 +++ b/tests/admin_filters/tests.py
 @@ -591,6 +591,22 @@ class BookAdmin(ModelAdmin):
@@ -115,10 +129,37 @@ index 4ff7d012e553..75563bbaaf79 100644
      def test_relatedonlyfieldlistfilter_foreignkey(self):
          modeladmin = BookAdminRelatedOnlyFilter(Book, site)
  
-@@ -708,6 +741,30 @@ def test_relatedonlyfieldlistfilter_foreignkey(self):
+@@ -708,6 +741,57 @@ def test_relatedonlyfieldlistfilter_foreignkey(self):
          expected = [(self.alfred.pk, 'alfred'), (self.bob.pk, 'bob')]
          self.assertEqual(sorted(filterspec.lookup_choices), sorted(expected))
  
++    def test_relatedonlyfieldlistfilter_foreignkey_ordering(self):
++        """RelatedOnlyFieldListFilter ordering respects ModelAdmin.ordering."""
++        class EmployeeAdminWithOrdering(ModelAdmin):
++            ordering = ('name',)
++
++        class BookAdmin(ModelAdmin):
++            list_filter = (
++                ('employee', RelatedOnlyFieldListFilter),
++            )
++
++        albert = Employee.objects.create(name='Albert Green', department=self.dev)
++        self.djangonaut_book.employee = albert
++        self.djangonaut_book.save()
++        self.bio_book.employee = self.jack
++        self.bio_book.save()
++
++        site.register(Employee, EmployeeAdminWithOrdering)
++        self.addCleanup(lambda: site.unregister(Employee))
++        modeladmin = BookAdmin(Book, site)
++
++        request = self.request_factory.get('/')
++        request.user = self.alfred
++        changelist = modeladmin.get_changelist_instance(request)
++        filterspec = changelist.get_filters(request)[0][0]
++        expected = [(albert.pk, 'Albert Green'), (self.jack.pk, 'Jack Red')]
++        self.assertEqual(filterspec.lookup_choices, expected)
++
 +    def test_relatedonlyfieldlistfilter_foreignkey_default_ordering(self):
 +        """RelatedOnlyFieldListFilter ordering respects Meta.ordering."""
 +        class BookAdmin(ModelAdmin):
@@ -189,85 +230,3 @@ index bb82c7b93dac..abc5273d9021 100644
 +            self.field.remote_field.get_choices(include_blank=False),
 +            [self.bar2, self.bar1]
 +        )
-
-From 8289fc55fff879df273cb95fdd1b039447f85783 Mon Sep 17 00:00:00 2001
-From: zeyneloz <ozdemir.zynl@gmail.com>
-Date: Thu, 15 Aug 2019 10:10:11 +0200
-Subject: [PATCH 2/2] Refs #30449 -- Made RelatedOnlyFieldListFilter respect
- ModelAdmin.ordering.
-
----
- django/contrib/admin/filters.py | 15 +++++++++++----
- tests/admin_filters/tests.py    | 27 +++++++++++++++++++++++++++
- 2 files changed, 38 insertions(+), 4 deletions(-)
-
-diff --git a/django/contrib/admin/filters.py b/django/contrib/admin/filters.py
-index d65e01d5e2fe..a9e5563c6cbf 100644
---- a/django/contrib/admin/filters.py
-+++ b/django/contrib/admin/filters.py
-@@ -193,11 +193,17 @@ def has_output(self):
-     def expected_parameters(self):
-         return [self.lookup_kwarg, self.lookup_kwarg_isnull]
- 
--    def field_choices(self, field, request, model_admin):
--        ordering = ()
-+    def field_admin_ordering(self, field, request, model_admin):
-+        """
-+        Return the model admin's ordering for related field, if provided.
-+        """
-         related_admin = model_admin.admin_site._registry.get(field.remote_field.model)
-         if related_admin is not None:
--            ordering = related_admin.get_ordering(request)
-+            return related_admin.get_ordering(request)
-+        return ()
-+
-+    def field_choices(self, field, request, model_admin):
-+        ordering = self.field_admin_ordering(field, request, model_admin)
-         return field.get_choices(include_blank=False, ordering=ordering)
- 
-     def choices(self, changelist):
-@@ -419,4 +425,5 @@ def choices(self, changelist):
- class RelatedOnlyFieldListFilter(RelatedFieldListFilter):
-     def field_choices(self, field, request, model_admin):
-         pk_qs = model_admin.get_queryset(request).distinct().values_list('%s__pk' % self.field_path, flat=True)
--        return field.get_choices(include_blank=False, limit_choices_to={'pk__in': pk_qs})
-+        ordering = self.field_admin_ordering(field, request, model_admin)
-+        return field.get_choices(include_blank=False, limit_choices_to={'pk__in': pk_qs}, ordering=ordering)
-diff --git a/tests/admin_filters/tests.py b/tests/admin_filters/tests.py
-index 75563bbaaf79..4e6f1f4732c9 100644
---- a/tests/admin_filters/tests.py
-+++ b/tests/admin_filters/tests.py
-@@ -741,6 +741,33 @@ def test_relatedonlyfieldlistfilter_foreignkey(self):
-         expected = [(self.alfred.pk, 'alfred'), (self.bob.pk, 'bob')]
-         self.assertEqual(sorted(filterspec.lookup_choices), sorted(expected))
- 
-+    def test_relatedonlyfieldlistfilter_foreignkey_ordering(self):
-+        """RelatedOnlyFieldListFilter ordering respects ModelAdmin.ordering."""
-+        class EmployeeAdminWithOrdering(ModelAdmin):
-+            ordering = ('name',)
-+
-+        class BookAdmin(ModelAdmin):
-+            list_filter = (
-+                ('employee', RelatedOnlyFieldListFilter),
-+            )
-+
-+        albert = Employee.objects.create(name='Albert Green', department=self.dev)
-+        self.djangonaut_book.employee = albert
-+        self.djangonaut_book.save()
-+        self.bio_book.employee = self.jack
-+        self.bio_book.save()
-+
-+        site.register(Employee, EmployeeAdminWithOrdering)
-+        self.addCleanup(lambda: site.unregister(Employee))
-+        modeladmin = BookAdmin(Book, site)
-+
-+        request = self.request_factory.get('/')
-+        request.user = self.alfred
-+        changelist = modeladmin.get_changelist_instance(request)
-+        filterspec = changelist.get_filters(request)[0][0]
-+        expected = [(albert.pk, 'Albert Green'), (self.jack.pk, 'Jack Red')]
-+        self.assertEqual(filterspec.lookup_choices, expected)
-+
-     def test_relatedonlyfieldlistfilter_foreignkey_default_ordering(self):
-         """RelatedOnlyFieldListFilter ordering respects Meta.ordering."""
-         class BookAdmin(ModelAdmin):

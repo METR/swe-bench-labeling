@@ -1,21 +1,3 @@
-From 7c1516fce8d728cde56c17d0d69c56fa050f26e5 Mon Sep 17 00:00:00 2001
-From: Oscar Benjamin <oscar.j.benjamin@gmail.com>
-Date: Sat, 12 Dec 2020 18:10:25 +0000
-Subject: [PATCH] fix(core): use __slots__ for DefaultPrinting and Basic
-
-Fixes https://github.com/sympy/sympy/issues/20567
-
-Any mixin class should define __slots__ = () to work correctly with
-subclasses that use __slots__. Otherwise instances will still have a
-__dict__ and it will be possible to set arbitrary attributes on them.
-
-Since Basic now inherits DefaultPrinting this meant that all Basic
-instances had __dict__ which they mostly should not.
----
- sympy/core/_print_helpers.py   | 5 +++++
- sympy/core/tests/test_basic.py | 6 ++++++
- 2 files changed, 11 insertions(+)
-
 diff --git a/sympy/core/_print_helpers.py b/sympy/core/_print_helpers.py
 index 96d7e72676f2..d704ed220d44 100644
 --- a/sympy/core/_print_helpers.py

@@ -1,13 +1,3 @@
-From cf84b0d732dcb2c41dc6cbe14143672e72cbf1b7 Mon Sep 17 00:00:00 2001
-From: Moses Paul R <iammosespaulr@gmail.com>
-Date: Wed, 1 Apr 2020 00:57:44 +0530
-Subject: [PATCH 1/3] fix typo!
-
-Fixes  #18895
----
- sympy/polys/factortools.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
 diff --git a/sympy/polys/factortools.py b/sympy/polys/factortools.py
 index c6a5f9f0630a..93298f47e671 100644
 --- a/sympy/polys/factortools.py
@@ -21,40 +11,8 @@ index c6a5f9f0630a..93298f47e671 100644
  
      factors = dmp_factor_list_include(r, u, K.dom)
  
-
-From f72eca81ae35526a090c2bbf67e369580e82099a Mon Sep 17 00:00:00 2001
-From: Moses PaulR <iammosespaulr@gmail.com>
-Date: Wed, 1 Apr 2020 01:16:43 +0530
-Subject: [PATCH 2/3] remove XFail
-
----
- sympy/polys/tests/test_polytools.py | 1 -
- 1 file changed, 1 deletion(-)
-
 diff --git a/sympy/polys/tests/test_polytools.py b/sympy/polys/tests/test_polytools.py
-index b0b4cd61322a..745758be398a 100644
---- a/sympy/polys/tests/test_polytools.py
-+++ b/sympy/polys/tests/test_polytools.py
-@@ -3249,7 +3249,6 @@ def test_poly_matching_consistency():
-     assert Poly(x, x) * I == Poly(I*x, x)
- 
- 
--@XFAIL
- def test_issue_5786():
-     assert expand(factor(expand(
-         (x - I*y)*(z - I*t)), extension=[I])) == -I*t*x - t*y + x*z - I*y*z
-
-From 309134913c20047f96b4c80774a35af2019151a2 Mon Sep 17 00:00:00 2001
-From: Moses PaulR <iammosespaulr@gmail.com>
-Date: Wed, 1 Apr 2020 01:42:41 +0530
-Subject: [PATCH 3/3] flake8!
-
----
- sympy/polys/tests/test_polytools.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/polys/tests/test_polytools.py b/sympy/polys/tests/test_polytools.py
-index 745758be398a..174c86c4d85c 100644
+index b0b4cd61322a..174c86c4d85c 100644
 --- a/sympy/polys/tests/test_polytools.py
 +++ b/sympy/polys/tests/test_polytools.py
 @@ -58,7 +58,7 @@
@@ -66,3 +24,11 @@ index 745758be398a..174c86c4d85c 100644
  
  from sympy.abc import a, b, c, d, p, q, t, w, x, y, z
  from sympy import MatrixSymbol, Matrix
+@@ -3249,7 +3249,6 @@ def test_poly_matching_consistency():
+     assert Poly(x, x) * I == Poly(I*x, x)
+ 
+ 
+-@XFAIL
+ def test_issue_5786():
+     assert expand(factor(expand(
+         (x - I*y)*(z - I*t)), extension=[I])) == -I*t*x - t*y + x*z - I*y*z

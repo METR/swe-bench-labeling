@@ -1,14 +1,3 @@
-From 661e6cc2c97d9bcb45198be787409488e1825c90 Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Sat, 9 Mar 2019 13:59:55 +0100
-Subject: [PATCH] Fixed #29706 -- Made RenameContentType._rename() save to the
- correct database.
-
----
- .../contrib/contenttypes/management/__init__.py  |  2 +-
- tests/contenttypes_tests/test_operations.py      | 16 ++++++++++++++++
- 2 files changed, 17 insertions(+), 1 deletion(-)
-
 diff --git a/django/contrib/contenttypes/management/__init__.py b/django/contrib/contenttypes/management/__init__.py
 index 2b5f688136d8..563cba2fdf95 100644
 --- a/django/contrib/contenttypes/management/__init__.py

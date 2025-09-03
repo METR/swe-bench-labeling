@@ -1,14 +1,3 @@
-From d4674bb7c05b9f7ce6fbdf2639d43beacec25ff8 Mon Sep 17 00:00:00 2001
-From: Claude Paroz <claude@2xlibre.net>
-Date: Tue, 23 Aug 2022 12:05:27 +0200
-Subject: [PATCH] Fixed #33949 -- Fixed fixture dirs duplicates with Path
- instances.
-
----
- django/core/management/commands/loaddata.py |  2 +-
- tests/fixtures_regress/tests.py             | 14 ++++++++++++++
- 2 files changed, 15 insertions(+), 1 deletion(-)
-
 diff --git a/django/core/management/commands/loaddata.py b/django/core/management/commands/loaddata.py
 index ac97f1316159..6fae25540748 100644
 --- a/django/core/management/commands/loaddata.py

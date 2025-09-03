@@ -1,13 +1,3 @@
-From ef18b9ec01af88774b1d11d026cef3e92e082fea Mon Sep 17 00:00:00 2001
-From: Steve Kieffer <sk@skieffer.info>
-Date: Fri, 30 Dec 2022 09:40:07 -0500
-Subject: [PATCH] Repair `_check_homomorphism()`
-
----
- sympy/combinatorics/homomorphisms.py          | 55 ++++++++-----------
- .../combinatorics/tests/test_homomorphisms.py |  5 ++
- 2 files changed, 27 insertions(+), 33 deletions(-)
-
 diff --git a/sympy/combinatorics/homomorphisms.py b/sympy/combinatorics/homomorphisms.py
 index bb7bdf32baa7..95b43c501300 100644
 --- a/sympy/combinatorics/homomorphisms.py

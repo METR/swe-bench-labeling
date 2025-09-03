@@ -1,14 +1,3 @@
-From 6cbc403b8ee7014bd6dae4892d404eedb1d4a50d Mon Sep 17 00:00:00 2001
-From: Laurens Verhoeven <12578054+laurensverhoeven@users.noreply.github.com>
-Date: Fri, 17 Feb 2023 21:05:00 +0100
-Subject: [PATCH] Fixed #34349 -- Fixed FormSet.empty_form crash when deleting
- extra forms is disabled.
-
----
- django/forms/formsets.py                 | 4 +++-
- tests/forms_tests/tests/test_formsets.py | 1 +
- 2 files changed, 4 insertions(+), 1 deletion(-)
-
 diff --git a/django/forms/formsets.py b/django/forms/formsets.py
 index 235aaf844c72..fd4d53a44f70 100644
 --- a/django/forms/formsets.py

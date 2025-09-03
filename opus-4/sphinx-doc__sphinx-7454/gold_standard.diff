@@ -1,15 +1,3 @@
-From d9d381de11ee02512bd85d4982449923919968d1 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Fri, 10 Apr 2020 02:07:02 +0900
-Subject: [PATCH] Fix #7445: a return annotation ``None`` is not converted to a
- hyperlink
-
----
- CHANGES                  | 2 ++
- sphinx/domains/python.py | 7 ++++++-
- tests/test_domain_py.py  | 7 +++++++
- 3 files changed, 15 insertions(+), 1 deletion(-)
-
 diff --git a/CHANGES b/CHANGES
 index e0923b433ca..835dca01833 100644
 --- a/CHANGES

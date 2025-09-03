@@ -1,15 +1,3 @@
-From 6bd8e0bc1d29db024db771d628547d01930252f8 Mon Sep 17 00:00:00 2001
-From: Marten van Kerkwijk <mhvk@astro.utoronto.ca>
-Date: Wed, 19 Jun 2019 16:30:55 -0400
-Subject: [PATCH] Let Quantity only convert (unsigned) integer to float by
- default.
-
----
- CHANGES.rst                          |  3 +++
- astropy/units/quantity.py            | 11 ++++-------
- astropy/units/tests/test_quantity.py | 11 +++++++----
- 3 files changed, 14 insertions(+), 11 deletions(-)
-
 diff --git a/CHANGES.rst b/CHANGES.rst
 index 0097160cfe61..7f63a54152fa 100644
 --- a/CHANGES.rst

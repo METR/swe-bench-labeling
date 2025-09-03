@@ -1,13 +1,17 @@
-From 9d4a3562b87e79f309b4f71fdc0d2b4ae9983372 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Sat, 25 Mar 2023 20:39:21 +0800
-Subject: [PATCH 1/7] checked cv to make sure generators are supported
-
----
- sklearn/feature_selection/_sequential.py      | 12 ++++----
- .../tests/test_sequential.py                  | 30 +++++++++++++++++--
- 2 files changed, 35 insertions(+), 7 deletions(-)
-
+diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
+index 51b4214145216..add8f896dcb1a 100644
+--- a/doc/whats_new/v1.3.rst
++++ b/doc/whats_new/v1.3.rst
+@@ -146,6 +146,9 @@ Changelog
+ - |Enhancement| All selectors in :mod:`sklearn.feature_selection` will preserve
+   a DataFrame's dtype when transformed. :pr:`25102` by `Thomas Fan`_.
+ 
++- |Fix| :class:`feature_selection.SequentialFeatureSelector`'s `cv` parameter
++  now supports generators. :pr:`25973` by `Yao Xiao <Charlie-XIAO>`.
++
+ :mod:`sklearn.base`
+ ...................
+ 
 diff --git a/sklearn/feature_selection/_sequential.py b/sklearn/feature_selection/_sequential.py
 index e983c55de7d25..2498cd53b39f6 100644
 --- a/sklearn/feature_selection/_sequential.py
@@ -64,7 +68,7 @@ index e983c55de7d25..2498cd53b39f6 100644
                  n_jobs=self.n_jobs,
              ).mean()
 diff --git a/sklearn/feature_selection/tests/test_sequential.py b/sklearn/feature_selection/tests/test_sequential.py
-index f6451a36005ac..e99d19d7b4b88 100644
+index f6451a36005ac..98134addc39e7 100644
 --- a/sklearn/feature_selection/tests/test_sequential.py
 +++ b/sklearn/feature_selection/tests/test_sequential.py
 @@ -6,11 +6,12 @@
@@ -82,18 +86,18 @@ index f6451a36005ac..e99d19d7b4b88 100644
  
  
  def test_bad_n_features_to_select():
-@@ -314,3 +315,28 @@ def test_backward_neg_tol():
+@@ -314,3 +315,22 @@ def test_backward_neg_tol():
  
      assert 0 < sfs.get_support().sum() < X.shape[1]
      assert new_score < initial_score
 +
 +
 +def test_cv_generator_support():
-+    """Check that we support cv that is a generator.
++    """Check that no exception raised when cv is generator
 +
 +    non-regression test for #25957
 +    """
-+    X, y = make_classification()
++    X, y = make_classification(random_state=0)
 +
 +    groups = np.zeros_like(y, dtype=int)
 +    groups[y.size // 2 :] = 1
@@ -103,181 +107,5 @@ index f6451a36005ac..e99d19d7b4b88 100644
 +
 +    knc = KNeighborsClassifier(n_neighbors=5)
 +
-+    sfs = SequentialFeatureSelector(
-+        knc, n_features_to_select=5, scoring="accuracy", cv=splits
-+    )
-+
-+    try:
-+        sfs.fit(X, y)
-+    except Exception:
-+        pytest.fail("Failed to support cv that is a generator")
-
-From c958c880a7e685a5d436d533aaea8529ca2988d5 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Sat, 25 Mar 2023 21:31:50 +0800
-Subject: [PATCH 2/7] added changelog
-
----
- doc/whats_new/v1.3.rst | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
-index 51b4214145216..6fd62e9dd1caf 100644
---- a/doc/whats_new/v1.3.rst
-+++ b/doc/whats_new/v1.3.rst
-@@ -146,6 +146,9 @@ Changelog
- - |Enhancement| All selectors in :mod:`sklearn.feature_selection` will preserve
-   a DataFrame's dtype when transformed. :pr:`25102` by `Thomas Fan`_.
- 
-+- |Fix| :class:`feature_selection.SequentialFeatureSelector` now does not throw
-+  IndexError when `cv` is a generator. :pr:`25973` by `Yao Xiao <Charlie-XIAO>`.
-+
- :mod:`sklearn.base`
- ...................
- 
-
-From 4192f3ad1eb60f791d5f61353c2387d49d7e4c5d Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Sat, 25 Mar 2023 21:34:04 +0800
-Subject: [PATCH 3/7] modified regression test description and errmsg a bit
-
----
- sklearn/feature_selection/tests/test_sequential.py | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sklearn/feature_selection/tests/test_sequential.py b/sklearn/feature_selection/tests/test_sequential.py
-index e99d19d7b4b88..2568ae80b5053 100644
---- a/sklearn/feature_selection/tests/test_sequential.py
-+++ b/sklearn/feature_selection/tests/test_sequential.py
-@@ -318,7 +318,7 @@ def test_backward_neg_tol():
- 
- 
- def test_cv_generator_support():
--    """Check that we support cv that is a generator.
-+    """Check that we does not throw exception when cv is generator
- 
-     non-regression test for #25957
-     """
-@@ -339,4 +339,4 @@ def test_cv_generator_support():
-     try:
-         sfs.fit(X, y)
-     except Exception:
--        pytest.fail("Failed to support cv that is a generator")
-+        pytest.fail("Should not throw exception when cv is generator")
-
-From 2141626813206987f7ea1dafab3e2103f158bcf9 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Sat, 25 Mar 2023 22:43:04 +0800
-Subject: [PATCH 4/7] removed lines uncovered by test
-
----
- sklearn/feature_selection/tests/test_sequential.py | 8 ++------
- 1 file changed, 2 insertions(+), 6 deletions(-)
-
-diff --git a/sklearn/feature_selection/tests/test_sequential.py b/sklearn/feature_selection/tests/test_sequential.py
-index 2568ae80b5053..02208731cb977 100644
---- a/sklearn/feature_selection/tests/test_sequential.py
-+++ b/sklearn/feature_selection/tests/test_sequential.py
-@@ -318,7 +318,7 @@ def test_backward_neg_tol():
- 
- 
- def test_cv_generator_support():
--    """Check that we does not throw exception when cv is generator
-+    """Check that no exception raised when cv is generator
- 
-     non-regression test for #25957
-     """
-@@ -335,8 +335,4 @@ def test_cv_generator_support():
-     sfs = SequentialFeatureSelector(
-         knc, n_features_to_select=5, scoring="accuracy", cv=splits
-     )
--
--    try:
--        sfs.fit(X, y)
--    except Exception:
--        pytest.fail("Should not throw exception when cv is generator")
-+    sfs.fit(X, y)
-
-From 4515c23c71a77bd1de8683c1a8d36b523ff27bc9 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Tue, 28 Mar 2023 23:33:12 +0800
-Subject: [PATCH 5/7] resolved conversations
-
----
- sklearn/feature_selection/tests/test_sequential.py | 8 +++-----
- 1 file changed, 3 insertions(+), 5 deletions(-)
-
-diff --git a/sklearn/feature_selection/tests/test_sequential.py b/sklearn/feature_selection/tests/test_sequential.py
-index 02208731cb977..7c02d32696178 100644
---- a/sklearn/feature_selection/tests/test_sequential.py
-+++ b/sklearn/feature_selection/tests/test_sequential.py
-@@ -322,7 +322,7 @@ def test_cv_generator_support():
- 
-     non-regression test for #25957
-     """
--    X, y = make_classification()
-+    X, y = make_classification(random_state=0)
- 
-     groups = np.zeros_like(y, dtype=int)
-     groups[y.size // 2 :] = 1
-@@ -330,9 +330,7 @@ def test_cv_generator_support():
-     cv = LeaveOneGroupOut()
-     splits = cv.split(X, y, groups=groups)
- 
--    knc = KNeighborsClassifier(n_neighbors=5)
-+    knc = KNeighborsClassifier(n_neighbors=5, random_state=0)
- 
--    sfs = SequentialFeatureSelector(
--        knc, n_features_to_select=5, scoring="accuracy", cv=splits
--    )
 +    sfs = SequentialFeatureSelector(knc, n_features_to_select=5, cv=splits)
-     sfs.fit(X, y)
-
-From 591e19e711d1d2fbc4ac8ccb36210495fc75f7c0 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 29 Mar 2023 01:29:48 +0800
-Subject: [PATCH 6/7] test random_state=0 removed: knc does not take random
- state
-
----
- sklearn/feature_selection/tests/test_sequential.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sklearn/feature_selection/tests/test_sequential.py b/sklearn/feature_selection/tests/test_sequential.py
-index 7c02d32696178..98134addc39e7 100644
---- a/sklearn/feature_selection/tests/test_sequential.py
-+++ b/sklearn/feature_selection/tests/test_sequential.py
-@@ -330,7 +330,7 @@ def test_cv_generator_support():
-     cv = LeaveOneGroupOut()
-     splits = cv.split(X, y, groups=groups)
- 
--    knc = KNeighborsClassifier(n_neighbors=5, random_state=0)
-+    knc = KNeighborsClassifier(n_neighbors=5)
- 
-     sfs = SequentialFeatureSelector(knc, n_features_to_select=5, cv=splits)
-     sfs.fit(X, y)
-
-From e6c6eea1872ee42ec6d0bc290ed7ae0bedd81b12 Mon Sep 17 00:00:00 2001
-From: Charlie-XIAO <yx2436@nyu.edu>
-Date: Wed, 29 Mar 2023 04:05:23 +0800
-Subject: [PATCH 7/7] modified changelog
-
----
- doc/whats_new/v1.3.rst | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
-index 6fd62e9dd1caf..add8f896dcb1a 100644
---- a/doc/whats_new/v1.3.rst
-+++ b/doc/whats_new/v1.3.rst
-@@ -146,8 +146,8 @@ Changelog
- - |Enhancement| All selectors in :mod:`sklearn.feature_selection` will preserve
-   a DataFrame's dtype when transformed. :pr:`25102` by `Thomas Fan`_.
- 
--- |Fix| :class:`feature_selection.SequentialFeatureSelector` now does not throw
--  IndexError when `cv` is a generator. :pr:`25973` by `Yao Xiao <Charlie-XIAO>`.
-+- |Fix| :class:`feature_selection.SequentialFeatureSelector`'s `cv` parameter
-+  now supports generators. :pr:`25973` by `Yao Xiao <Charlie-XIAO>`.
- 
- :mod:`sklearn.base`
- ...................
++    sfs.fit(X, y)

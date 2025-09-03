@@ -1,12 +1,27 @@
-From 2848aba70bdc05da1518eef4df75323f1d00dfeb Mon Sep 17 00:00:00 2001
-From: Bryan <kenshin2004528@gmail.com>
-Date: Mon, 12 Aug 2019 19:30:05 +0800
-Subject: [PATCH 1/4] use seed even if n_jobs=1
-
----
- sklearn/cluster/k_means_.py | 7 ++++---
- 1 file changed, 4 insertions(+), 3 deletions(-)
-
+diff --git a/doc/whats_new/v0.22.rst b/doc/whats_new/v0.22.rst
+index 7be27894abe0f..0e4cee72c4c1e 100644
+--- a/doc/whats_new/v0.22.rst
++++ b/doc/whats_new/v0.22.rst
+@@ -26,6 +26,8 @@ random sampling procedures.
+ 
+ - :class:`linear_model.Ridge` when `X` is sparse. |Fix|
+ 
++- :class:`cluster.KMeans` when `n_jobs=1`. |Fix|
++
+ Details are listed in the changelog below.
+ 
+ (While we are trying to better inform users by providing this information, we
+@@ -283,6 +285,10 @@ Changelog
+   match `spectral_clustering`.
+   :pr:`13726` by :user:`Shuzhe Xiao <fdas3213>`.
+ 
++- |Fix| Fixed a bug where :class:`cluster.KMeans` produced inconsistent results
++  between `n_jobs=1` and `n_jobs>1` due to the handling of the random state.
++  :pr:`9288` by :user:`Bryan Yang <bryanyang0528>`.
++
+ :mod:`sklearn.feature_selection`
+ ................................
+ 
 diff --git a/sklearn/cluster/k_means_.py b/sklearn/cluster/k_means_.py
 index b7fbdf7da3ad1..4a76a40cc87c1 100644
 --- a/sklearn/cluster/k_means_.py
@@ -40,16 +55,6 @@ index b7fbdf7da3ad1..4a76a40cc87c1 100644
          results = Parallel(n_jobs=n_jobs, verbose=0)(
              delayed(kmeans_single)(X, sample_weight, n_clusters,
                                     max_iter=max_iter, init=init,
-
-From 1ca7e97b7945c86fa89959bf57490da093483c79 Mon Sep 17 00:00:00 2001
-From: Bryan <kenshin2004528@gmail.com>
-Date: Mon, 12 Aug 2019 19:30:18 +0800
-Subject: [PATCH 2/4] add test case for diff n_jobs
-
----
- sklearn/cluster/tests/test_k_means.py | 10 ++++++++++
- 1 file changed, 10 insertions(+)
-
 diff --git a/sklearn/cluster/tests/test_k_means.py b/sklearn/cluster/tests/test_k_means.py
 index 362b0a9145fca..2b3d2a0642ba7 100644
 --- a/sklearn/cluster/tests/test_k_means.py
@@ -68,63 +73,3 @@ index 362b0a9145fca..2b3d2a0642ba7 100644
 +    result_1 = KMeans(n_clusters=3, random_state=0, n_jobs=1).fit(X).labels_
 +    result_2 = KMeans(n_clusters=3, random_state=0, n_jobs=2).fit(X).labels_
 +    assert_array_equal(result_1, result_2)
-
-From aebff534318f54c6060b75595d94c1484401af0a Mon Sep 17 00:00:00 2001
-From: bryanyang0528 <kenshin2004528@hotmail.com>
-Date: Fri, 16 Aug 2019 00:16:17 +0800
-Subject: [PATCH 3/4] updated doc
-
----
- doc/whats_new/v0.22.rst | 7 +++++++
- 1 file changed, 7 insertions(+)
-
-diff --git a/doc/whats_new/v0.22.rst b/doc/whats_new/v0.22.rst
-index 7be27894abe0f..f40a448007f40 100644
---- a/doc/whats_new/v0.22.rst
-+++ b/doc/whats_new/v0.22.rst
-@@ -26,6 +26,8 @@ random sampling procedures.
- 
- - :class:`linear_model.Ridge` when `X` is sparse. |Fix|
- 
-+- :class:`cluster.KMeans` when `n_jobs=1`. |Fix|
-+
- Details are listed in the changelog below.
- 
- (While we are trying to better inform users by providing this information, we
-@@ -283,6 +285,11 @@ Changelog
-   match `spectral_clustering`.
-   :pr:`13726` by :user:`Shuzhe Xiao <fdas3213>`.
- 
-+- |Fix| Fixed a bug where :class:`cluster.KMeans` produced inconsistent results
-+  between `n_jobs=1` and `n_jobs>1` due to the random seed which did not be used
-+  when `n_jobs=1` before.
-+  :pr:`9288` by :user:`Bryan Yang <bryanyang0528>`.
-+
- :mod:`sklearn.feature_selection`
- ................................
- 
-
-From b685401fb210bf3b295b05b67b04060258d4f541 Mon Sep 17 00:00:00 2001
-From: Andreas Mueller <t3kcit@gmail.com>
-Date: Thu, 15 Aug 2019 12:21:13 -0400
-Subject: [PATCH 4/4] Update v0.22.rst
-
-slight phrasing
----
- doc/whats_new/v0.22.rst | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
-
-diff --git a/doc/whats_new/v0.22.rst b/doc/whats_new/v0.22.rst
-index f40a448007f40..0e4cee72c4c1e 100644
---- a/doc/whats_new/v0.22.rst
-+++ b/doc/whats_new/v0.22.rst
-@@ -286,8 +286,7 @@ Changelog
-   :pr:`13726` by :user:`Shuzhe Xiao <fdas3213>`.
- 
- - |Fix| Fixed a bug where :class:`cluster.KMeans` produced inconsistent results
--  between `n_jobs=1` and `n_jobs>1` due to the random seed which did not be used
--  when `n_jobs=1` before.
-+  between `n_jobs=1` and `n_jobs>1` due to the handling of the random state.
-   :pr:`9288` by :user:`Bryan Yang <bryanyang0528>`.
- 
- :mod:`sklearn.feature_selection`

@@ -1,15 +1,3 @@
-From 65072ced02cbdb3e631d0d88fb6706d472c95957 Mon Sep 17 00:00:00 2001
-From: Joseph Kahn <josephbkahn@gmail.com>
-Date: Tue, 8 Nov 2016 12:26:34 -0500
-Subject: [PATCH] Fixed #27461 -- Fixed incorrect allow_migrate() arguments in
- makemigrations.
-
----
- django/core/management/commands/makemigrations.py |  2 +-
- docs/releases/1.10.4.txt                          |  4 ++++
- tests/migrations/test_commands.py                 | 11 ++++++++++-
- 3 files changed, 15 insertions(+), 2 deletions(-)
-
 diff --git a/django/core/management/commands/makemigrations.py b/django/core/management/commands/makemigrations.py
 index 0b39536f5b7f..e648880ef006 100644
 --- a/django/core/management/commands/makemigrations.py

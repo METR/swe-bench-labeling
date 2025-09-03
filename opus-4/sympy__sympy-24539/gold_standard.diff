@@ -1,14 +1,3 @@
-From 107bf052a18913c8241a5682791733ccec6c67ba Mon Sep 17 00:00:00 2001
-From: Steve Kieffer <sk@skieffer.info>
-Date: Tue, 17 Jan 2023 12:23:42 -0500
-Subject: [PATCH] Fix `PolyElement.as_expr()`
-
-Make it accept symbols.
----
- sympy/polys/rings.py            | 9 ++++++---
- sympy/polys/tests/test_rings.py | 6 +++---
- 2 files changed, 9 insertions(+), 6 deletions(-)
-
 diff --git a/sympy/polys/rings.py b/sympy/polys/rings.py
 index 12bd2fc920aa..e99f6676ec42 100644
 --- a/sympy/polys/rings.py

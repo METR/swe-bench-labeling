@@ -1,36 +1,20 @@
-From b56caac90a903fbb0713cd56119a4bbd6ca3ad8c Mon Sep 17 00:00:00 2001
-From: "Sean P. Cornelius" <spcornelius@gmail.com>
-Date: Wed, 8 May 2019 23:22:05 -0400
-Subject: [PATCH 1/4] Fix missing dimensions for unused array args
-
----
- sympy/utilities/codegen.py | 24 +++++++++++++++++-------
- 1 file changed, 17 insertions(+), 7 deletions(-)
-
 diff --git a/sympy/utilities/codegen.py b/sympy/utilities/codegen.py
-index f0befb2bd739..ca7cc57ff34c 100644
+index f0befb2bd739..194aafc37642 100644
 --- a/sympy/utilities/codegen.py
 +++ b/sympy/utilities/codegen.py
-@@ -695,19 +695,25 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
+@@ -695,6 +695,11 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
          arg_list = []
  
          # setup input argument list
 +
-+        # helper to add dimension data for array args
++        # helper to get dimensions for data for array-like args
 +        def dimensions(s):
-+            dims = []
-+            for dim in s.shape:
-+                dims.append((S.Zero, dim - 1))
-+
-+            return dims
++            return [(S.Zero, dim - 1) for dim in s.shape]
 +
          array_symbols = {}
          for array in expressions.atoms(Indexed) | local_expressions.atoms(Indexed):
--            array_symbols[array.base.label] = array
-+             array_symbols[array.base.label] = array
-         for array in expressions.atoms(MatrixSymbol) | local_expressions.atoms(MatrixSymbol):
--            array_symbols[array] = array
-+             array_symbols[array] = array
+             array_symbols[array.base.label] = array
+@@ -703,11 +708,8 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
  
          for symbol in sorted(symbols, key=str):
              if symbol in array_symbols:
@@ -43,34 +27,24 @@ index f0befb2bd739..ca7cc57ff34c 100644
              else:
                  metadata = {}
  
-@@ -739,7 +745,11 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
+@@ -739,7 +741,11 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
                  try:
                      new_args.append(name_arg_dict[symbol])
                  except KeyError:
 -                    new_args.append(InputArgument(symbol))
 +                    if isinstance(symbol, (IndexedBase, MatrixSymbol)):
-+                        metadata = {'dimensions':dimensions(symbol)}
++                        metadata = {'dimensions': dimensions(symbol)}
 +                    else:
 +                        metadata = {}
 +                    new_args.append(InputArgument(symbol, **metadata))
              arg_list = new_args
  
          return Routine(name, arg_list, return_val, local_vars, global_vars)
-
-From 3d2e0af0323919b49873cedf99d6fc190a62815f Mon Sep 17 00:00:00 2001
-From: "Sean P. Cornelius" <spcornelius@gmail.com>
-Date: Wed, 8 May 2019 23:22:53 -0400
-Subject: [PATCH 2/4] Add codegen test for C function sig with unused array arg
-
----
- sympy/utilities/tests/test_codegen.py | 18 ++++++++++++++++++
- 1 file changed, 18 insertions(+)
-
 diff --git a/sympy/utilities/tests/test_codegen.py b/sympy/utilities/tests/test_codegen.py
-index 1cd56e12d115..3a6cd6c9e5d8 100644
+index 1cd56e12d115..78e2c4db36e9 100644
 --- a/sympy/utilities/tests/test_codegen.py
 +++ b/sympy/utilities/tests/test_codegen.py
-@@ -582,6 +582,24 @@ def test_ccode_cse():
+@@ -582,6 +582,25 @@ def test_ccode_cse():
      )
      assert source == expected
  
@@ -81,6 +55,7 @@ index 1cd56e12d115..3a6cd6c9e5d8 100644
 +    generator = CCodeGen()
 +    result = codegen(name_expr, code_gen=generator, header=False, empty=False, argument_sequence=(x,))
 +    source = result[0][1]
++    # note: x should appear as (double *)
 +    expected = (
 +        '#include "test.h"\n'
 +        '#include <math.h>\n'
@@ -95,81 +70,3 @@ index 1cd56e12d115..3a6cd6c9e5d8 100644
  def test_empty_f_code():
      code_gen = FCodeGen()
      source = get_string(code_gen.dump_f95, [])
-
-From cc93f9c6545299a609ffccd4622196588f71a1a4 Mon Sep 17 00:00:00 2001
-From: "Sean P. Cornelius" <spcornelius@gmail.com>
-Date: Wed, 8 May 2019 23:40:29 -0400
-Subject: [PATCH 3/4] Fix indentation
-
----
- sympy/utilities/codegen.py | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/utilities/codegen.py b/sympy/utilities/codegen.py
-index ca7cc57ff34c..346ec1277b2f 100644
---- a/sympy/utilities/codegen.py
-+++ b/sympy/utilities/codegen.py
-@@ -706,9 +706,9 @@ def dimensions(s):
- 
-         array_symbols = {}
-         for array in expressions.atoms(Indexed) | local_expressions.atoms(Indexed):
--             array_symbols[array.base.label] = array
-+            array_symbols[array.base.label] = array
-         for array in expressions.atoms(MatrixSymbol) | local_expressions.atoms(MatrixSymbol):
--             array_symbols[array] = array
-+            array_symbols[array] = array
- 
-         for symbol in sorted(symbols, key=str):
-             if symbol in array_symbols:
-
-From 4d3afb29edc7c50386b77484a187624c152ebf65 Mon Sep 17 00:00:00 2001
-From: "Sean P. Cornelius" <spcornelius@gmail.com>
-Date: Thu, 9 May 2019 10:11:41 -0400
-Subject: [PATCH 4/4] Clean up code
-
----
- sympy/utilities/codegen.py            | 10 +++-------
- sympy/utilities/tests/test_codegen.py |  1 +
- 2 files changed, 4 insertions(+), 7 deletions(-)
-
-diff --git a/sympy/utilities/codegen.py b/sympy/utilities/codegen.py
-index 346ec1277b2f..194aafc37642 100644
---- a/sympy/utilities/codegen.py
-+++ b/sympy/utilities/codegen.py
-@@ -696,13 +696,9 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
- 
-         # setup input argument list
- 
--        # helper to add dimension data for array args
-+        # helper to get dimensions for data for array-like args
-         def dimensions(s):
--            dims = []
--            for dim in s.shape:
--                dims.append((S.Zero, dim - 1))
--
--            return dims
-+            return [(S.Zero, dim - 1) for dim in s.shape]
- 
-         array_symbols = {}
-         for array in expressions.atoms(Indexed) | local_expressions.atoms(Indexed):
-@@ -746,7 +742,7 @@ def dimensions(s):
-                     new_args.append(name_arg_dict[symbol])
-                 except KeyError:
-                     if isinstance(symbol, (IndexedBase, MatrixSymbol)):
--                        metadata = {'dimensions':dimensions(symbol)}
-+                        metadata = {'dimensions': dimensions(symbol)}
-                     else:
-                         metadata = {}
-                     new_args.append(InputArgument(symbol, **metadata))
-diff --git a/sympy/utilities/tests/test_codegen.py b/sympy/utilities/tests/test_codegen.py
-index 3a6cd6c9e5d8..78e2c4db36e9 100644
---- a/sympy/utilities/tests/test_codegen.py
-+++ b/sympy/utilities/tests/test_codegen.py
-@@ -589,6 +589,7 @@ def test_ccode_unused_array_arg():
-     generator = CCodeGen()
-     result = codegen(name_expr, code_gen=generator, header=False, empty=False, argument_sequence=(x,))
-     source = result[0][1]
-+    # note: x should appear as (double *)
-     expected = (
-         '#include "test.h"\n'
-         '#include <math.h>\n'

@@ -1,66 +1,3 @@
-From f1bfdff6907e093ea6ce12e775f93add349adde7 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=C3=96mer=20Faruk=20Abac=C4=B1?= <omerfabaci@gmail.com>
-Date: Wed, 8 Dec 2021 10:11:12 +0100
-Subject: [PATCH 1/3] Refs #33319 -- Added comment about keys/values assertion
- in Query.change_aliases().
-
----
- django/db/models/sql/query.py | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
-index aaf35ee37c5c..fe8ac873b1fa 100644
---- a/django/db/models/sql/query.py
-+++ b/django/db/models/sql/query.py
-@@ -846,6 +846,9 @@ def change_aliases(self, change_map):
-         relabelling any references to them in select columns and the where
-         clause.
-         """
-+        # If keys and values of change_map were to intersect, an alias might be
-+        # updated twice (e.g. T4 -> T5, T5 -> T6, so also T4 -> T6) depending
-+        # on their order in change_map.
-         assert set(change_map).isdisjoint(change_map.values())
- 
-         # 1. Update references in "select" (normal columns plus aliases),
-
-From f04b44bad40369ec2df74b16adb4d3f09350e4b2 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=C3=96mer=20Faruk=20Abac=C4=B1?= <omerfabaci@gmail.com>
-Date: Wed, 8 Dec 2021 10:19:07 +0100
-Subject: [PATCH 2/3] Refs #33319 -- Added note about commutation of QuerySet's
- | operator.
-
----
- docs/ref/models/querysets.txt | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/docs/ref/models/querysets.txt b/docs/ref/models/querysets.txt
-index b2bf5baf9006..51aa7184b6d6 100644
---- a/docs/ref/models/querysets.txt
-+++ b/docs/ref/models/querysets.txt
-@@ -1898,6 +1898,9 @@ SQL equivalent:
- 
-     SELECT ... WHERE x=1 OR y=2
- 
-+``|`` is not a commutative operation, as different (though equivalent) queries
-+may be generated.
-+
- Methods that do not return ``QuerySet``\s
- -----------------------------------------
- 
-
-From 81739a45b5ae8f534910aaabc7e9b457eaa34163 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=C3=96mer=20Faruk=20Abac=C4=B1?= <omerfabaci@gmail.com>
-Date: Tue, 30 Nov 2021 16:50:13 +0300
-Subject: [PATCH 3/3] Fixed #33319 -- Fixed crash when combining with the |
- operator querysets with aliases that conflict.
-
----
- AUTHORS                       |  1 +
- django/db/models/sql/query.py | 25 +++++++++++++++++--------
- tests/queries/models.py       |  3 ++-
- tests/queries/tests.py        | 22 +++++++++++++++++++++-
- 4 files changed, 41 insertions(+), 10 deletions(-)
-
 diff --git a/AUTHORS b/AUTHORS
 index 738c0a04c226..e13d13d4aea3 100644
 --- a/AUTHORS
@@ -74,7 +11,7 @@ index 738c0a04c226..e13d13d4aea3 100644
      Panos Laganakos <panos.laganakos@gmail.com>
      Paolo Melchiorre <paolo@melchiorre.org>
 diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
-index fe8ac873b1fa..b13c7b689323 100644
+index aaf35ee37c5c..b13c7b689323 100644
 --- a/django/db/models/sql/query.py
 +++ b/django/db/models/sql/query.py
 @@ -572,6 +572,15 @@ def combine(self, rhs, connector):
@@ -103,7 +40,17 @@ index fe8ac873b1fa..b13c7b689323 100644
          joinpromoter = JoinPromoter(connector, 2, False)
          joinpromoter.add_votes(
              j for j in self.alias_map if self.alias_map[j].join_type == INNER)
-@@ -882,12 +888,12 @@ def change_aliases(self, change_map):
+@@ -846,6 +852,9 @@ def change_aliases(self, change_map):
+         relabelling any references to them in select columns and the where
+         clause.
+         """
++        # If keys and values of change_map were to intersect, an alias might be
++        # updated twice (e.g. T4 -> T5, T5 -> T6, so also T4 -> T6) depending
++        # on their order in change_map.
+         assert set(change_map).isdisjoint(change_map.values())
+ 
+         # 1. Update references in "select" (normal columns plus aliases),
+@@ -879,12 +888,12 @@ def change_aliases(self, change_map):
              for alias, aliased in self.external_aliases.items()
          }
  
@@ -119,7 +66,7 @@ index fe8ac873b1fa..b13c7b689323 100644
          """
          def prefix_gen():
              """
-@@ -907,7 +913,7 @@ def prefix_gen():
+@@ -904,7 +913,7 @@ def prefix_gen():
                      yield ''.join(s)
                  prefix = None
  
@@ -128,7 +75,7 @@ index fe8ac873b1fa..b13c7b689323 100644
              # No clashes between self and outer query should be possible.
              return
  
-@@ -925,10 +931,13 @@ def prefix_gen():
+@@ -922,10 +931,13 @@ def prefix_gen():
                      'Maximum recursion depth exceeded: too many subqueries.'
                  )
          self.subq_aliases = self.subq_aliases.union([self.alias_prefix])
@@ -143,6 +90,20 @@ index fe8ac873b1fa..b13c7b689323 100644
          })
  
      def get_initial_alias(self):
+diff --git a/docs/ref/models/querysets.txt b/docs/ref/models/querysets.txt
+index b2bf5baf9006..51aa7184b6d6 100644
+--- a/docs/ref/models/querysets.txt
++++ b/docs/ref/models/querysets.txt
+@@ -1898,6 +1898,9 @@ SQL equivalent:
+ 
+     SELECT ... WHERE x=1 OR y=2
+ 
++``|`` is not a commutative operation, as different (though equivalent) queries
++may be generated.
++
+ Methods that do not return ``QuerySet``\s
+ -----------------------------------------
+ 
 diff --git a/tests/queries/models.py b/tests/queries/models.py
 index c3322c224e77..8e7ee1625ce9 100644
 --- a/tests/queries/models.py

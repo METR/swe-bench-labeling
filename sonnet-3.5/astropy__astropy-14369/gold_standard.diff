@@ -1,15 +1,3 @@
-From 4ec671b4a5d5b5bba6074dc1c9d025cecbc4ffd5 Mon Sep 17 00:00:00 2001
-From: Marten van Kerkwijk <mhvk@astro.utoronto.ca>
-Date: Mon, 6 Feb 2023 16:29:54 -0500
-Subject: [PATCH 1/3] Fix CDS unit parser for case of multiple divisions
-
----
- astropy/units/format/cds.py         | 5 ++---
- astropy/units/tests/test_format.py  | 8 +++++++-
- docs/changes/units/14369.bugfix.rst | 2 ++
- 3 files changed, 11 insertions(+), 4 deletions(-)
- create mode 100644 docs/changes/units/14369.bugfix.rst
-
 diff --git a/astropy/units/format/cds.py b/astropy/units/format/cds.py
 index 307e987ed6e9..8a23bf826072 100644
 --- a/astropy/units/format/cds.py
@@ -33,52 +21,6 @@ index 307e987ed6e9..8a23bf826072 100644
              """
              if len(p) == 3:
                  p[0] = p[2] ** -1
-diff --git a/astropy/units/tests/test_format.py b/astropy/units/tests/test_format.py
-index cad23e91be09..c2646b0af990 100644
---- a/astropy/units/tests/test_format.py
-+++ b/astropy/units/tests/test_format.py
-@@ -60,9 +60,13 @@ def test_unit_grammar_fail(string):
-         (["mW/m2"], u.Unit(u.erg / u.cm**2 / u.s)),
-         (["mW/(m2)"], u.Unit(u.erg / u.cm**2 / u.s)),
-         (["km/s", "km.s-1"], u.km / u.s),
-+        (["km/s/Mpc"], u.km / u.s / u.Mpc),
-+        (["km/(s.Mpc)"], u.km / u.s / u.Mpc),
-+        (["10+3J/m/s/kpc2"], u.Unit(1e3 * u.W / (u.m * u.kpc**2))),
-         (["10pix/nm"], u.Unit(10 * u.pix / u.nm)),
-         (["1.5x10+11m"], u.Unit(1.5e11 * u.m)),
--        (["1.5×10+11m"], u.Unit(1.5e11 * u.m)),
-+        (["1.5×10+11/m"], u.Unit(1.5e11 / u.m)),
-+        (["/s"], u.s**-1),
-         (["m2"], u.m**2),
-         (["10+21m"], u.Unit(u.m * 1e21)),
-         (["2.54cm"], u.Unit(u.cm * 2.54)),
-@@ -106,6 +110,8 @@ def test_cds_grammar(strings, unit):
-         "solMass(3/2)",
-         "km / s",
-         "km s-1",
-+        "km/s.Mpc-1",
-+        "/s.Mpc",
-         "pix0.1nm",
-         "pix/(0.1nm)",
-         "km*s",
-diff --git a/docs/changes/units/14369.bugfix.rst b/docs/changes/units/14369.bugfix.rst
-new file mode 100644
-index 000000000000..d19c9e95c468
---- /dev/null
-+++ b/docs/changes/units/14369.bugfix.rst
-@@ -0,0 +1,2 @@
-+CDS units with multiple divisions, such as ``km/s/Mpc`` now parse
-+correctly as being equal to ``km/(s.Mpc)``.
-
-From 251a4061d9e867ede8b4e090426d83ab103fe835 Mon Sep 17 00:00:00 2001
-From: Marten van Kerkwijk <mhvk@astro.utoronto.ca>
-Date: Mon, 6 Feb 2023 16:30:32 -0500
-Subject: [PATCH 2/3] Update CDS parsetab for multiple divisions
-
----
- astropy/units/format/cds_parsetab.py | 60 ++++++++++++++--------------
- 1 file changed, 30 insertions(+), 30 deletions(-)
-
 diff --git a/astropy/units/format/cds_parsetab.py b/astropy/units/format/cds_parsetab.py
 index 741d41643cfd..c60df2c18348 100644
 --- a/astropy/units/format/cds_parsetab.py
@@ -163,17 +105,34 @@ index 741d41643cfd..c60df2c18348 100644
 +  ('signed_float -> sign UINT','signed_float',2,'p_signed_float','cds.py',254),
 +  ('signed_float -> sign UFLOAT','signed_float',2,'p_signed_float','cds.py',255),
  ]
-
-From 4f11e1c66cfc7f41d15b45cf74cab8c9d1f9d4a9 Mon Sep 17 00:00:00 2001
-From: Marten van Kerkwijk <mhvk@astro.utoronto.ca>
-Date: Mon, 6 Feb 2023 16:54:08 -0500
-Subject: [PATCH 3/3] Changelog entry for io.ascii
-
----
- docs/changes/io.ascii/14369.bugfix.rst | 2 ++
- 1 file changed, 2 insertions(+)
- create mode 100644 docs/changes/io.ascii/14369.bugfix.rst
-
+diff --git a/astropy/units/tests/test_format.py b/astropy/units/tests/test_format.py
+index cad23e91be09..c2646b0af990 100644
+--- a/astropy/units/tests/test_format.py
++++ b/astropy/units/tests/test_format.py
+@@ -60,9 +60,13 @@ def test_unit_grammar_fail(string):
+         (["mW/m2"], u.Unit(u.erg / u.cm**2 / u.s)),
+         (["mW/(m2)"], u.Unit(u.erg / u.cm**2 / u.s)),
+         (["km/s", "km.s-1"], u.km / u.s),
++        (["km/s/Mpc"], u.km / u.s / u.Mpc),
++        (["km/(s.Mpc)"], u.km / u.s / u.Mpc),
++        (["10+3J/m/s/kpc2"], u.Unit(1e3 * u.W / (u.m * u.kpc**2))),
+         (["10pix/nm"], u.Unit(10 * u.pix / u.nm)),
+         (["1.5x10+11m"], u.Unit(1.5e11 * u.m)),
+-        (["1.5×10+11m"], u.Unit(1.5e11 * u.m)),
++        (["1.5×10+11/m"], u.Unit(1.5e11 / u.m)),
++        (["/s"], u.s**-1),
+         (["m2"], u.m**2),
+         (["10+21m"], u.Unit(u.m * 1e21)),
+         (["2.54cm"], u.Unit(u.cm * 2.54)),
+@@ -106,6 +110,8 @@ def test_cds_grammar(strings, unit):
+         "solMass(3/2)",
+         "km / s",
+         "km s-1",
++        "km/s.Mpc-1",
++        "/s.Mpc",
+         "pix0.1nm",
+         "pix/(0.1nm)",
+         "km*s",
 diff --git a/docs/changes/io.ascii/14369.bugfix.rst b/docs/changes/io.ascii/14369.bugfix.rst
 new file mode 100644
 index 000000000000..64f333a640ca
@@ -182,3 +141,11 @@ index 000000000000..64f333a640ca
 @@ -0,0 +1,2 @@
 +CDS and MRT tables with units that contain with multiple divisions, such as
 +``km/s/Mpc`` now parse correctly as being equal to ``km/(s.Mpc)``.
+diff --git a/docs/changes/units/14369.bugfix.rst b/docs/changes/units/14369.bugfix.rst
+new file mode 100644
+index 000000000000..d19c9e95c468
+--- /dev/null
++++ b/docs/changes/units/14369.bugfix.rst
+@@ -0,0 +1,2 @@
++CDS units with multiple divisions, such as ``km/s/Mpc`` now parse
++correctly as being equal to ``km/(s.Mpc)``.

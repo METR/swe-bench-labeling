@@ -1,13 +1,3 @@
-From fc8fa1aa265bb14d59c68eb68a179bce17953967 Mon Sep 17 00:00:00 2001
-From: Cory Benfield <lukasaoz@gmail.com>
-Date: Wed, 16 Dec 2015 14:56:13 +0000
-Subject: [PATCH] Fix regression from #2844 regarding binary bodies.
-
----
- requests/models.py | 5 ++++-
- test_requests.py   | 5 +++++
- 2 files changed, 9 insertions(+), 1 deletion(-)
-
 diff --git a/requests/models.py b/requests/models.py
 index 9c624d3c11..4bcbc5484a 100644
 --- a/requests/models.py

@@ -1,14 +1,3 @@
-From d8a540e92281e5cf80a2b045ddc22e93bd93e7f5 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sat, 14 May 2022 23:00:54 +0900
-Subject: [PATCH] Fix #9575: autodoc: Return annotation should not be shown
-
----
- CHANGES                           |  3 +++
- sphinx/ext/autodoc/typehints.py   | 12 ++++++++++--
- tests/test_ext_autodoc_configs.py |  3 ---
- 3 files changed, 13 insertions(+), 5 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index 424a12eaae6..291661b28df 100644
 --- a/CHANGES

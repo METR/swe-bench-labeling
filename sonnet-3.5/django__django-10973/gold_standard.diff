@@ -1,13 +1,3 @@
-From cf826c9a91015c8da2ad4910b12e2ed83e2fb20f Mon Sep 17 00:00:00 2001
-From: Daniel Bowring <github@danielb.codes>
-Date: Mon, 11 Feb 2019 12:17:24 +1100
-Subject: [PATCH] Fixed #30173 -- Simplified db.backends.postgresql.client.
-
----
- django/db/backends/postgresql/client.py | 37 +++-----------------
- tests/dbshell/test_postgresql.py        | 46 +++++++------------------
- 2 files changed, 17 insertions(+), 66 deletions(-)
-
 diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
 index 7fca6eff30a9..cf4df7688229 100644
 --- a/django/db/backends/postgresql/client.py

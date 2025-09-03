@@ -1,17 +1,8 @@
-From 86ec4bb513b7b841977a312c9bba73b7147024ad Mon Sep 17 00:00:00 2001
-From: anca-mc <anca-mc@users.noreply.github.com>
-Date: Sat, 30 Sep 2017 18:45:56 +0300
-Subject: [PATCH 1/4] Update evalf.py
-
----
- sympy/core/evalf.py | 2 ++
- 1 file changed, 2 insertions(+)
-
 diff --git a/sympy/core/evalf.py b/sympy/core/evalf.py
-index 72a5fbae524a..70c5ebaf6bcb 100644
+index 72a5fbae524a..f34908710a5f 100644
 --- a/sympy/core/evalf.py
 +++ b/sympy/core/evalf.py
-@@ -1301,6 +1301,8 @@ def evalf(x, prec, options):
+@@ -1301,12 +1301,16 @@ def evalf(x, prec, options):
              elif re.is_number:
                  re = re._to_mpmath(prec, allow_ints=False)._mpf_
                  reprec = prec
@@ -20,47 +11,6 @@ index 72a5fbae524a..70c5ebaf6bcb 100644
              if im == 0:
                  im = None
                  imprec = None
-
-From e4d3edbc1ce5da2d68b7b593f6b42cd3f2aac00e Mon Sep 17 00:00:00 2001
-From: anca-mc <anca-mc@users.noreply.github.com>
-Date: Sun, 1 Oct 2017 01:27:46 +0300
-Subject: [PATCH 2/4] 13076, test added.
-
----
- sympy/core/tests/test_evalf.py | 4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
-
-diff --git a/sympy/core/tests/test_evalf.py b/sympy/core/tests/test_evalf.py
-index 4ac3d5c4718c..f4b3915ed10e 100644
---- a/sympy/core/tests/test_evalf.py
-+++ b/sympy/core/tests/test_evalf.py
-@@ -229,7 +229,9 @@ def test_evalf_bugs():
- 
-     #issue 11518
-     assert NS(2*x**2.5, 5) == '2.0000*x**2.5000'
--
-+    
-+    #issue 13076
-+    assert NS(Mul(Max(0, y), x, evaluate=False).evalf()) == 'x*Max(0, y)'
- 
- def test_evalf_integer_parts():
-     a = floor(log(8)/log(2) - exp(-1000), evaluate=False)
-
-From bd6ad7f641b311225a43db747fb51fbff78234a4 Mon Sep 17 00:00:00 2001
-From: anca-mc <anca-mc@users.noreply.github.com>
-Date: Sun, 1 Oct 2017 02:02:38 +0300
-Subject: [PATCH 3/4] #13076, else condition for im.is_number
-
-Added else condition for im.is_number statement.
----
- sympy/core/evalf.py | 2 ++
- 1 file changed, 2 insertions(+)
-
-diff --git a/sympy/core/evalf.py b/sympy/core/evalf.py
-index 70c5ebaf6bcb..f34908710a5f 100644
---- a/sympy/core/evalf.py
-+++ b/sympy/core/evalf.py
-@@ -1309,6 +1309,8 @@ def evalf(x, prec, options):
              elif im.is_number:
                  im = im._to_mpmath(prec, allow_ints=False)._mpf_
                  imprec = prec
@@ -69,26 +19,16 @@ index 70c5ebaf6bcb..f34908710a5f 100644
              r = re, im, reprec, imprec
          except AttributeError:
              raise NotImplementedError
-
-From c6c1a777dc689561fdbe8097e5b1d1910ebdce48 Mon Sep 17 00:00:00 2001
-From: anca-mc <anca-mc@users.noreply.github.com>
-Date: Sun, 1 Oct 2017 10:47:21 +0300
-Subject: [PATCH 4/4] # 13076, removes trailing whitespace
-
----
- sympy/core/tests/test_evalf.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
 diff --git a/sympy/core/tests/test_evalf.py b/sympy/core/tests/test_evalf.py
-index f4b3915ed10e..4aef2d7dd66a 100644
+index 4ac3d5c4718c..4aef2d7dd66a 100644
 --- a/sympy/core/tests/test_evalf.py
 +++ b/sympy/core/tests/test_evalf.py
-@@ -229,7 +229,7 @@ def test_evalf_bugs():
- 
+@@ -230,6 +230,8 @@ def test_evalf_bugs():
      #issue 11518
      assert NS(2*x**2.5, 5) == '2.0000*x**2.5000'
--    
-+
-     #issue 13076
-     assert NS(Mul(Max(0, y), x, evaluate=False).evalf()) == 'x*Max(0, y)'
  
++    #issue 13076
++    assert NS(Mul(Max(0, y), x, evaluate=False).evalf()) == 'x*Max(0, y)'
+ 
+ def test_evalf_integer_parts():
+     a = floor(log(8)/log(2) - exp(-1000), evaluate=False)

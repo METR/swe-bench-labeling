@@ -1,23 +1,3 @@
-From cc977dcc6341f8b146985dff9737a46e6203c587 Mon Sep 17 00:00:00 2001
-From: Greg Lucas <greg.m.lucas@gmail.com>
-Date: Mon, 24 Apr 2023 20:19:56 -0600
-Subject: [PATCH] FIX: Update the colormap object's name when registering
-
-When registering a colormap you can use a different name than
-the "cmap.name" attribute now. This will set the colormap based
-on the registered name rather than cmap.name, updating the copy
-of the object that gets registered.
-
-Additionally, the equals method of Colormaps shouldn't care about
-the name of the object, we should only worry about whether the
-values are the same in the lookup tables and let someone use
-object identity if they are worried about the name of the object.
----
- lib/matplotlib/cm.py                |  5 +++++
- lib/matplotlib/colors.py            |  2 +-
- lib/matplotlib/tests/test_colors.py | 16 ++++++++++++++--
- 3 files changed, 20 insertions(+), 3 deletions(-)
-
 diff --git a/lib/matplotlib/cm.py b/lib/matplotlib/cm.py
 index 38158db9564a..78c4ce163579 100644
 --- a/lib/matplotlib/cm.py

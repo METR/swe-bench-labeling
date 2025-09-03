@@ -1,13 +1,3 @@
-From 3a75341adfb39b889095276a0b668c8a4e52d17d Mon Sep 17 00:00:00 2001
-From: Chris Smith <smichr@gmail.com>
-Date: Wed, 24 Jun 2020 08:01:31 -0500
-Subject: [PATCH] fixes 19608
-
----
- sympy/core/sympify.py            | 4 +++-
- sympy/core/tests/test_sympify.py | 1 +
- 2 files changed, 4 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/core/sympify.py b/sympy/core/sympify.py
 index a3f1ce2851ba..cc76b3691568 100644
 --- a/sympy/core/sympify.py

@@ -1,17 +1,3 @@
-From 952382d9dcd7eb949480f6662e3222176debcdbc Mon Sep 17 00:00:00 2001
-From: Aaron Meurer <asmeurer@gmail.com>
-Date: Wed, 25 Jul 2018 11:34:43 -0600
-Subject: [PATCH] Print rationals correctly in the mpmath lambdify printer
-
-This prevents nsolve from losing precision when the equation has rationals.
-
-Fixes #14974.
----
- sympy/printing/pycode.py            | 7 +++++++
- sympy/printing/tests/test_pycode.py | 4 ++--
- sympy/solvers/tests/test_numeric.py | 6 +++++-
- 3 files changed, 14 insertions(+), 3 deletions(-)
-
 diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
 index d06901425d36..243fb857ada0 100644
 --- a/sympy/printing/pycode.py

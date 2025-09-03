@@ -1,39 +1,22 @@
-From 7a70c646fc3dfd8d17dd82d02d69668c34467451 Mon Sep 17 00:00:00 2001
-From: Alan Liddell <alan.c.liddell@gmail.com>
-Date: Tue, 20 Mar 2018 16:34:39 -0400
-Subject: [PATCH 1/4] FIX Solves integer overlow in fowlkes_mallow_score
-
----
- sklearn/metrics/cluster/supervised.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sklearn/metrics/cluster/supervised.py b/sklearn/metrics/cluster/supervised.py
-index a987778ae5d2e..43934d72434ac 100644
---- a/sklearn/metrics/cluster/supervised.py
-+++ b/sklearn/metrics/cluster/supervised.py
-@@ -856,7 +856,7 @@ def fowlkes_mallows_score(labels_true, labels_pred, sparse=False):
-     tk = np.dot(c.data, c.data) - n_samples
-     pk = np.sum(np.asarray(c.sum(axis=0)).ravel() ** 2) - n_samples
-     qk = np.sum(np.asarray(c.sum(axis=1)).ravel() ** 2) - n_samples
--    return tk / np.sqrt(pk * qk) if tk != 0. else 0.
-+    return tk / np.sqrt(pk.astype(np.int64) * qk.astype(np.int64)) if tk != 0. else 0.
+diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
+index e71a8af0d78db..45009ef249a6f 100644
+--- a/doc/whats_new/v0.20.rst
++++ b/doc/whats_new/v0.20.rst
+@@ -354,6 +354,12 @@ Metrics
+   :func:`mutual_info_score`.
+   :issue:`9772` by :user:`Kumar Ashutosh <thechargedneutron>`.
  
++- Fixed a bug in :func:`metrics.cluster.fowlkes_mallows_score` to avoid integer
++  overflow. Casted return value of `contingency_matrix` to `int64` and computed
++  product of square roots rather than square root of product.
++  :issue:`9515` by :user:`Alan Liddell <aliddell>` and
++  :user:`Manh Dao <manhdao>`.
++
+ Neighbors
  
- def entropy(labels):
-
-From 1c25e33e8a0cb335528faadcd99054884bab7a8d Mon Sep 17 00:00:00 2001
-From: Alan Liddell <alan.c.liddell@gmail.com>
-Date: Fri, 23 Mar 2018 11:35:37 -0400
-Subject: [PATCH 2/4] adds non-regression test for FM score, avoids overflow in
- large int64 product by multiplying as float
-
----
- sklearn/metrics/cluster/supervised.py            |  5 +++--
- sklearn/metrics/cluster/tests/test_supervised.py | 11 +++++++++++
- 2 files changed, 14 insertions(+), 2 deletions(-)
-
+ - Fixed a bug so ``predict`` in :class:`neighbors.RadiusNeighborsRegressor` can
 diff --git a/sklearn/metrics/cluster/supervised.py b/sklearn/metrics/cluster/supervised.py
-index 43934d72434ac..a33d0cb25acb0 100644
+index a987778ae5d2e..a33d0cb25acb0 100644
 --- a/sklearn/metrics/cluster/supervised.py
 +++ b/sklearn/metrics/cluster/supervised.py
 @@ -852,11 +852,12 @@ def fowlkes_mallows_score(labels_true, labels_pred, sparse=False):
@@ -46,139 +29,32 @@ index 43934d72434ac..a33d0cb25acb0 100644
      tk = np.dot(c.data, c.data) - n_samples
      pk = np.sum(np.asarray(c.sum(axis=0)).ravel() ** 2) - n_samples
      qk = np.sum(np.asarray(c.sum(axis=1)).ravel() ** 2) - n_samples
--    return tk / np.sqrt(pk.astype(np.int64) * qk.astype(np.int64)) if tk != 0. else 0.
+-    return tk / np.sqrt(pk * qk) if tk != 0. else 0.
 +    return np.sqrt(tk / pk) * np.sqrt(tk / qk) if tk != 0. else 0.
  
  
  def entropy(labels):
 diff --git a/sklearn/metrics/cluster/tests/test_supervised.py b/sklearn/metrics/cluster/tests/test_supervised.py
-index 8da03d1e17457..c843c4a4371dc 100644
+index 8da03d1e17457..8be39cd220d2a 100644
 --- a/sklearn/metrics/cluster/tests/test_supervised.py
 +++ b/sklearn/metrics/cluster/tests/test_supervised.py
-@@ -184,6 +184,17 @@ def test_int_overflow_mutual_info_score():
-     assert_all_finite(mutual_info_score(x.ravel(), y.ravel()))
- 
- 
-+def test_int_overflow_fowlkes_mallows_score():
-+    # cribbed directly from test_int_overflow_mutual_info_score
-+    x = np.array([1] * (52632 + 2529) + [2] * (14660 + 793) + [3] * (3271 +
-+                                                                     204) + [4] * (814 + 39) + [5] * (316 + 20))
-+    y = np.array([0] * 52632 + [1] * 2529 + [0] * 14660 + [1] * 793 +
-+                 [0] * 3271 + [1] * 204 + [0] * 814 + [1] * 39 + [0] * 316 +
-+                 [1] * 20)
-+
-+    assert_all_finite(fowlkes_mallows_score(x.ravel(), y.ravel()))
-+
-+
- def test_entropy():
-     ent = entropy([0, 0, 42.])
-     assert_almost_equal(ent, 0.6365141, 5)
-
-From d059eb12b3d9b05cd6beeb4d05e942032b411035 Mon Sep 17 00:00:00 2001
-From: Alan Liddell <alan.c.liddell@gmail.com>
-Date: Mon, 26 Mar 2018 17:01:32 -0400
-Subject: [PATCH 3/4] consolidates non-regression tests for overflow in
- metrics, adds note in whats_new
-
----
- doc/whats_new/v0.20.rst                       |  6 ++++++
- .../metrics/cluster/tests/test_supervised.py  | 20 +++++--------------
- 2 files changed, 11 insertions(+), 15 deletions(-)
-
-diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
-index e71a8af0d78db..79d4487b90b10 100644
---- a/doc/whats_new/v0.20.rst
-+++ b/doc/whats_new/v0.20.rst
-@@ -354,6 +354,12 @@ Metrics
-   :func:`mutual_info_score`.
-   :issue:`9772` by :user:`Kumar Ashutosh <thechargedneutron>`.
- 
-+- Fixed a bug in :func:`metrics.cluster.fowlkes_mallows_score` to avoid integer
-+  overflow. Casted return value of `contingency_matrix` to `int64` and computed
-+  product of square roots rather than square root of product.
-+  :issue:`9515` by :user:`Alan Liddell <aliddell>` and
-+  :user:`Kumar Ashutosh <thechargedneutron>` and :user:`Manh Dao <manhdao>`.
-+
- Neighbors
- 
- - Fixed a bug so ``predict`` in :class:`neighbors.RadiusNeighborsRegressor` can
-diff --git a/sklearn/metrics/cluster/tests/test_supervised.py b/sklearn/metrics/cluster/tests/test_supervised.py
-index c843c4a4371dc..3cd22a893da35 100644
---- a/sklearn/metrics/cluster/tests/test_supervised.py
-+++ b/sklearn/metrics/cluster/tests/test_supervised.py
-@@ -173,26 +173,16 @@ def test_expected_mutual_info_overflow():
+@@ -173,15 +173,16 @@ def test_expected_mutual_info_overflow():
      assert expected_mutual_information(np.array([[70000]]), 70000) <= 1
  
  
 -def test_int_overflow_mutual_info_score():
+-    # Test overflow in mutual_info_classif
 +def test_int_overflow_mutual_info_fowlkes_mallows_score():
-     # Test overflow in mutual_info_classif
++    # Test overflow in mutual_info_classif and fowlkes_mallows_score
      x = np.array([1] * (52632 + 2529) + [2] * (14660 + 793) + [3] * (3271 +
--                 204) + [4] * (814 + 39) + [5] * (316 + 20))
-+                 204) + [4] * (814 + 39) + [5] * (316 + 20)).ravel()
+                  204) + [4] * (814 + 39) + [5] * (316 + 20))
      y = np.array([0] * 52632 + [1] * 2529 + [0] * 14660 + [1] * 793 +
                   [0] * 3271 + [1] * 204 + [0] * 814 + [1] * 39 + [0] * 316 +
--                 [1] * 20)
-+                 [1] * 20).ravel()
+                  [1] * 20)
  
 -    assert_all_finite(mutual_info_score(x.ravel(), y.ravel()))
--
--
--def test_int_overflow_fowlkes_mallows_score():
--    # cribbed directly from test_int_overflow_mutual_info_score
--    x = np.array([1] * (52632 + 2529) + [2] * (14660 + 793) + [3] * (3271 +
--                                                                     204) + [4] * (814 + 39) + [5] * (316 + 20))
--    y = np.array([0] * 52632 + [1] * 2529 + [0] * 14660 + [1] * 793 +
--                 [0] * 3271 + [1] * 204 + [0] * 814 + [1] * 39 + [0] * 316 +
--                 [1] * 20)
--
--    assert_all_finite(fowlkes_mallows_score(x.ravel(), y.ravel()))
 +    assert_all_finite(mutual_info_score(x, y))
 +    assert_all_finite(fowlkes_mallows_score(x, y))
  
  
  def test_entropy():
-
-From c4177c52638eba7deb5dc4e42fe44eb8c0a7c2ba Mon Sep 17 00:00:00 2001
-From: Alan Liddell <alan.c.liddell@gmail.com>
-Date: Mon, 26 Mar 2018 21:53:04 -0400
-Subject: [PATCH 4/4] removes ravel and previously-credited contributor
-
----
- doc/whats_new/v0.20.rst                          | 2 +-
- sklearn/metrics/cluster/tests/test_supervised.py | 6 +++---
- 2 files changed, 4 insertions(+), 4 deletions(-)
-
-diff --git a/doc/whats_new/v0.20.rst b/doc/whats_new/v0.20.rst
-index 79d4487b90b10..45009ef249a6f 100644
---- a/doc/whats_new/v0.20.rst
-+++ b/doc/whats_new/v0.20.rst
-@@ -358,7 +358,7 @@ Metrics
-   overflow. Casted return value of `contingency_matrix` to `int64` and computed
-   product of square roots rather than square root of product.
-   :issue:`9515` by :user:`Alan Liddell <aliddell>` and
--  :user:`Kumar Ashutosh <thechargedneutron>` and :user:`Manh Dao <manhdao>`.
-+  :user:`Manh Dao <manhdao>`.
- 
- Neighbors
- 
-diff --git a/sklearn/metrics/cluster/tests/test_supervised.py b/sklearn/metrics/cluster/tests/test_supervised.py
-index 3cd22a893da35..8be39cd220d2a 100644
---- a/sklearn/metrics/cluster/tests/test_supervised.py
-+++ b/sklearn/metrics/cluster/tests/test_supervised.py
-@@ -174,12 +174,12 @@ def test_expected_mutual_info_overflow():
- 
- 
- def test_int_overflow_mutual_info_fowlkes_mallows_score():
--    # Test overflow in mutual_info_classif
-+    # Test overflow in mutual_info_classif and fowlkes_mallows_score
-     x = np.array([1] * (52632 + 2529) + [2] * (14660 + 793) + [3] * (3271 +
--                 204) + [4] * (814 + 39) + [5] * (316 + 20)).ravel()
-+                 204) + [4] * (814 + 39) + [5] * (316 + 20))
-     y = np.array([0] * 52632 + [1] * 2529 + [0] * 14660 + [1] * 793 +
-                  [0] * 3271 + [1] * 204 + [0] * 814 + [1] * 39 + [0] * 316 +
--                 [1] * 20).ravel()
-+                 [1] * 20)
- 
-     assert_all_finite(mutual_info_score(x, y))
-     assert_all_finite(fowlkes_mallows_score(x, y))

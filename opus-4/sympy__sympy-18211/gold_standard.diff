@@ -1,22 +1,10 @@
-From 4d4f9ad75c580f99ec4e1666fdbd2e1fe47b12ea Mon Sep 17 00:00:00 2001
-From: Smit Lunagariya <55887635+Smit-create@users.noreply.github.com>
-Date: Fri, 3 Jan 2020 11:58:32 +0530
-Subject: [PATCH 1/4] Handling NotImplementedError
-
----
- sympy/core/relational.py | 11 +++++++++--
- 1 file changed, 9 insertions(+), 2 deletions(-)
-
 diff --git a/sympy/core/relational.py b/sympy/core/relational.py
-index f581bfa3c4e2..37d81f28dbe3 100644
+index f581bfa3c4e2..1dd4f44463c0 100644
 --- a/sympy/core/relational.py
 +++ b/sympy/core/relational.py
-@@ -387,12 +387,19 @@ def __nonzero__(self):
-     __bool__ = __nonzero__
- 
+@@ -389,10 +389,17 @@ def __nonzero__(self):
      def _eval_as_set(self):
--        # self is univariate and periodicity(self, x) in (0, None)
-+       # self is univariate and periodicity(self, x) in (0, None)
+         # self is univariate and periodicity(self, x) in (0, None)
          from sympy.solvers.inequalities import solve_univariate_inequality
 +        from sympy.sets.conditionset import ConditionSet
          syms = self.free_symbols
@@ -33,18 +21,8 @@ index f581bfa3c4e2..37d81f28dbe3 100644
  
      @property
      def binary_symbols(self):
-
-From bce5c8980820b13510dfd1b0ddbc2cb684296b88 Mon Sep 17 00:00:00 2001
-From: Smit Lunagariya <55887635+Smit-create@users.noreply.github.com>
-Date: Fri, 3 Jan 2020 12:01:57 +0530
-Subject: [PATCH 2/4] Added test_issue_18188
-
----
- sympy/core/tests/test_relational.py | 10 +++++++++-
- 1 file changed, 9 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/core/tests/test_relational.py b/sympy/core/tests/test_relational.py
-index 63a8705c62ea..54cf02659d90 100644
+index 63a8705c62ea..d96c9d9dc048 100644
 --- a/sympy/core/tests/test_relational.py
 +++ b/sympy/core/tests/test_relational.py
 @@ -1,7 +1,7 @@
@@ -56,67 +34,17 @@ index 63a8705c62ea..54cf02659d90 100644
  from sympy.core.compatibility import range, PY3
  from sympy.core.relational import (Relational, Equality, Unequality,
                                     GreaterThan, LessThan, StrictGreaterThan,
-@@ -958,6 +958,14 @@ def test_issues_13081_12583_12534():
+@@ -958,6 +958,13 @@ def test_issues_13081_12583_12534():
      # this should be the same if we reverse the relational
      assert [i for i in range(15, 50) if pi.n(i) < Rational(pi.n(i))] == []
  
 +def test_issue_18188():
 +    from sympy.sets.conditionset import ConditionSet
 +    result1 = Eq(x*cos(x) - 3*sin(x), 0)
-+    assert isinstance(result1.as_set(), ConditionSet)
 +    assert result1.as_set() == ConditionSet(x, Eq(x*cos(x) - 3*sin(x), 0), Reals)
++
 +    result2 = Eq(x**2 + sqrt(x*2) + sin(x), 0)
-+    assert isinstance(result2.as_set(), ConditionSet)
 +    assert result2.as_set() == ConditionSet(x, Eq(sqrt(2)*sqrt(x) + x**2 + sin(x), 0), Reals)
  
  def test_binary_symbols():
      ans = set([x])
-
-From 222ebb827f4676a232e09b32b65609646bb37466 Mon Sep 17 00:00:00 2001
-From: Smit Lunagariya <55887635+Smit-create@users.noreply.github.com>
-Date: Fri, 3 Jan 2020 22:30:23 +0530
-Subject: [PATCH 3/4] Updated test_issue_18188
-
----
- sympy/core/tests/test_relational.py | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
-
-diff --git a/sympy/core/tests/test_relational.py b/sympy/core/tests/test_relational.py
-index 54cf02659d90..d96c9d9dc048 100644
---- a/sympy/core/tests/test_relational.py
-+++ b/sympy/core/tests/test_relational.py
-@@ -961,10 +961,9 @@ def test_issues_13081_12583_12534():
- def test_issue_18188():
-     from sympy.sets.conditionset import ConditionSet
-     result1 = Eq(x*cos(x) - 3*sin(x), 0)
--    assert isinstance(result1.as_set(), ConditionSet)
-     assert result1.as_set() == ConditionSet(x, Eq(x*cos(x) - 3*sin(x), 0), Reals)
-+
-     result2 = Eq(x**2 + sqrt(x*2) + sin(x), 0)
--    assert isinstance(result2.as_set(), ConditionSet)
-     assert result2.as_set() == ConditionSet(x, Eq(sqrt(2)*sqrt(x) + x**2 + sin(x), 0), Reals)
- 
- def test_binary_symbols():
-
-From 3278daa1636539cf5ac6c52e0447e9482a463958 Mon Sep 17 00:00:00 2001
-From: Smit Lunagariya <55887635+Smit-create@users.noreply.github.com>
-Date: Fri, 3 Jan 2020 22:31:16 +0530
-Subject: [PATCH 4/4] Update relational.py
-
----
- sympy/core/relational.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/core/relational.py b/sympy/core/relational.py
-index 37d81f28dbe3..1dd4f44463c0 100644
---- a/sympy/core/relational.py
-+++ b/sympy/core/relational.py
-@@ -387,7 +387,7 @@ def __nonzero__(self):
-     __bool__ = __nonzero__
- 
-     def _eval_as_set(self):
--       # self is univariate and periodicity(self, x) in (0, None)
-+        # self is univariate and periodicity(self, x) in (0, None)
-         from sympy.solvers.inequalities import solve_univariate_inequality
-         from sympy.sets.conditionset import ConditionSet
-         syms = self.free_symbols

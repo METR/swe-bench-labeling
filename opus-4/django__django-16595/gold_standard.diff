@@ -1,14 +1,3 @@
-From 2276ec8c21655b05bb44e14e236b499aa5d01f5b Mon Sep 17 00:00:00 2001
-From: Laurent Tramoy <laurent.tramoy@gitguardian.com>
-Date: Fri, 24 Feb 2023 13:48:46 +0100
-Subject: [PATCH] Fixed #34366 -- Reduced AlterField operations when optimizing
- migrations.
-
----
- django/db/migrations/operations/fields.py |  6 +++---
- tests/migrations/test_optimizer.py        | 18 ++++++++++++------
- 2 files changed, 15 insertions(+), 9 deletions(-)
-
 diff --git a/django/db/migrations/operations/fields.py b/django/db/migrations/operations/fields.py
 index cd3aab43adde..fc5640bea99f 100644
 --- a/django/db/migrations/operations/fields.py

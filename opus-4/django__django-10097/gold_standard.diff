@@ -1,13 +1,3 @@
-From f34dcb09f9e2e28b751015aa119c12f5f2814ee9 Mon Sep 17 00:00:00 2001
-From: Tim Bell <timothybell@gmail.com>
-Date: Wed, 27 Jun 2018 09:23:18 +1000
-Subject: [PATCH 1/5] Fix #29528 -- Corrected regex used to validate URLs
-
----
- django/core/validators.py         | 2 +-
- tests/validators/invalid_urls.txt | 2 ++
- 2 files changed, 3 insertions(+), 1 deletion(-)
-
 diff --git a/django/core/validators.py b/django/core/validators.py
 index 92394a7eaead..c1c9cd1c87e8 100644
 --- a/django/core/validators.py
@@ -22,72 +12,19 @@ index 92394a7eaead..c1c9cd1c87e8 100644
          r'(?::\d{2,5})?'  # port
          r'(?:[/?#][^\s]*)?'  # resource path
 diff --git a/tests/validators/invalid_urls.txt b/tests/validators/invalid_urls.txt
-index 04a0b5fb1b5f..b9f6eadd78b9 100644
+index 04a0b5fb1b5f..4a092034ff66 100644
 --- a/tests/validators/invalid_urls.txt
 +++ b/tests/validators/invalid_urls.txt
-@@ -57,3 +57,5 @@ http://example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.
+@@ -57,3 +57,9 @@ http://example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.
  http://example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
  http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaa
  https://test.[com
++http://foo@bar@example.com
 +http://foo/bar@example.com
++http://foo:bar:baz@example.com
++http://foo:bar@baz@example.com
++http://foo:bar/baz@example.com
 +http://invalid-.com/?m=foo@example.com
-
-From fe293483fd15c7037974cbb3d6e73c093d68b1de Mon Sep 17 00:00:00 2001
-From: Tim Bell <timothybell@gmail.com>
-Date: Wed, 27 Jun 2018 09:23:54 +1000
-Subject: [PATCH 2/5] Refs #29528 -- Remove test case of URL that should be
- invalid
-
----
- tests/validators/valid_urls.txt | 1 -
- 1 file changed, 1 deletion(-)
-
-diff --git a/tests/validators/valid_urls.txt b/tests/validators/valid_urls.txt
-index 4bc8c03059c0..6391eed44965 100644
---- a/tests/validators/valid_urls.txt
-+++ b/tests/validators/valid_urls.txt
-@@ -48,7 +48,6 @@ http://foo.bar/?q=Test%20URL-encoded%20stuff
- http://مثال.إختبار
- http://例子.测试
- http://उदाहरण.परीक्षा
--http://-.~_!$&'()*+,;=:%40:80%2f::::::@example.com
- http://xn--7sbb4ac0ad0be6cf.xn--p1ai
- http://1337.net
- http://a.b-c.de
-
-From d579001d95e172d6231fdf5768acf7c6fa8788d8 Mon Sep 17 00:00:00 2001
-From: Tim Bell <timothybell@gmail.com>
-Date: Wed, 27 Jun 2018 09:23:54 +1000
-Subject: [PATCH 3/5] Revert "Refs #29528 -- Remove test case of URL that
- should be invalid"
-
-This reverts commit fe293483fd15c7037974cbb3d6e73c093d68b1de.
----
- tests/validators/valid_urls.txt | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/tests/validators/valid_urls.txt b/tests/validators/valid_urls.txt
-index 6391eed44965..4bc8c03059c0 100644
---- a/tests/validators/valid_urls.txt
-+++ b/tests/validators/valid_urls.txt
-@@ -48,6 +48,7 @@ http://foo.bar/?q=Test%20URL-encoded%20stuff
- http://مثال.إختبار
- http://例子.测试
- http://उदाहरण.परीक्षा
-+http://-.~_!$&'()*+,;=:%40:80%2f::::::@example.com
- http://xn--7sbb4ac0ad0be6cf.xn--p1ai
- http://1337.net
- http://a.b-c.de
-
-From 07d9f8553976a6d6370377c17e43a6b9ccadce2a Mon Sep 17 00:00:00 2001
-From: Tim Bell <timothybell@gmail.com>
-Date: Fri, 20 Jul 2018 10:24:31 +1000
-Subject: [PATCH 4/5] Refs #29528 -- Adjust test case of valid URL
-
----
- tests/validators/valid_urls.txt | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
 diff --git a/tests/validators/valid_urls.txt b/tests/validators/valid_urls.txt
 index 4bc8c03059c0..f79f94814291 100644
 --- a/tests/validators/valid_urls.txt
@@ -101,27 +38,3 @@ index 4bc8c03059c0..f79f94814291 100644
  http://xn--7sbb4ac0ad0be6cf.xn--p1ai
  http://1337.net
  http://a.b-c.de
-
-From 5e4d354e2dad0f2b4002d3e2eafe9ea8ca6a8a1f Mon Sep 17 00:00:00 2001
-From: Tim Bell <timothybell@gmail.com>
-Date: Mon, 23 Jul 2018 07:38:49 +1000
-Subject: [PATCH 5/5] Refs #29528 -- Add more test cases of invalid URLs
-
----
- tests/validators/invalid_urls.txt | 4 ++++
- 1 file changed, 4 insertions(+)
-
-diff --git a/tests/validators/invalid_urls.txt b/tests/validators/invalid_urls.txt
-index b9f6eadd78b9..4a092034ff66 100644
---- a/tests/validators/invalid_urls.txt
-+++ b/tests/validators/invalid_urls.txt
-@@ -57,5 +57,9 @@ http://example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.
- http://example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
- http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaa
- https://test.[com
-+http://foo@bar@example.com
- http://foo/bar@example.com
-+http://foo:bar:baz@example.com
-+http://foo:bar@baz@example.com
-+http://foo:bar/baz@example.com
- http://invalid-.com/?m=foo@example.com

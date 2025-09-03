@@ -1,21 +1,3 @@
-From c22299849589e9a0ca6a6a2f95a84376f932281e Mon Sep 17 00:00:00 2001
-From: Elliott Sales de Andrade <quantum.analyst@gmail.com>
-Date: Wed, 11 Aug 2021 02:17:38 -0400
-Subject: [PATCH] Fix clear of Axes that are shared.
-
-This reverts a portion of a15bc47816e13ff7383c308441cbea7498ac94b0,
-which cleared information that was only known by Subplots or GridSpec at
-initialization time, and stored on the ticks.
-
-Probably the storage of this information and initialization needs to be
-thoroughly reviewed so that it is stored in the right place.
-
-Fixes #20721.
----
- lib/matplotlib/axis.py            |  9 +++++++--
- lib/matplotlib/tests/test_axes.py | 15 +++++++++++++++
- 2 files changed, 22 insertions(+), 2 deletions(-)
-
 diff --git a/lib/matplotlib/axis.py b/lib/matplotlib/axis.py
 index 887cf97ef140..7feca94bd9d8 100644
 --- a/lib/matplotlib/axis.py

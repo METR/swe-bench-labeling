@@ -1,24 +1,11 @@
-From 3c9e53852dc70a9402690b01b96fc5d5c864fe84 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Thu, 7 Oct 2021 00:07:17 +0900
-Subject: [PATCH] Fix #9708: needs_extension failed to check double-digit
- version correctly
-
----
- CHANGES                 |  1 +
- sphinx/extension.py     | 15 ++++++++++++++-
- tests/test_extension.py | 31 +++++++++++++++++++++++++++++++
- 3 files changed, 46 insertions(+), 1 deletion(-)
- create mode 100644 tests/test_extension.py
-
 diff --git a/CHANGES b/CHANGES
-index d2d8b0985a5..2ab2bc27f2c 100644
+index ae7cbbe7ccc..4c70a1bbb56 100644
 --- a/CHANGES
 +++ b/CHANGES
-@@ -59,6 +59,7 @@ Bugs fixed
- * #9649: HTML search: when objects have the same name but in different domains,
-   return all of them as result instead of just one.
+@@ -63,6 +63,7 @@ Bugs fixed
  * #9678: linkcheck: file extension was shown twice in warnings
+ * #9697: py domain: An index entry with parens was registered for ``py:method``
+   directive with ``:property:`` option
 +* #9708: needs_extension failed to check double-digit version correctly
  
  Testing

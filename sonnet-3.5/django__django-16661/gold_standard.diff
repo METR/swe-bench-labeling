@@ -1,14 +1,3 @@
-From 45ecd9acca9b36093e274f47b6877a5f79108d9e Mon Sep 17 00:00:00 2001
-From: sarahboyce <sarahvboyce95@gmail.com>
-Date: Sat, 18 Mar 2023 10:18:11 +0100
-Subject: [PATCH] Fixed #28384 -- Fixed ModelAdmin.lookup_allowed() for
- OneToOneField primary keys and nested relations.
-
----
- django/contrib/admin/options.py | 10 ++++++----
- tests/modeladmin/tests.py       | 29 +++++++++++++++++++++++++++++
- 2 files changed, 35 insertions(+), 4 deletions(-)
-
 diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
 index 5240b07cd645..49c816dc9e7e 100644
 --- a/django/contrib/admin/options.py

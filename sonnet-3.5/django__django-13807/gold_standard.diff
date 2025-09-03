@@ -1,15 +1,3 @@
-From 270072c4c231acd72a03534357a4aa59010e76ff Mon Sep 17 00:00:00 2001
-From: Chinmoy Chakraborty <chinmoy12c@gmail.com>
-Date: Mon, 28 Dec 2020 11:15:48 +0530
-Subject: [PATCH] Fixed #32158 -- Fixed loaddata crash on SQLite when
- table/column names are SQL keywords.
-
----
- django/db/backends/sqlite3/base.py | 11 ++++++++---
- tests/backends/models.py           |  8 ++++++++
- tests/backends/tests.py            | 13 ++++++++++++-
- 3 files changed, 28 insertions(+), 4 deletions(-)
-
 diff --git a/django/db/backends/sqlite3/base.py b/django/db/backends/sqlite3/base.py
 index 2eeaf98c0d2f..ab4ea704920c 100644
 --- a/django/db/backends/sqlite3/base.py

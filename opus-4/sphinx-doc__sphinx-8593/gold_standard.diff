@@ -1,22 +1,3 @@
-From ce52a90d9250d6f770325eca20fcc3c4c13b982f Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 27 Dec 2020 01:42:15 +0900
-Subject: [PATCH] Fix #8592: autodoc: `:meta public:` does not effect to
- variables
-
-To control the visibility of variables, ModuleDocumenter have to load
-docstring of them on `get_object_members()` phase.  This reimplements
-it and `get_module_members()` helper to fetch docstring on earlier
-phase (as ClassDocumenter does).
----
- CHANGES                                       |  3 ++
- doc/extdev/deprecated.rst                     |  5 ++
- sphinx/ext/autodoc/__init__.py                | 54 +++++++++++++------
- sphinx/ext/autodoc/importer.py                |  6 ++-
- .../roots/test-ext-autodoc/target/private.py  |  4 ++
- tests/test_ext_autodoc_private_members.py     | 30 ++++++++++-
- 6 files changed, 85 insertions(+), 17 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index 9360f347300..a88ecb8ce65 100644
 --- a/CHANGES

@@ -1,13 +1,3 @@
-From 4d786a2a07d22cd4e380ed8e4579fcec1ce24a16 Mon Sep 17 00:00:00 2001
-From: Andrey Lekar <andrey_lekar@adoriasoft.com>
-Date: Sat, 17 Sep 2022 00:50:25 +0200
-Subject: [PATCH] Fix and test for issue 24062
-
----
- sympy/physics/units/tests/test_quantities.py | 21 ++++++++++++++++++++
- sympy/physics/units/unitsystem.py            |  7 +++----
- 2 files changed, 24 insertions(+), 4 deletions(-)
-
 diff --git a/sympy/physics/units/tests/test_quantities.py b/sympy/physics/units/tests/test_quantities.py
 index 25a68c7be53a..c1830ba5f772 100644
 --- a/sympy/physics/units/tests/test_quantities.py

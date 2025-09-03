@@ -1,14 +1,3 @@
-From 3306a25dee0dc9c7583f9ede5155ad9a416279d8 Mon Sep 17 00:00:00 2001
-From: Pey Lian Lim <lim@stsci.edu>
-Date: Wed, 7 Feb 2018 10:02:55 -0500
-Subject: [PATCH] InheritDocstrings to work on class property.
-
----
- CHANGES.rst                      |  2 ++
- astropy/utils/misc.py            | 10 +++-------
- astropy/utils/tests/test_misc.py | 12 ++++++++++++
- 3 files changed, 17 insertions(+), 7 deletions(-)
-
 diff --git a/CHANGES.rst b/CHANGES.rst
 index 4b73e1267900..40d53570cd66 100644
 --- a/CHANGES.rst

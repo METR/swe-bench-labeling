@@ -1,25 +1,3 @@
-From 59d935edd726dc577fbc9a8210e1ce457215ea84 Mon Sep 17 00:00:00 2001
-From: Leonid Kovalev <normalhuman@users.noreply.github.com>
-Date: Sun, 18 Mar 2018 14:12:00 -0400
-Subject: [PATCH] Printing: pass StrPrinter settings to subexpressions.
-
-Some methods of StrPrinter do things like
-```
-return "Limit(%s, %s, %s)" % (e, z, z0)
-```
-which means e, z, z0 are stringified by a new instance of the printer,
-without respecting the settings of the original printer.
-This is now replaced by
-```
-return "Limit(%s, %s, %s)" % tuple(map(self._print, (e, z, z0)))
-```
-and so on.
----
- sympy/printing/str.py               | 38 ++++++++++++++++-------------
- sympy/printing/tests/test_python.py |  6 +++--
- sympy/printing/tests/test_str.py    |  6 ++++-
- 3 files changed, 30 insertions(+), 20 deletions(-)
-
 diff --git a/sympy/printing/str.py b/sympy/printing/str.py
 index cc1d19fcce99..41822299338c 100644
 --- a/sympy/printing/str.py

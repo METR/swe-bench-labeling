@@ -1,15 +1,3 @@
-From 8c5f9906c56ac72fc4f13218dd90bdf9bc8a248b Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Wed, 10 Jul 2019 20:02:51 +0200
-Subject: [PATCH] Fixed #30557 -- Fixed crash of ordering by ptr fields when
- Meta.ordering contains expressions.
-
----
- django/db/models/sql/compiler.py |  3 +++
- tests/ordering/models.py         |  4 ++++
- tests/ordering/tests.py          | 22 +++++++++++++++++++++-
- 3 files changed, 28 insertions(+), 1 deletion(-)
-
 diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
 index eaccc96d7d46..3cab405d2df8 100644
 --- a/django/db/models/sql/compiler.py

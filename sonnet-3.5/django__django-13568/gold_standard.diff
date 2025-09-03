@@ -1,15 +1,3 @@
-From f7963615eb7286fa8bff9b294c28452cf13738d0 Mon Sep 17 00:00:00 2001
-From: Hannes Ljungberg <hannes.ljungberg@gmail.com>
-Date: Mon, 19 Oct 2020 16:15:17 +0200
-Subject: [PATCH] Fixed #32121 -- Fixed detecting uniqueness of USERNAME_FIELD
- when using Meta.constraints.
-
-Co-authored-by: Simon Charette <charettes@users.noreply.github.com>
----
- django/contrib/auth/checks.py   |  5 ++-
- tests/auth_tests/test_checks.py | 56 +++++++++++++++++++++++++++++++++
- 2 files changed, 60 insertions(+), 1 deletion(-)
-
 diff --git a/django/contrib/auth/checks.py b/django/contrib/auth/checks.py
 index 65fc266f7e0b..c08ed8a49a7b 100644
 --- a/django/contrib/auth/checks.py

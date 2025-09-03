@@ -1,17 +1,3 @@
-From cd124295d882e13cff556fdeb78e6278d10ac6d5 Mon Sep 17 00:00:00 2001
-From: abhiabhi94 <13880786+abhiabhi94@users.noreply.github.com>
-Date: Sat, 26 Jun 2021 10:48:38 +0530
-Subject: [PATCH] Fixed #32381 -- Made QuerySet.bulk_update() return the number
- of objects updated.
-
-Co-authored-by: Diego Lima <diego.lima@lais.huol.ufrn.br>
----
- django/db/models/query.py         |  6 ++++--
- docs/ref/models/querysets.txt     | 12 +++++++++++-
- docs/releases/4.0.txt             |  2 ++
- tests/queries/test_bulk_update.py | 14 ++++++++++++--
- 4 files changed, 29 insertions(+), 5 deletions(-)
-
 diff --git a/django/db/models/query.py b/django/db/models/query.py
 index 387deca52751..f14ff8d094af 100644
 --- a/django/db/models/query.py

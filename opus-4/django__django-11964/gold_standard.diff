@@ -1,17 +1,3 @@
-From dbcd7b064e7278614f29fc45468d461e263d4da7 Mon Sep 17 00:00:00 2001
-From: Carlton Gibson <carlton.gibson@noumenal.es>
-Date: Wed, 23 Oct 2019 16:14:06 +0200
-Subject: [PATCH] Fixed #30902 -- Added __str__() for model choice enums.
-
-Allows expected behavior when cast to str, also matching behaviour of
-created instances with those fetched from the DB.
-
-Thanks to Simon Charette, Nick Pope, and Shai Berger for reviews.
----
- django/db/models/enums.py  | 8 +++++++-
- tests/model_enums/tests.py | 6 ++++++
- 2 files changed, 13 insertions(+), 1 deletion(-)
-
 diff --git a/django/db/models/enums.py b/django/db/models/enums.py
 index bbe362a6abf5..ae20ef6d937b 100644
 --- a/django/db/models/enums.py

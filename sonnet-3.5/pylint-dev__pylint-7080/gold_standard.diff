@@ -1,13 +1,19 @@
-From d060f7726b77e82f64f5b550c51ba0405ff0d42f Mon Sep 17 00:00:00 2001
-From: Matus Valo <matusvalo@gmail.com>
-Date: Tue, 28 Jun 2022 19:14:06 +0200
-Subject: [PATCH 1/5] normalize path before checking if path should be ignored
-
----
- pylint/lint/expand_modules.py |  1 +
- tests/test_self.py            | 21 +++++++++++++++++++++
- 2 files changed, 22 insertions(+)
-
+diff --git a/doc/whatsnew/2/2.14/full.rst b/doc/whatsnew/2/2.14/full.rst
+index 77d8bf9d71..953f17688a 100644
+--- a/doc/whatsnew/2/2.14/full.rst
++++ b/doc/whatsnew/2/2.14/full.rst
+@@ -5,6 +5,11 @@ What's New in Pylint 2.14.4?
+ ----------------------------
+ Release date: TBA
+ 
++* Fixed an issue where scanning `.` directory recursively with ``--ignore-path=^path/to/dir`` is not
++  ignoring the `path/to/dir` directory.
++
++  Closes #6964
++
+ * Fixed regression that didn't allow quoted ``init-hooks`` in option files.
+ 
+   Closes #7006
 diff --git a/pylint/lint/expand_modules.py b/pylint/lint/expand_modules.py
 index 5cacc0371e..289e1afce5 100644
 --- a/pylint/lint/expand_modules.py
@@ -21,15 +27,15 @@ index 5cacc0371e..289e1afce5 100644
      return (
          basename in ignore_list
 diff --git a/tests/test_self.py b/tests/test_self.py
-index c18a04aef6..e75566a05c 100644
+index c18a04aef6..d745161c54 100644
 --- a/tests/test_self.py
 +++ b/tests/test_self.py
 @@ -1330,6 +1330,27 @@ def test_recursive_current_dir(self):
                      code=0,
                  )
  
-+    def test_ignore_path_recursive_current_dir(self):
-+        """Tests that path is normalized before checked that is ignored. Github bug #6964"""
++    def test_ignore_path_recursive_current_dir(self) -> None:
++        """Tests that path is normalized before checked that is ignored. GitHub issue #6964"""
 +        with _test_sys_path():
 +            # pytest is including directory HERE/regrtest_data to sys.path which causes
 +            # astroid to believe that directory is a package.
@@ -52,101 +58,3 @@ index c18a04aef6..e75566a05c 100644
      def test_regression_recursive_current_dir(self):
          with _test_sys_path():
              # pytest is including directory HERE/regrtest_data to sys.path which causes
-
-From 5dcdafc3ee6d6c5ced54c5aaa3f66c80e8dafb74 Mon Sep 17 00:00:00 2001
-From: Matus Valo <matusvalo@users.noreply.github.com>
-Date: Tue, 28 Jun 2022 19:31:18 +0200
-Subject: [PATCH 2/5] Update tests/test_self.py
-
-Co-authored-by: Pierre Sassoulas <pierre.sassoulas@gmail.com>
----
- tests/test_self.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/tests/test_self.py b/tests/test_self.py
-index e75566a05c..5ceceecf21 100644
---- a/tests/test_self.py
-+++ b/tests/test_self.py
-@@ -1330,7 +1330,7 @@ def test_recursive_current_dir(self):
-                     code=0,
-                 )
- 
--    def test_ignore_path_recursive_current_dir(self):
-+    def test_ignore_path_recursive_current_dir(self) ->None:
-         """Tests that path is normalized before checked that is ignored. Github bug #6964"""
-         with _test_sys_path():
-             # pytest is including directory HERE/regrtest_data to sys.path which causes
-
-From 04754e1ca8dc3972f7f582355b1b02c948057452 Mon Sep 17 00:00:00 2001
-From: "pre-commit-ci[bot]"
- <66853113+pre-commit-ci[bot]@users.noreply.github.com>
-Date: Tue, 28 Jun 2022 17:33:25 +0000
-Subject: [PATCH 3/5] [pre-commit.ci] auto fixes from pre-commit.com hooks
-
-for more information, see https://pre-commit.ci
----
- tests/test_self.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/tests/test_self.py b/tests/test_self.py
-index 5ceceecf21..77a8428228 100644
---- a/tests/test_self.py
-+++ b/tests/test_self.py
-@@ -1330,7 +1330,7 @@ def test_recursive_current_dir(self):
-                     code=0,
-                 )
- 
--    def test_ignore_path_recursive_current_dir(self) ->None:
-+    def test_ignore_path_recursive_current_dir(self) -> None:
-         """Tests that path is normalized before checked that is ignored. Github bug #6964"""
-         with _test_sys_path():
-             # pytest is including directory HERE/regrtest_data to sys.path which causes
-
-From 8c7b929be9635a85703a005f96f52468d81437ab Mon Sep 17 00:00:00 2001
-From: Matus Valo <matusvalo@gmail.com>
-Date: Tue, 28 Jun 2022 19:39:39 +0200
-Subject: [PATCH 4/5] Added Changelog entry
-
----
- doc/whatsnew/2/2.14/full.rst | 5 +++++
- 1 file changed, 5 insertions(+)
-
-diff --git a/doc/whatsnew/2/2.14/full.rst b/doc/whatsnew/2/2.14/full.rst
-index 77d8bf9d71..953f17688a 100644
---- a/doc/whatsnew/2/2.14/full.rst
-+++ b/doc/whatsnew/2/2.14/full.rst
-@@ -5,6 +5,11 @@ What's New in Pylint 2.14.4?
- ----------------------------
- Release date: TBA
- 
-+* Fixed an issue where scanning `.` directory recursively with ``--ignore-path=^path/to/dir`` is not
-+  ignoring the `path/to/dir` directory.
-+
-+  Closes #6964
-+
- * Fixed regression that didn't allow quoted ``init-hooks`` in option files.
- 
-   Closes #7006
-
-From c744a5357abfd30b84de9d171c901de4d555669b Mon Sep 17 00:00:00 2001
-From: Matus Valo <matusvalo@gmail.com>
-Date: Tue, 28 Jun 2022 20:13:00 +0200
-Subject: [PATCH 5/5] Fixed docstring typo
-
----
- tests/test_self.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/tests/test_self.py b/tests/test_self.py
-index 77a8428228..d745161c54 100644
---- a/tests/test_self.py
-+++ b/tests/test_self.py
-@@ -1331,7 +1331,7 @@ def test_recursive_current_dir(self):
-                 )
- 
-     def test_ignore_path_recursive_current_dir(self) -> None:
--        """Tests that path is normalized before checked that is ignored. Github bug #6964"""
-+        """Tests that path is normalized before checked that is ignored. GitHub issue #6964"""
-         with _test_sys_path():
-             # pytest is including directory HERE/regrtest_data to sys.path which causes
-             # astroid to believe that directory is a package.

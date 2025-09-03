@@ -1,14 +1,3 @@
-From df32fd42b84cc6dbba173201f244491b0d154a63 Mon Sep 17 00:00:00 2001
-From: Thodoris Sotiropoulos <theosotr@aueb.gr>
-Date: Wed, 3 Jun 2020 00:14:01 +0300
-Subject: [PATCH] Fixed #31651 -- Made ExpressionWrapper use grouping columns
- from wrapped expression.
-
----
- django/db/models/expressions.py |  3 +++
- tests/expressions/tests.py      | 10 ++++++++++
- 2 files changed, 13 insertions(+)
-
 diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
 index c1a76584f01e..6bd147169263 100644
 --- a/django/db/models/expressions.py

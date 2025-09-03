@@ -1,15 +1,3 @@
-From b9158b96d261eb6126dbd035aa72c621ddea91e8 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Mon, 21 Jun 2021 02:43:55 +0900
-Subject: [PATCH] Fix #9364: autodoc: 1-element tuple on the defarg is wrongly
- rendered
-
----
- CHANGES                  | 2 ++
- sphinx/pycode/ast.py     | 8 +++++---
- tests/test_pycode_ast.py | 3 ++-
- 3 files changed, 9 insertions(+), 4 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index a0f1bab262d..e48dcace957 100644
 --- a/CHANGES

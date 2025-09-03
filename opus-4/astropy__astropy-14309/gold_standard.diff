@@ -1,14 +1,3 @@
-From e1de24563cb0882ae8b396378b1ee75519bfec42 Mon Sep 17 00:00:00 2001
-From: "Pey Lian Lim (Github)" <2090236+pllim@users.noreply.github.com>
-Date: Mon, 23 Jan 2023 17:30:47 -0500
-Subject: [PATCH] BUG: Fix broken logic in FITS connect when filepath is given
- without args
-
----
- astropy/io/fits/connect.py            |  5 ++---
- astropy/io/fits/tests/test_connect.py | 14 +++++++++++++-
- 2 files changed, 15 insertions(+), 4 deletions(-)
-
 diff --git a/astropy/io/fits/connect.py b/astropy/io/fits/connect.py
 index 4b6150f4ace8..210af2b96c27 100644
 --- a/astropy/io/fits/connect.py

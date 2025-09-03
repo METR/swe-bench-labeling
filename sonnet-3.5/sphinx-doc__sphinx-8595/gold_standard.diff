@@ -1,20 +1,3 @@
-From 0d8481873987c4128b486b7f8c8bc47026092383 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 27 Dec 2020 12:04:12 +0900
-Subject: [PATCH] Fix #8594: autodoc: empty __all__ attribute is ignored
-
-An empty `__all__` should be represented as "there is no public items".
-But autodoc considers all items on the module are public.  This changes
-the behavior to correct one.
----
- CHANGES                                       |  1 +
- sphinx/ext/autodoc/__init__.py                |  2 +-
- .../test-ext-autodoc/target/empty_all.py      | 16 +++++++++++
- tests/test_ext_autodoc_automodule.py          | 27 +++++++++++++++++++
- 4 files changed, 45 insertions(+), 1 deletion(-)
- create mode 100644 tests/roots/test-ext-autodoc/target/empty_all.py
- create mode 100644 tests/test_ext_autodoc_automodule.py
-
 diff --git a/CHANGES b/CHANGES
 index bdf3be3b868..1e62225ef38 100644
 --- a/CHANGES

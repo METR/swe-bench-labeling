@@ -1,16 +1,3 @@
-From 9e4780dedac15adcc04309d0198f4ae34e04cc2a Mon Sep 17 00:00:00 2001
-From: Moriyoshi Koizumi <mozo@mozo.jp>
-Date: Sun, 25 Apr 2021 11:52:18 +0900
-Subject: [PATCH] Fixed #32669 -- Fixed detection when started non-django
- modules which aren't packages with "python -m" in autoreloader.
-
----
- django/utils/autoreload.py                   |  9 +++++++--
- tests/utils_tests/test_autoreload.py         | 11 ++++++++++-
- tests/utils_tests/test_module/main_module.py |  0
- 3 files changed, 17 insertions(+), 3 deletions(-)
- create mode 100644 tests/utils_tests/test_module/main_module.py
-
 diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
 index b6af5f549131..15df088c4812 100644
 --- a/django/utils/autoreload.py

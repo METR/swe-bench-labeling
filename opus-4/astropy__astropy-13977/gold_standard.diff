@@ -1,17 +1,3 @@
-From f3389c1b23e09cf512a0edd34b89ab90210a21e5 Mon Sep 17 00:00:00 2001
-From: Roy Smart <roytsmart@gmail.com>
-Date: Tue, 1 Nov 2022 16:20:22 -0600
-Subject: [PATCH] Modified `astropy.units.Quantity.__array_ufunc__()` to return
- `NotImplemented` if the inputs are incompatible.
-
----
- astropy/units/quantity.py                   |  95 +++++++++-------
- astropy/units/tests/test_quantity.py        |   7 +-
- astropy/units/tests/test_quantity_ufuncs.py | 120 ++++++++++++++++++++
- docs/changes/units/13977.bugfix.rst         |   1 +
- 4 files changed, 180 insertions(+), 43 deletions(-)
- create mode 100644 docs/changes/units/13977.bugfix.rst
-
 diff --git a/astropy/units/quantity.py b/astropy/units/quantity.py
 index b98abfafb09c..21134c0fb5c2 100644
 --- a/astropy/units/quantity.py

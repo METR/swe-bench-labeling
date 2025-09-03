@@ -1,15 +1,3 @@
-From 22c48bd88760c8bf7c2e23ce064460a95132e6f4 Mon Sep 17 00:00:00 2001
-From: Ehren Metcalfe <ehren.m@gmail.com>
-Date: Sat, 14 Nov 2020 00:50:07 -0500
-Subject: [PATCH] Use assumption system instead of structural equality check in
- __bool__ method of ExpressionDomain Expression
-
-Avoids unstripped 0 bug
----
- sympy/polys/domains/expressiondomain.py |  2 +-
- sympy/polys/tests/test_polytools.py     | 14 ++++++++++++++
- 2 files changed, 15 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/polys/domains/expressiondomain.py b/sympy/polys/domains/expressiondomain.py
 index 1ce2316dc66f..3813fa394d4c 100644
 --- a/sympy/polys/domains/expressiondomain.py

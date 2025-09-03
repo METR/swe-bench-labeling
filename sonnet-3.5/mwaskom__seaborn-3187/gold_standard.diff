@@ -1,16 +1,16 @@
-From 2d8e5f2bc00250d9237f1652da27f85b139f3460 Mon Sep 17 00:00:00 2001
-From: Michael Waskom <mwaskom@gmail.com>
-Date: Fri, 9 Dec 2022 07:20:06 -0500
-Subject: [PATCH 1/2] Don't show offset / scientific notation in numeric
- legends
-
----
- seaborn/_core/scales.py  | 8 ++++++++
- seaborn/utils.py         | 4 ++++
- tests/_core/test_plot.py | 9 +++++++++
- tests/test_relational.py | 6 ++++++
- 4 files changed, 27 insertions(+)
-
+diff --git a/doc/whatsnew/v0.12.2.rst b/doc/whatsnew/v0.12.2.rst
+index 8eeb8f1990..ad12a778e1 100644
+--- a/doc/whatsnew/v0.12.2.rst
++++ b/doc/whatsnew/v0.12.2.rst
+@@ -6,6 +6,8 @@ v0.12.2 (Unreleased)
+ 
+ - |Enhancement| Automatic mark widths are now calculated separately for unshared facet axes (:pr:`3119`).
+ 
++- |Fix| Fixed a bug where legends for numeric variables with large values with be incorrectly shown (i.e. with a missing offset or exponent; :pr:`3187`).
++
+ - |Fix| Fixed a regression in v0.12.0 where manually-added labels could have duplicate legend entries (:pr:`3116`).
+ 
+ - |Fix| Fixed a bug in :func:`histplot` with `kde=True` and `log_scale=True` where the curve was not scaled properly (:pr:`3173`).
 diff --git a/seaborn/_core/scales.py b/seaborn/_core/scales.py
 index 55874bf2ed..c91f6fdc46 100644
 --- a/seaborn/_core/scales.py
@@ -82,26 +82,3 @@ index b100f4ecac..467b04a512 100644
  
  class TestLinePlotter(SharedAxesLevelTests, Helpers):
  
-
-From 9372112ea432a8b3d5bd9e11051a999b63905e86 Mon Sep 17 00:00:00 2001
-From: Michael Waskom <mwaskom@gmail.com>
-Date: Sat, 17 Dec 2022 19:05:57 -0500
-Subject: [PATCH 2/2] Update release notes
-
----
- doc/whatsnew/v0.12.2.rst | 2 ++
- 1 file changed, 2 insertions(+)
-
-diff --git a/doc/whatsnew/v0.12.2.rst b/doc/whatsnew/v0.12.2.rst
-index 8eeb8f1990..ad12a778e1 100644
---- a/doc/whatsnew/v0.12.2.rst
-+++ b/doc/whatsnew/v0.12.2.rst
-@@ -6,6 +6,8 @@ v0.12.2 (Unreleased)
- 
- - |Enhancement| Automatic mark widths are now calculated separately for unshared facet axes (:pr:`3119`).
- 
-+- |Fix| Fixed a bug where legends for numeric variables with large values with be incorrectly shown (i.e. with a missing offset or exponent; :pr:`3187`).
-+
- - |Fix| Fixed a regression in v0.12.0 where manually-added labels could have duplicate legend entries (:pr:`3116`).
- 
- - |Fix| Fixed a bug in :func:`histplot` with `kde=True` and `log_scale=True` where the curve was not scaled properly (:pr:`3173`).

@@ -1,15 +1,3 @@
-From 97f4a036d1744fd8af8f7b85b01353d5a9ceb393 Mon Sep 17 00:00:00 2001
-From: jfbu <2589111+jfbu@users.noreply.github.com>
-Date: Sun, 8 May 2022 11:32:37 +0200
-Subject: [PATCH] Fix #10434: extra whitespace in pdf output for highlighted
- inline code
-
-Related: #10251
----
- sphinx/writers/latex.py   | 6 +++---
- tests/test_build_latex.py | 4 ++--
- 2 files changed, 5 insertions(+), 5 deletions(-)
-
 diff --git a/sphinx/writers/latex.py b/sphinx/writers/latex.py
 index e0c7d56f8ec..f275100e9d7 100644
 --- a/sphinx/writers/latex.py

@@ -1,13 +1,17 @@
-From 344939fd2e785c023689032289d49d36d9ef4a0d Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Wed, 15 May 2019 14:45:31 +0200
-Subject: [PATCH 1/7] Allow Card.fromstring to work on bytes
-
----
- astropy/io/fits/card.py              | 7 +++++++
- astropy/io/fits/tests/test_header.py | 9 +++++++++
- 2 files changed, 16 insertions(+)
-
+diff --git a/CHANGES.rst b/CHANGES.rst
+index 3dc79416e8fb..7e3eca8099eb 100644
+--- a/CHANGES.rst
++++ b/CHANGES.rst
+@@ -401,6 +401,9 @@ astropy.io.fits
+    Previously setting a header card value to ``None`` resulted in an
+    empty string field rather than a FITS undefined value. [#8572]
+ 
++- Allow ``Header.fromstring`` and ``Card.fromstring`` to accept ``bytes``.
++  [#8707]
++
+ astropy.io.registry
+ ^^^^^^^^^^^^^^^^^^^
+ 
 diff --git a/astropy/io/fits/card.py b/astropy/io/fits/card.py
 index 8c1ac5d73838..312f47b20848 100644
 --- a/astropy/io/fits/card.py
@@ -26,149 +30,21 @@ index 8c1ac5d73838..312f47b20848 100644
          card._image = _pad(image)
          card._verified = False
          return card
-diff --git a/astropy/io/fits/tests/test_header.py b/astropy/io/fits/tests/test_header.py
-index 7c1725aedbca..51b63d0edcef 100644
---- a/astropy/io/fits/tests/test_header.py
-+++ b/astropy/io/fits/tests/test_header.py
-@@ -85,6 +85,15 @@ def test_card_constructor_default_args(self):
-         c = fits.Card()
-         assert '' == c.keyword
- 
-+    def test_card_from_bytes(self):
-+        """
-+        Test loading a Card from a `bytes` object (assuming latin-1 encoding).
-+        """
-+
-+        c = fits.Card.fromstring(b"ABC     = 'abc'")
-+        assert c.keyword == 'ABC'
-+        assert c.value == 'abc'
-+
-     def test_string_value_card(self):
-         """Test Card constructor with string value"""
- 
-
-From 370f6c4fc223785d67b15098a514127f490ed587 Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Wed, 15 May 2019 15:17:47 +0200
-Subject: [PATCH 2/7] Add support for Header.fromstring to work on bytes
-
-This is a bit of a workaround.  Longer-term, given time, it would make more
-sense to redo all the header/card parsing to work intrinsically on *bytes*.
-
-That would be a much bigger, more disruptive change.
----
- astropy/io/fits/header.py            | 26 +++++++++++++++++++++-----
- astropy/io/fits/tests/test_header.py | 15 +++++++++++++++
- 2 files changed, 36 insertions(+), 5 deletions(-)
-
 diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
-index ad07e6d52d39..d9608e2e0b37 100644
+index ad07e6d52d39..29d7a4f5d328 100644
 --- a/astropy/io/fits/header.py
 +++ b/astropy/io/fits/header.py
-@@ -350,6 +350,9 @@ def fromstring(cls, data, sep=''):
+@@ -34,7 +34,8 @@
+ END_CARD = 'END' + ' ' * 77
  
-         cards = []
  
-+        if not isinstance(sep, str):
-+            sep = sep.decode('latin1')
-+
-         # If the card separator contains characters that may validly appear in
-         # a card, the only way to unambiguously distinguish between cards is to
-         # require that they be Card.length long.  However, if the separator
-@@ -357,6 +360,19 @@ def fromstring(cls, data, sep=''):
-         # immediately at the separator
-         require_full_cardlength = set(sep).issubset(VALID_HEADER_CHARS)
+-__doctest_skip__ = ['Header', 'Header.*']
++__doctest_skip__ = ['Header', 'Header.comments', 'Header.fromtextfile',
++                    'Header.totextfile', 'Header.set', 'Header.update']
  
-+        if isinstance(data, bytes):
-+            CONTINUE = b'CONTINUE'
-+            END = b'END'
-+            end_card = END_CARD.encode('ascii')
-+            if not isinstance(sep, bytes):
-+                sep = sep.encode('latin1')
-+            join = lambda i: b''.join(i)
-+        else:
-+            CONTINUE = 'CONTINUE'
-+            END = 'END'
-+            end_card = END_CARD
-+            join = lambda i: ''.join(i)
-+
-         # Split the header into individual cards
-         idx = 0
-         image = []
-@@ -374,17 +390,17 @@ def fromstring(cls, data, sep=''):
-             idx = end_idx + len(sep)
  
-             if image:
--                if next_image[:8] == 'CONTINUE':
-+                if next_image[:8] == CONTINUE:
-                     image.append(next_image)
-                     continue
--                cards.append(Card.fromstring(''.join(image)))
-+                cards.append(Card.fromstring(join(image)))
- 
-             if require_full_cardlength:
--                if next_image == END_CARD:
-+                if next_image == end_card:
-                     image = []
-                     break
-             else:
--                if next_image.split(sep)[0].rstrip() == 'END':
-+                if next_image.split(sep)[0].rstrip() == END:
-                     image = []
-                     break
- 
-@@ -392,7 +408,7 @@ def fromstring(cls, data, sep=''):
- 
-         # Add the last image that was found before the end, if any
-         if image:
--            cards.append(Card.fromstring(''.join(image)))
-+            cards.append(Card.fromstring(join(image)))
- 
-         return cls._fromcards(cards)
- 
-diff --git a/astropy/io/fits/tests/test_header.py b/astropy/io/fits/tests/test_header.py
-index 51b63d0edcef..15146bae029d 100644
---- a/astropy/io/fits/tests/test_header.py
-+++ b/astropy/io/fits/tests/test_header.py
-@@ -2338,6 +2338,21 @@ def test_newlines_in_commentary(self):
-             else:
-                 c.verify('exception')
- 
-+    def test_header_fromstring_bytes(self):
-+        """
-+        Test reading a Header from a `bytes` string.
-+
-+        See https://github.com/astropy/astropy/issues/8706
-+        """
-+
-+        with open(self.data('test0.fits'), 'rb') as fobj:
-+            pri_hdr_from_bytes = fits.Header.fromstring(fobj.read())
-+
-+        pri_hdr = fits.getheader(self.data('test0.fits'))
-+        assert pri_hdr['NAXIS'] == pri_hdr_from_bytes['NAXIS']
-+        assert pri_hdr == pri_hdr_from_bytes
-+        assert pri_hdr.tostring() == pri_hdr_from_bytes.tostring()
-+
- 
- class TestRecordValuedKeywordCards(FitsTestCase):
-     """
-
-From d2ab907b63e6a8fea397b2832d6ff40061481048 Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Thu, 16 May 2019 11:25:55 +0200
-Subject: [PATCH 3/7] Simplify so that the 'sep' argument is only ever accepted
- as a string.
-
-Add some examples to the docstring.
----
- astropy/io/fits/header.py | 44 ++++++++++++++++++++++++++++++++-------
- 1 file changed, 36 insertions(+), 8 deletions(-)
-
-diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
-index d9608e2e0b37..46a8959cbee0 100644
---- a/astropy/io/fits/header.py
-+++ b/astropy/io/fits/header.py
-@@ -334,13 +334,45 @@ def fromstring(cls, data, sep=''):
+ class Header:
+@@ -334,13 +335,45 @@ def fromstring(cls, data, sep=''):
  
          Parameters
          ----------
@@ -200,7 +76,7 @@ index d9608e2e0b37..46a8959cbee0 100644
 +        to have the exact binary structure as it would appear in a FITS file,
 +        with the full 80 byte card length.  Rather, each "card" can end in a
 +        newline and does not have to be padded out to a full card length as
-+        long as it "looks like" a FITS header::
++        long as it "looks like" a FITS header:
 +
 +        >>> hdr = Header.fromstring(\"\"\"\\
 +        ... SIMPLE  =                    T / conforms to FITS standard
@@ -217,156 +93,100 @@ index d9608e2e0b37..46a8959cbee0 100644
  
          Returns
          -------
-@@ -350,9 +382,6 @@ def fromstring(cls, data, sep=''):
- 
-         cards = []
- 
--        if not isinstance(sep, str):
--            sep = sep.decode('latin1')
--
-         # If the card separator contains characters that may validly appear in
-         # a card, the only way to unambiguously distinguish between cards is to
-         # require that they be Card.length long.  However, if the separator
-@@ -364,8 +393,7 @@ def fromstring(cls, data, sep=''):
-             CONTINUE = b'CONTINUE'
-             END = b'END'
-             end_card = END_CARD.encode('ascii')
--            if not isinstance(sep, bytes):
--                sep = sep.encode('latin1')
-+            sep = sep.encode('latin1')
-             join = lambda i: b''.join(i)
-         else:
-             CONTINUE = 'CONTINUE'
-
-From 8af2c6111f921df5c03e21479304ed9b41955d4d Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Thu, 16 May 2019 12:00:17 +0200
-Subject: [PATCH 4/7] Add a bit more commentary on why we decode bytes as
- latin1
-
----
- astropy/io/fits/header.py | 5 +++++
- 1 file changed, 5 insertions(+)
-
-diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
-index 46a8959cbee0..1b4b383a056d 100644
---- a/astropy/io/fits/header.py
-+++ b/astropy/io/fits/header.py
-@@ -390,6 +390,11 @@ def fromstring(cls, data, sep=''):
+@@ -357,6 +390,23 @@ def fromstring(cls, data, sep=''):
+         # immediately at the separator
          require_full_cardlength = set(sep).issubset(VALID_HEADER_CHARS)
  
-         if isinstance(data, bytes):
++        if isinstance(data, bytes):
 +            # FITS supports only ASCII, but decode as latin1 and just take all
 +            # bytes for now; if it results in mojibake due to e.g. UTF-8
 +            # encoded data in a FITS header that's OK because it shouldn't be
 +            # there in the first place--accepting it here still gives us the
 +            # opportunity to display warnings later during validation
-             CONTINUE = b'CONTINUE'
-             END = b'END'
-             end_card = END_CARD.encode('ascii')
-
-From 185362687e6cbd5f7731dc989551b5734b1655b6 Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Thu, 16 May 2019 12:02:10 +0200
-Subject: [PATCH 5/7] Add changelog entry for #8707
-
----
- CHANGES.rst | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/CHANGES.rst b/CHANGES.rst
-index 3dc79416e8fb..7e3eca8099eb 100644
---- a/CHANGES.rst
-+++ b/CHANGES.rst
-@@ -401,6 +401,9 @@ astropy.io.fits
-    Previously setting a header card value to ``None`` resulted in an
-    empty string field rather than a FITS undefined value. [#8572]
- 
-+- Allow ``Header.fromstring`` and ``Card.fromstring`` to accept ``bytes``.
-+  [#8707]
-+
- astropy.io.registry
- ^^^^^^^^^^^^^^^^^^^
- 
-
-From 9e948aa917b85748e5fed57338a8417da9dd150c Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Thu, 16 May 2019 12:04:42 +0200
-Subject: [PATCH 6/7] Minor review nitpick; this is more consistent with the
- surrounding logic
-
----
- astropy/io/fits/header.py | 8 ++++----
- 1 file changed, 4 insertions(+), 4 deletions(-)
-
-diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
-index 1b4b383a056d..28ceb12ae5ea 100644
---- a/astropy/io/fits/header.py
-+++ b/astropy/io/fits/header.py
-@@ -399,12 +399,12 @@ def fromstring(cls, data, sep=''):
-             END = b'END'
-             end_card = END_CARD.encode('ascii')
-             sep = sep.encode('latin1')
--            join = lambda i: b''.join(i)
++            CONTINUE = b'CONTINUE'
++            END = b'END'
++            end_card = END_CARD.encode('ascii')
++            sep = sep.encode('latin1')
 +            empty = b''
-         else:
-             CONTINUE = 'CONTINUE'
-             END = 'END'
-             end_card = END_CARD
--            join = lambda i: ''.join(i)
++        else:
++            CONTINUE = 'CONTINUE'
++            END = 'END'
++            end_card = END_CARD
 +            empty = ''
- 
++
          # Split the header into individual cards
          idx = 0
-@@ -426,7 +426,7 @@ def fromstring(cls, data, sep=''):
-                 if next_image[:8] == CONTINUE:
+         image = []
+@@ -374,17 +424,17 @@ def fromstring(cls, data, sep=''):
+             idx = end_idx + len(sep)
+ 
+             if image:
+-                if next_image[:8] == 'CONTINUE':
++                if next_image[:8] == CONTINUE:
                      image.append(next_image)
                      continue
--                cards.append(Card.fromstring(join(image)))
+-                cards.append(Card.fromstring(''.join(image)))
 +                cards.append(Card.fromstring(empty.join(image)))
  
              if require_full_cardlength:
-                 if next_image == end_card:
-@@ -441,7 +441,7 @@ def fromstring(cls, data, sep=''):
+-                if next_image == END_CARD:
++                if next_image == end_card:
+                     image = []
+                     break
+             else:
+-                if next_image.split(sep)[0].rstrip() == 'END':
++                if next_image.split(sep)[0].rstrip() == END:
+                     image = []
+                     break
+ 
+@@ -392,7 +442,7 @@ def fromstring(cls, data, sep=''):
  
          # Add the last image that was found before the end, if any
          if image:
--            cards.append(Card.fromstring(join(image)))
+-            cards.append(Card.fromstring(''.join(image)))
 +            cards.append(Card.fromstring(empty.join(image)))
  
          return cls._fromcards(cards)
  
-
-From 91e060fd1bec68079a59cc65e153c1dd74cdf707 Mon Sep 17 00:00:00 2001
-From: "Erik M. Bray" <erik.bray@lri.fr>
-Date: Thu, 16 May 2019 16:02:57 +0200
-Subject: [PATCH 7/7] Don't skip the doctests in Header.fromfile
-
-Do fix a docbuild warning about inconsistent literal block quoting.
----
- astropy/io/fits/header.py | 5 +++--
- 1 file changed, 3 insertions(+), 2 deletions(-)
-
-diff --git a/astropy/io/fits/header.py b/astropy/io/fits/header.py
-index 28ceb12ae5ea..29d7a4f5d328 100644
---- a/astropy/io/fits/header.py
-+++ b/astropy/io/fits/header.py
-@@ -34,7 +34,8 @@
- END_CARD = 'END' + ' ' * 77
+diff --git a/astropy/io/fits/tests/test_header.py b/astropy/io/fits/tests/test_header.py
+index 7c1725aedbca..15146bae029d 100644
+--- a/astropy/io/fits/tests/test_header.py
++++ b/astropy/io/fits/tests/test_header.py
+@@ -85,6 +85,15 @@ def test_card_constructor_default_args(self):
+         c = fits.Card()
+         assert '' == c.keyword
  
++    def test_card_from_bytes(self):
++        """
++        Test loading a Card from a `bytes` object (assuming latin-1 encoding).
++        """
++
++        c = fits.Card.fromstring(b"ABC     = 'abc'")
++        assert c.keyword == 'ABC'
++        assert c.value == 'abc'
++
+     def test_string_value_card(self):
+         """Test Card constructor with string value"""
  
--__doctest_skip__ = ['Header', 'Header.*']
-+__doctest_skip__ = ['Header', 'Header.comments', 'Header.fromtextfile',
-+                    'Header.totextfile', 'Header.set', 'Header.update']
+@@ -2329,6 +2338,21 @@ def test_newlines_in_commentary(self):
+             else:
+                 c.verify('exception')
  
++    def test_header_fromstring_bytes(self):
++        """
++        Test reading a Header from a `bytes` string.
++
++        See https://github.com/astropy/astropy/issues/8706
++        """
++
++        with open(self.data('test0.fits'), 'rb') as fobj:
++            pri_hdr_from_bytes = fits.Header.fromstring(fobj.read())
++
++        pri_hdr = fits.getheader(self.data('test0.fits'))
++        assert pri_hdr['NAXIS'] == pri_hdr_from_bytes['NAXIS']
++        assert pri_hdr == pri_hdr_from_bytes
++        assert pri_hdr.tostring() == pri_hdr_from_bytes.tostring()
++
  
- class Header:
-@@ -359,7 +360,7 @@ def fromstring(cls, data, sep=''):
-         to have the exact binary structure as it would appear in a FITS file,
-         with the full 80 byte card length.  Rather, each "card" can end in a
-         newline and does not have to be padded out to a full card length as
--        long as it "looks like" a FITS header::
-+        long as it "looks like" a FITS header:
- 
-         >>> hdr = Header.fromstring(\"\"\"\\
-         ... SIMPLE  =                    T / conforms to FITS standard
+ class TestRecordValuedKeywordCards(FitsTestCase):
+     """

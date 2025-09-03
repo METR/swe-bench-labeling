@@ -1,15 +1,3 @@
-From 502e75f9ed5476ffe8229109acf0c23999d4b533 Mon Sep 17 00:00:00 2001
-From: Ryan Hiebert <ryan@ryanhiebert.com>
-Date: Mon, 29 Jun 2020 23:16:05 -0500
-Subject: [PATCH] Fixed #31750 -- Made models.Field equality compare models for
- inherited fields.
-
----
- django/db/models/fields/__init__.py | 26 ++++++++++++++++++++++---
- docs/releases/3.2.txt               |  4 ++++
- tests/model_fields/tests.py         | 30 +++++++++++++++++++++++++++++
- 3 files changed, 57 insertions(+), 3 deletions(-)
-
 diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
 index 28374272f436..15e69d3704ec 100644
 --- a/django/db/models/fields/__init__.py

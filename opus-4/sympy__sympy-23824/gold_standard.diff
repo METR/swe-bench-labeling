@@ -1,17 +1,16 @@
-From c3519433dd98c6beed8240fe32843a23016cbc10 Mon Sep 17 00:00:00 2001
-From: Glenn Horton-Smith <glenn.hortonsmith@gmail.com>
-Date: Sat, 23 Jul 2022 16:41:28 -0500
-Subject: [PATCH 1/2] Fix issue #23823 in
- physics.hep.gamma_matrices.kahane_simplify()
-
-Simple fix to the order of insertion of leading uncontracted matrices.
-This commit also adds two test cases for the issue,
-one of which replaces a test that was duplicated for some reason.
----
- sympy/physics/hep/gamma_matrices.py            | 3 +--
- sympy/physics/hep/tests/test_gamma_matrices.py | 8 +++++---
- 2 files changed, 6 insertions(+), 5 deletions(-)
-
+diff --git a/.mailmap b/.mailmap
+index 893b628871d1..c6078b779cc3 100644
+--- a/.mailmap
++++ b/.mailmap
+@@ -589,6 +589,8 @@ Gilbert Gede <gilbertgede@gmail.com> <ggede@ucdavis.edu>
+ Gilles Schintgen <gschintgen@hambier.lu>
+ Gina <Dr-G@users.noreply.github.com>
+ Gleb Siroki <g.shiroki@gmail.com>
++Glenn Horton-Smith <glenn.hortonsmith@gmail.com>
++Glenn Horton-Smith <glenn.hortonsmith@gmail.com> Glenn Horton-Smith <gahs@phys.ksu.edu>
+ GolimarOurHero <metalera94@hotmail.com>
+ Goutham Lakshminarayan <dl.goutham@gmail.com> Goutham <devnull@localhost>
+ Govind Sahai <gsiitbhu@gmail.com>
 diff --git a/sympy/physics/hep/gamma_matrices.py b/sympy/physics/hep/gamma_matrices.py
 index 23284e4a9297..c8374424d451 100644
 --- a/sympy/physics/hep/gamma_matrices.py
@@ -46,26 +45,3 @@ index 27509803f24f..d3562771854f 100644
  
  def test_gamma_matrix_class():
      i, j, k = tensor_indices('i,j,k', LorentzIndex)
-
-From 558ded27db7b1f624445d13eb765fa507fe12f69 Mon Sep 17 00:00:00 2001
-From: Glenn Horton-Smith <glenn.hortonsmith@gmail.com>
-Date: Sat, 16 Jul 2022 14:11:34 -0500
-Subject: [PATCH 2/2] Add myself to .mailmap
-
----
- .mailmap | 2 ++
- 1 file changed, 2 insertions(+)
-
-diff --git a/.mailmap b/.mailmap
-index 893b628871d1..c6078b779cc3 100644
---- a/.mailmap
-+++ b/.mailmap
-@@ -589,6 +589,8 @@ Gilbert Gede <gilbertgede@gmail.com> <ggede@ucdavis.edu>
- Gilles Schintgen <gschintgen@hambier.lu>
- Gina <Dr-G@users.noreply.github.com>
- Gleb Siroki <g.shiroki@gmail.com>
-+Glenn Horton-Smith <glenn.hortonsmith@gmail.com>
-+Glenn Horton-Smith <glenn.hortonsmith@gmail.com> Glenn Horton-Smith <gahs@phys.ksu.edu>
- GolimarOurHero <metalera94@hotmail.com>
- Goutham Lakshminarayan <dl.goutham@gmail.com> Goutham <devnull@localhost>
- Govind Sahai <gsiitbhu@gmail.com>

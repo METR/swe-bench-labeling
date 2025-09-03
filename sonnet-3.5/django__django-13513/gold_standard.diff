@@ -1,18 +1,3 @@
-From 78ae8cc5d8aff65afbf35947421a8a1aba13bfab Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Mon, 12 Oct 2020 09:06:35 +0200
-Subject: [PATCH] Fixed #31674 -- Fixed displaying traceback in technical 500
- debug page.
-
-Previously, the technical 500 debug page didn't contain a traceback
-when the exception chain contained an exception without traceback.
-
-Thanks Chris Jerdonek for the report.
----
- django/views/debug.py                | 44 +++++++++++++++-------------
- tests/view_tests/tests/test_debug.py | 28 ++++++++++++++++++
- 2 files changed, 51 insertions(+), 21 deletions(-)
-
 diff --git a/django/views/debug.py b/django/views/debug.py
 index 7a89f7bd1563..bd0a6ba0ba3e 100644
 --- a/django/views/debug.py

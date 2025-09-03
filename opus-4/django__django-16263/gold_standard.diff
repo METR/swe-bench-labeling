@@ -1,18 +1,3 @@
-From 59bea9efd2768102fc9d3aedda469502c218e9b7 Mon Sep 17 00:00:00 2001
-From: Simon Charette <charette.s@gmail.com>
-Date: Sun, 6 Nov 2022 00:28:33 -0400
-Subject: [PATCH] Fixed #28477 -- Stripped unused annotations on aggregation.
-
-Also avoid an unnecessary pushdown when aggregating over a query that doesn't
-have aggregate annotations.
----
- django/db/models/expressions.py |  9 +++++
- django/db/models/query_utils.py |  7 ++--
- django/db/models/sql/query.py   | 71 +++++++++++++++++++++++----------
- django/db/models/sql/where.py   |  6 +++
- tests/aggregation/tests.py      | 39 ++++++++++++++++++
- 5 files changed, 109 insertions(+), 23 deletions(-)
-
 diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
 index 86a3a92f073c..c270ef16c761 100644
 --- a/django/db/models/expressions.py

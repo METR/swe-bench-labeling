@@ -1,14 +1,3 @@
-From 11310e9abbdd784aea4ba50451144fc9c239f71f Mon Sep 17 00:00:00 2001
-From: David Wobrock <david.wobrock@gmail.com>
-Date: Mon, 16 May 2022 09:57:49 +0200
-Subject: [PATCH] Fixed #33710 -- Made RenameIndex operation a noop when the
- old and new name match.
-
----
- django/db/migrations/operations/models.py | 3 +++
- tests/migrations/test_operations.py       | 5 +++++
- 2 files changed, 8 insertions(+)
-
 diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
 index d17232e4ecd0..75a3b8b0304b 100644
 --- a/django/db/migrations/operations/models.py

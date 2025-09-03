@@ -1,17 +1,3 @@
-From 735fe2993bec8a9597744b81edd63585d2e311bf Mon Sep 17 00:00:00 2001
-From: Elliott Sales de Andrade <quantum.analyst@gmail.com>
-Date: Tue, 27 Sep 2022 22:40:58 -0400
-Subject: [PATCH] Don't modify Axes property cycle in stackplot
-
-This is not documented, and likely unwanted, and it breaks using cycle
-colours ('C0', 'C1', etc.) in the colour list.
-
-Fixes #24024
----
- lib/matplotlib/stackplot.py       | 13 ++++++++-----
- lib/matplotlib/tests/test_axes.py |  5 +++--
- 2 files changed, 11 insertions(+), 7 deletions(-)
-
 diff --git a/lib/matplotlib/stackplot.py b/lib/matplotlib/stackplot.py
 index c580043eebbc..c97a21e029f9 100644
 --- a/lib/matplotlib/stackplot.py

@@ -1,125 +1,5 @@
-From cc3d24d7d577f174937a0744d886c4c7123cfa85 Mon Sep 17 00:00:00 2001
-From: Jon Dufresne <jon.dufresne@gmail.com>
-Date: Sun, 26 Jul 2020 19:18:59 -0700
-Subject: [PATCH 1/3] Removed redundant forms.DecimalField.validate() in favor
- of DecimalValidator.
-
----
- django/core/validators.py | 2 +-
- django/forms/fields.py    | 7 -------
- 2 files changed, 1 insertion(+), 8 deletions(-)
-
 diff --git a/django/core/validators.py b/django/core/validators.py
-index 84b4f31ec7d2..a9b8855d0e77 100644
---- a/django/core/validators.py
-+++ b/django/core/validators.py
-@@ -438,7 +438,7 @@ def __init__(self, max_digits, decimal_places):
-     def __call__(self, value):
-         digit_tuple, exponent = value.as_tuple()[1:]
-         if exponent in {'F', 'n', 'N'}:
--            raise ValidationError(self.messages['invalid'])
-+            raise ValidationError(self.messages['invalid'], code='invalid')
-         if exponent >= 0:
-             # A positive exponent adds that many trailing zeros.
-             digits = len(digit_tuple) + exponent
-diff --git a/django/forms/fields.py b/django/forms/fields.py
-index 36dad72704c8..9de2c60b3537 100644
---- a/django/forms/fields.py
-+++ b/django/forms/fields.py
-@@ -350,13 +350,6 @@ def to_python(self, value):
-             raise ValidationError(self.error_messages['invalid'], code='invalid')
-         return value
- 
--    def validate(self, value):
--        super().validate(value)
--        if value in self.empty_values:
--            return
--        if not value.is_finite():
--            raise ValidationError(self.error_messages['invalid'], code='invalid')
--
-     def widget_attrs(self, widget):
-         attrs = super().widget_attrs(widget)
-         if isinstance(widget, NumberInput) and 'step' not in widget.attrs:
-
-From 013e06bb3795bcf840e29576fda7720e26cd7e01 Mon Sep 17 00:00:00 2001
-From: Jon Dufresne <jon.dufresne@gmail.com>
-Date: Mon, 27 Jul 2020 12:34:23 +0200
-Subject: [PATCH 2/3] Refs #31806 -- Added tests for including the value in
- some ValidationErrors.
-
----
- tests/forms_tests/tests/test_validators.py | 41 ++++++++++++++++++++++
- 1 file changed, 41 insertions(+)
-
-diff --git a/tests/forms_tests/tests/test_validators.py b/tests/forms_tests/tests/test_validators.py
-index c5e1f1e980dc..52adbe8c654e 100644
---- a/tests/forms_tests/tests/test_validators.py
-+++ b/tests/forms_tests/tests/test_validators.py
-@@ -1,4 +1,5 @@
- import re
-+import types
- from unittest import TestCase
- 
- from django import forms
-@@ -62,3 +63,43 @@ class UserForm(forms.Form):
-         form = UserForm({'full_name': 'not int nor mail'})
-         self.assertFalse(form.is_valid())
-         self.assertEqual(form.errors['full_name'], ['Enter a valid integer.', 'Enter a valid email address.'])
-+
-+
-+class ValidatorCustomMessageTests(TestCase):
-+    def test_value_placeholder_with_char_field(self):
-+        cases = [
-+            (validators.MaxLengthValidator(10), 11 * 'x', 'max_length'),
-+            (validators.MinLengthValidator(10), 9 * 'x', 'min_length'),
-+        ]
-+        for validator, value, code in cases:
-+            if isinstance(validator, types.FunctionType):
-+                name = validator.__name__
-+            else:
-+                name = type(validator).__name__
-+            with self.subTest(name, value=value):
-+                class MyForm(forms.Form):
-+                    field = forms.CharField(
-+                        validators=[validator],
-+                        error_messages={code: '%(value)s'},
-+                    )
-+
-+                form = MyForm({'field': value})
-+                self.assertIs(form.is_valid(), False)
-+                self.assertEqual(form.errors, {'field': [value]})
-+
-+    def test_value_placeholder_with_integer_field(self):
-+        cases = [
-+            (validators.MaxValueValidator(0), 1, 'max_value'),
-+            (validators.MinValueValidator(0), -1, 'min_value'),
-+        ]
-+        for validator, value, code in cases:
-+            with self.subTest(type(validator).__name__, value=value):
-+                class MyForm(forms.Form):
-+                    field = forms.IntegerField(
-+                        validators=[validator],
-+                        error_messages={code: '%(value)s'},
-+                    )
-+
-+                form = MyForm({'field': value})
-+                self.assertIs(form.is_valid(), False)
-+                self.assertEqual(form.errors, {'field': [str(value)]})
-
-From 83fbaa92311dd96e330496a0e443ea71b9c183e2 Mon Sep 17 00:00:00 2001
-From: Jon Dufresne <jon.dufresne@gmail.com>
-Date: Mon, 20 Jul 2020 16:11:23 -0700
-Subject: [PATCH 3/3] Fixed #31806 -- Made validators include the value in
- ValidationErrors.
-
----
- django/core/validators.py                  | 37 ++++++-------
- docs/releases/3.2.txt                      |  4 +-
- tests/forms_tests/tests/test_validators.py | 63 ++++++++++++++++++++++
- 3 files changed, 85 insertions(+), 19 deletions(-)
-
-diff --git a/django/core/validators.py b/django/core/validators.py
-index a9b8855d0e77..830b53384810 100644
+index 84b4f31ec7d2..830b53384810 100644
 --- a/django/core/validators.py
 +++ b/django/core/validators.py
 @@ -48,7 +48,7 @@ def __call__(self, value):
@@ -223,7 +103,7 @@ index a9b8855d0e77..830b53384810 100644
      def __call__(self, value):
          digit_tuple, exponent = value.as_tuple()[1:]
          if exponent in {'F', 'n', 'N'}:
--            raise ValidationError(self.messages['invalid'], code='invalid')
+-            raise ValidationError(self.messages['invalid'])
 +            raise ValidationError(self.messages['invalid'], code='invalid', params={'value': value})
          if exponent >= 0:
              # A positive exponent adds that many trailing zeros.
@@ -271,6 +151,24 @@ index a9b8855d0e77..830b53384810 100644
  
      def __eq__(self, other):
          return (
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 36dad72704c8..9de2c60b3537 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -350,13 +350,6 @@ def to_python(self, value):
+             raise ValidationError(self.error_messages['invalid'], code='invalid')
+         return value
+ 
+-    def validate(self, value):
+-        super().validate(value)
+-        if value in self.empty_values:
+-            return
+-        if not value.is_finite():
+-            raise ValidationError(self.error_messages['invalid'], code='invalid')
+-
+     def widget_attrs(self, widget):
+         attrs = super().widget_attrs(widget)
+         if isinstance(widget, NumberInput) and 'step' not in widget.attrs:
 diff --git a/docs/releases/3.2.txt b/docs/releases/3.2.txt
 index 5e75f497f4c9..225f3855f320 100644
 --- a/docs/releases/3.2.txt
@@ -287,10 +185,14 @@ index 5e75f497f4c9..225f3855f320 100644
  .. _backwards-incompatible-3.2:
  
 diff --git a/tests/forms_tests/tests/test_validators.py b/tests/forms_tests/tests/test_validators.py
-index 52adbe8c654e..2f26bbfbb764 100644
+index c5e1f1e980dc..2f26bbfbb764 100644
 --- a/tests/forms_tests/tests/test_validators.py
 +++ b/tests/forms_tests/tests/test_validators.py
-@@ -5,6 +5,7 @@
+@@ -1,9 +1,11 @@
+ import re
++import types
+ from unittest import TestCase
+ 
  from django import forms
  from django.core import validators
  from django.core.exceptions import ValidationError
@@ -298,10 +200,15 @@ index 52adbe8c654e..2f26bbfbb764 100644
  
  
  class TestFieldWithValidators(TestCase):
-@@ -68,8 +69,28 @@ class UserForm(forms.Form):
- class ValidatorCustomMessageTests(TestCase):
-     def test_value_placeholder_with_char_field(self):
-         cases = [
+@@ -62,3 +64,105 @@ class UserForm(forms.Form):
+         form = UserForm({'full_name': 'not int nor mail'})
+         self.assertFalse(form.is_valid())
+         self.assertEqual(form.errors['full_name'], ['Enter a valid integer.', 'Enter a valid email address.'])
++
++
++class ValidatorCustomMessageTests(TestCase):
++    def test_value_placeholder_with_char_field(self):
++        cases = [
 +            (validators.validate_integer, '-42.5', 'invalid'),
 +            (validators.validate_email, 'a', 'invalid'),
 +            (validators.validate_email, 'a@b\n.com', 'invalid'),
@@ -313,8 +220,8 @@ index 52adbe8c654e..2f26bbfbb764 100644
 +            (validators.validate_ipv46_address, '256.1.1.1', 'invalid'),
 +            (validators.validate_comma_separated_integer_list, 'a,b,c', 'invalid'),
 +            (validators.int_list_validator(), '-1,2,3', 'invalid'),
-             (validators.MaxLengthValidator(10), 11 * 'x', 'max_length'),
-             (validators.MinLengthValidator(10), 9 * 'x', 'min_length'),
++            (validators.MaxLengthValidator(10), 11 * 'x', 'max_length'),
++            (validators.MinLengthValidator(10), 9 * 'x', 'min_length'),
 +            (validators.URLValidator(), 'no_scheme', 'invalid'),
 +            (validators.URLValidator(), 'http://test[.com', 'invalid'),
 +            (validators.URLValidator(), 'http://[::1:2::3]/', 'invalid'),
@@ -324,13 +231,23 @@ index 52adbe8c654e..2f26bbfbb764 100644
 +                'invalid',
 +            ),
 +            (validators.RegexValidator('[0-9]+'), 'xxxxxx', 'invalid'),
-         ]
-         for validator, value, code in cases:
-             if isinstance(validator, types.FunctionType):
-@@ -87,10 +108,21 @@ class MyForm(forms.Form):
-                 self.assertIs(form.is_valid(), False)
-                 self.assertEqual(form.errors, {'field': [value]})
- 
++        ]
++        for validator, value, code in cases:
++            if isinstance(validator, types.FunctionType):
++                name = validator.__name__
++            else:
++                name = type(validator).__name__
++            with self.subTest(name, value=value):
++                class MyForm(forms.Form):
++                    field = forms.CharField(
++                        validators=[validator],
++                        error_messages={code: '%(value)s'},
++                    )
++
++                form = MyForm({'field': value})
++                self.assertIs(form.is_valid(), False)
++                self.assertEqual(form.errors, {'field': [value]})
++
 +    def test_value_placeholder_with_null_character(self):
 +        class MyForm(forms.Form):
 +            field = forms.CharField(
@@ -341,18 +258,23 @@ index 52adbe8c654e..2f26bbfbb764 100644
 +        self.assertIs(form.is_valid(), False)
 +        self.assertEqual(form.errors, {'field': ['a\x00b']})
 +
-     def test_value_placeholder_with_integer_field(self):
-         cases = [
-             (validators.MaxValueValidator(0), 1, 'max_value'),
-             (validators.MinValueValidator(0), -1, 'min_value'),
++    def test_value_placeholder_with_integer_field(self):
++        cases = [
++            (validators.MaxValueValidator(0), 1, 'max_value'),
++            (validators.MinValueValidator(0), -1, 'min_value'),
 +            (validators.URLValidator(), '1', 'invalid'),
-         ]
-         for validator, value, code in cases:
-             with self.subTest(type(validator).__name__, value=value):
-@@ -103,3 +135,34 @@ class MyForm(forms.Form):
-                 form = MyForm({'field': value})
-                 self.assertIs(form.is_valid(), False)
-                 self.assertEqual(form.errors, {'field': [str(value)]})
++        ]
++        for validator, value, code in cases:
++            with self.subTest(type(validator).__name__, value=value):
++                class MyForm(forms.Form):
++                    field = forms.IntegerField(
++                        validators=[validator],
++                        error_messages={code: '%(value)s'},
++                    )
++
++                form = MyForm({'field': value})
++                self.assertIs(form.is_valid(), False)
++                self.assertEqual(form.errors, {'field': [str(value)]})
 +
 +    def test_value_placeholder_with_decimal_field(self):
 +        cases = [

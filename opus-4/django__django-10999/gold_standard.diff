@@ -1,14 +1,3 @@
-From 99fc5dc13c12d874ffc1c8f47a6421494e720b31 Mon Sep 17 00:00:00 2001
-From: Seunghun Lee <waydi1@gmail.com>
-Date: Sat, 16 Feb 2019 16:43:42 +0900
-Subject: [PATCH] Fixed #30141 -- Fixed parse_duration() for some negative
- durations.
-
----
- django/utils/dateparse.py           | 7 ++++---
- tests/utils_tests/test_dateparse.py | 7 +++++--
- 2 files changed, 9 insertions(+), 5 deletions(-)
-
 diff --git a/django/utils/dateparse.py b/django/utils/dateparse.py
 index 8d08b7d1d342..f90d95258133 100644
 --- a/django/utils/dateparse.py

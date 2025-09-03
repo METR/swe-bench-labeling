@@ -1,17 +1,3 @@
-From 62739b6e2630e37faa68a86a59fad135cc788cd7 Mon Sep 17 00:00:00 2001
-From: Manel Clos <manelclos@gmail.com>
-Date: Sat, 9 Apr 2022 11:36:26 +0200
-Subject: [PATCH] Fixed #33628 -- Ignored directories with empty names in
- autoreloader check for template changes.
-
-Regression in 68357b2ca9e88c40fc00d848799813241be39129.
----
- django/template/autoreload.py             |  4 ++--
- docs/releases/3.2.13.txt                  | 10 +++++++++-
- docs/releases/4.0.4.txt                   |  7 ++++++-
- tests/template_tests/test_autoreloader.py | 11 +++++++++++
- 4 files changed, 28 insertions(+), 4 deletions(-)
-
 diff --git a/django/template/autoreload.py b/django/template/autoreload.py
 index 84c8554165f8..f3fd70403117 100644
 --- a/django/template/autoreload.py

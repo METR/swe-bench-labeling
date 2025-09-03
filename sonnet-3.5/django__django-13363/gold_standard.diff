@@ -1,17 +1,3 @@
-From 9d5d865fd6e989abe60fdf02e7f97fd4d98178a4 Mon Sep 17 00:00:00 2001
-From: Joe Jackson <cpmhjoe@gmail.com>
-Date: Sat, 29 Aug 2020 14:40:54 -0400
-Subject: [PATCH] Fixed #31948 -- Added tzinfo parameter to TruncDate() and
- TruncTime().
-
----
- AUTHORS                                           |  1 +
- django/db/models/functions/datetime.py            |  4 ++--
- docs/ref/models/database-functions.txt            | 12 ++++++++++--
- docs/releases/3.2.txt                             |  5 +++++
- tests/db_functions/datetime/test_extract_trunc.py | 10 ++++++++++
- 5 files changed, 28 insertions(+), 4 deletions(-)
-
 diff --git a/AUTHORS b/AUTHORS
 index 16272bdf28b6..5c50598ddc95 100644
 --- a/AUTHORS

@@ -1,13 +1,3 @@
-From 5d9c6306c925b997b9e5385333a19999322e9ef5 Mon Sep 17 00:00:00 2001
-From: Ruth Comer <10599679+rcomer@users.noreply.github.com>
-Date: Tue, 23 May 2023 22:48:32 +0100
-Subject: [PATCH] FIX: wspace and hspace in subfigures without layout engine
-
----
- lib/matplotlib/figure.py            | 18 +++++++++++++++---
- lib/matplotlib/tests/test_figure.py | 25 +++++++++++++++++++++++++
- 2 files changed, 40 insertions(+), 3 deletions(-)
-
 diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
 index 39517e14d0e3..d71f417166c6 100644
 --- a/lib/matplotlib/figure.py

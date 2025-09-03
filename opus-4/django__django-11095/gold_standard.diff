@@ -1,15 +1,3 @@
-From 917fd9d03fdd21538864af4b412ac30b36d99268 Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Tue, 19 Mar 2019 16:13:26 +0100
-Subject: [PATCH] Fixed #27755 -- Added ModelAdmin.get_inlines() hook.
-
----
- django/contrib/admin/options.py     |  6 +++++-
- docs/ref/contrib/admin/index.txt    | 10 ++++++++++
- docs/releases/3.0.txt               |  4 ++++
- tests/generic_inline_admin/tests.py | 26 ++++++++++++++++++++++++++
- 4 files changed, 45 insertions(+), 1 deletion(-)
-
 diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
 index 5e7b23f9a00a..d64a2e9a2866 100644
 --- a/django/contrib/admin/options.py

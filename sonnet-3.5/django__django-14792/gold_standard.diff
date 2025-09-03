@@ -1,16 +1,3 @@
-From cbba49971bbbbe3e8c6685e4ce6ab87b1187ae87 Mon Sep 17 00:00:00 2001
-From: Carlton Gibson <carlton.gibson@noumenal.es>
-Date: Tue, 24 Aug 2021 11:21:32 +0200
-Subject: [PATCH] Fixed #32992 -- Restored offset extraction for fixed offset
- timezones.
-
-Regression in 10d126198434810529e0220b0c6896ed64ca0e88.
----
- django/utils/timezone.py           |  7 +++++--
- docs/releases/3.2.7.txt            |  3 ++-
- tests/utils_tests/test_timezone.py | 25 +++++++++++++++++++++++++
- 3 files changed, 32 insertions(+), 3 deletions(-)
-
 diff --git a/django/utils/timezone.py b/django/utils/timezone.py
 index bb2b6b95943c..0f5d012c593f 100644
 --- a/django/utils/timezone.py

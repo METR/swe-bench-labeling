@@ -1,262 +1,28 @@
-From 77b32499533ce907c0ebad3df6e6f94ab55674e4 Mon Sep 17 00:00:00 2001
-From: ValueInvestorThijs <thijsvanweezel@gmail.com>
-Date: Sat, 24 Dec 2022 15:40:32 +0100
-Subject: [PATCH 1/9] Adds parameter `fill_value` to IterativeImputer.
-
----
- sklearn/impute/_iterative.py | 10 ++++++++++
- 1 file changed, 10 insertions(+)
-
-diff --git a/sklearn/impute/_iterative.py b/sklearn/impute/_iterative.py
-index 1d918bc0c4643..c8c490344bb6c 100644
---- a/sklearn/impute/_iterative.py
-+++ b/sklearn/impute/_iterative.py
-@@ -1,3 +1,5 @@
-+__package__ = "sklearn.impute"
-+
- from time import time
- from collections import namedtuple
- from numbers import Integral, Real
-@@ -117,6 +119,10 @@ class IterativeImputer(_BaseImputer):
-         Which strategy to use to initialize the missing values. Same as the
-         `strategy` parameter in :class:`~sklearn.impute.SimpleImputer`.
- 
-+    fill_value : float, default=None
-+        The value used to replace missing values if initial_strategy=='constant'.
-+        Same as the `fill_value` parameter in :class:`~sklearn.impute.SimpleImputer`.
-+
-     imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
-             'random'}, default='ascending'
-         The order in which the features will be imputed. Possible values:
-@@ -281,6 +287,7 @@ class IterativeImputer(_BaseImputer):
-         "initial_strategy": [
-             StrOptions({"mean", "median", "most_frequent", "constant"})
-         ],
-+        "fill_value": "no_validation",  # any object is valid
-         "imputation_order": [
-             StrOptions({"ascending", "descending", "roman", "arabic", "random"})
-         ],
-@@ -301,6 +308,7 @@ def __init__(
-         tol=1e-3,
-         n_nearest_features=None,
-         initial_strategy="mean",
-+        fill_value=None,
-         imputation_order="ascending",
-         skip_complete=False,
-         min_value=-np.inf,
-@@ -322,6 +330,7 @@ def __init__(
-         self.tol = tol
-         self.n_nearest_features = n_nearest_features
-         self.initial_strategy = initial_strategy
-+        self.fill_value = fill_value
-         self.imputation_order = imputation_order
-         self.skip_complete = skip_complete
-         self.min_value = min_value
-@@ -613,6 +622,7 @@ def _initial_imputation(self, X, in_fit=False):
-             self.initial_imputer_ = SimpleImputer(
-                 missing_values=self.missing_values,
-                 strategy=self.initial_strategy,
-+                fill_value=self.fill_value,
-                 keep_empty_features=self.keep_empty_features,
-             )
-             X_filled = self.initial_imputer_.fit_transform(X)
-
-From 53c5b1e8b6243cf638769546975d310f97ba8522 Mon Sep 17 00:00:00 2001
-From: ValueInvestorThijs <thijsvanweezel@gmail.com>
-Date: Sat, 24 Dec 2022 15:48:39 +0100
-Subject: [PATCH 2/9] Revert "Adds parameter `fill_value` to IterativeImputer."
-
-This reverts commit 77b32499533ce907c0ebad3df6e6f94ab55674e4.
----
- sklearn/impute/_iterative.py | 10 ----------
- 1 file changed, 10 deletions(-)
-
-diff --git a/sklearn/impute/_iterative.py b/sklearn/impute/_iterative.py
-index c8c490344bb6c..1d918bc0c4643 100644
---- a/sklearn/impute/_iterative.py
-+++ b/sklearn/impute/_iterative.py
-@@ -1,5 +1,3 @@
--__package__ = "sklearn.impute"
--
- from time import time
- from collections import namedtuple
- from numbers import Integral, Real
-@@ -119,10 +117,6 @@ class IterativeImputer(_BaseImputer):
-         Which strategy to use to initialize the missing values. Same as the
-         `strategy` parameter in :class:`~sklearn.impute.SimpleImputer`.
- 
--    fill_value : float, default=None
--        The value used to replace missing values if initial_strategy=='constant'.
--        Same as the `fill_value` parameter in :class:`~sklearn.impute.SimpleImputer`.
--
-     imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
-             'random'}, default='ascending'
-         The order in which the features will be imputed. Possible values:
-@@ -287,7 +281,6 @@ class IterativeImputer(_BaseImputer):
-         "initial_strategy": [
-             StrOptions({"mean", "median", "most_frequent", "constant"})
-         ],
--        "fill_value": "no_validation",  # any object is valid
-         "imputation_order": [
-             StrOptions({"ascending", "descending", "roman", "arabic", "random"})
-         ],
-@@ -308,7 +301,6 @@ def __init__(
-         tol=1e-3,
-         n_nearest_features=None,
-         initial_strategy="mean",
--        fill_value=None,
-         imputation_order="ascending",
-         skip_complete=False,
-         min_value=-np.inf,
-@@ -330,7 +322,6 @@ def __init__(
-         self.tol = tol
-         self.n_nearest_features = n_nearest_features
-         self.initial_strategy = initial_strategy
--        self.fill_value = fill_value
-         self.imputation_order = imputation_order
-         self.skip_complete = skip_complete
-         self.min_value = min_value
-@@ -622,7 +613,6 @@ def _initial_imputation(self, X, in_fit=False):
-             self.initial_imputer_ = SimpleImputer(
-                 missing_values=self.missing_values,
-                 strategy=self.initial_strategy,
--                fill_value=self.fill_value,
-                 keep_empty_features=self.keep_empty_features,
-             )
-             X_filled = self.initial_imputer_.fit_transform(X)
-
-From 0ab71ce7872365745d50e9847e8020926a4a8ce7 Mon Sep 17 00:00:00 2001
-From: ValueInvestorThijs <thijsvanweezel@gmail.com>
-Date: Sat, 24 Dec 2022 15:51:24 +0100
-Subject: [PATCH 3/9] ENH Adds parameter `fill_value` to IterativeImputer
- (#25052)
-
----
- sklearn/impute/_iterative.py | 8 ++++++++
- 1 file changed, 8 insertions(+)
-
-diff --git a/sklearn/impute/_iterative.py b/sklearn/impute/_iterative.py
-index 1d918bc0c4643..25e5015a91c19 100644
---- a/sklearn/impute/_iterative.py
-+++ b/sklearn/impute/_iterative.py
-@@ -117,6 +117,10 @@ class IterativeImputer(_BaseImputer):
-         Which strategy to use to initialize the missing values. Same as the
-         `strategy` parameter in :class:`~sklearn.impute.SimpleImputer`.
- 
-+    fill_value : float, default=None
-+        The value used to replace missing values if initial_strategy=='constant'.
-+        Same as the `fill_value` parameter in :class:`~sklearn.impute.SimpleImputer`.
-+
-     imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
-             'random'}, default='ascending'
-         The order in which the features will be imputed. Possible values:
-@@ -281,6 +285,7 @@ class IterativeImputer(_BaseImputer):
-         "initial_strategy": [
-             StrOptions({"mean", "median", "most_frequent", "constant"})
-         ],
-+        "fill_value": "no_validation",  # any object is valid
-         "imputation_order": [
-             StrOptions({"ascending", "descending", "roman", "arabic", "random"})
-         ],
-@@ -301,6 +306,7 @@ def __init__(
-         tol=1e-3,
-         n_nearest_features=None,
-         initial_strategy="mean",
-+        fill_value=None,
-         imputation_order="ascending",
-         skip_complete=False,
-         min_value=-np.inf,
-@@ -322,6 +328,7 @@ def __init__(
-         self.tol = tol
-         self.n_nearest_features = n_nearest_features
-         self.initial_strategy = initial_strategy
-+        self.fill_value = fill_value
-         self.imputation_order = imputation_order
-         self.skip_complete = skip_complete
-         self.min_value = min_value
-@@ -613,6 +620,7 @@ def _initial_imputation(self, X, in_fit=False):
-             self.initial_imputer_ = SimpleImputer(
-                 missing_values=self.missing_values,
-                 strategy=self.initial_strategy,
-+                fill_value=self.fill_value,
-                 keep_empty_features=self.keep_empty_features,
-             )
-             X_filled = self.initial_imputer_.fit_transform(X)
-
-From b7967454abfa0d465b6a306df760302274c522bb Mon Sep 17 00:00:00 2001
-From: ValueInvestorThijs <thijsvanweezel@gmail.com>
-Date: Tue, 3 Jan 2023 17:14:04 +0100
-Subject: [PATCH 4/9] Adds a test for fill_value and an entry in the changelog
- file.
-
----
- doc/whats_new/v1.3.rst              |  5 +++++
- sklearn/impute/tests/test_impute.py | 14 ++++++++++++++
- 2 files changed, 19 insertions(+)
-
 diff --git a/doc/whats_new/v1.3.rst b/doc/whats_new/v1.3.rst
-index eb9f0cc473e27..3c516534aba0d 100644
+index fa6d3461d3c78..41fec4980aa99 100644
 --- a/doc/whats_new/v1.3.rst
 +++ b/doc/whats_new/v1.3.rst
-@@ -48,6 +48,11 @@ Changelog
-   :class:`ensemble.ExtraTreesClassifier` and :class:`ensemble.ExtraTreesRegressor`.
-   :pr:`25177` by :user:`Tim Head <betatim>`.
+@@ -107,6 +107,12 @@ Changelog
+   inconsistent with the sckit-learn verion the estimator was pickled with.
+   :pr:`25297` by `Thomas Fan`_.
  
 +:mod:`sklearn.impute`
-+.......................
++.....................
++
 +- |Enhancement| Added the parameter `fill_value` to :class:`impute.IterativeImputer`.
 +  :pr:`25232` by :user:`Thijs van Weezel <ValueInvestorThijs>`.
 +
- :mod:`sklearn.pipeline`
- .......................
- - |Feature| :class:`pipeline.FeatureUnion` can now use indexing notation (e.g.
-diff --git a/sklearn/impute/tests/test_impute.py b/sklearn/impute/tests/test_impute.py
-index 86553effafcbf..b463c2bc95f28 100644
---- a/sklearn/impute/tests/test_impute.py
-+++ b/sklearn/impute/tests/test_impute.py
-@@ -1524,6 +1524,20 @@ def test_iterative_imputer_keep_empty_features(initial_strategy):
-     assert_allclose(X_imputed[:, 1], 0)
+ :mod:`sklearn.feature_extraction`
+ .................................
  
- 
-+def test_iterative_imputer_constant_fill_value():
-+    # Test initial imputation using the constant strategy.
-+    X = np.array([[-1, 2, 3, -1], [4, -1, 5, -1], [6, 7, -1, -1], [8, 9, 0, -1]])
-+
-+    X_true = np.array([[0, 2, 3, 0], [4, 0, 5, 0], [6, 7, 0, 0], [8, 9, 0, 0]])
-+
-+    imputer = IterativeImputer(
-+        missing_values=-1, initial_strategy="constant", fill_value=0, max_iter=0
-+    )
-+    X_trans = imputer.fit_transform(X)
-+
-+    assert_array_equal(X_trans, X_true)
-+
-+
- @pytest.mark.parametrize("keep_empty_features", [True, False])
- def test_knn_imputer_keep_empty_features(keep_empty_features):
-     """Check the behaviour of `keep_empty_features` for `KNNImputer`."""
-
-From f26f59d90b4fbd027f459fadc3a40f9285e3abf3 Mon Sep 17 00:00:00 2001
-From: Thijs van Weezel <117186594+ValueInvestorThijs@users.noreply.github.com>
-Date: Tue, 3 Jan 2023 17:18:26 +0100
-Subject: [PATCH 5/9] Update sklearn/impute/_iterative.py
-
-Co-authored-by: Guillaume Lemaitre <g.lemaitre58@gmail.com>
----
- sklearn/impute/_iterative.py | 11 ++++++++---
- 1 file changed, 8 insertions(+), 3 deletions(-)
-
 diff --git a/sklearn/impute/_iterative.py b/sklearn/impute/_iterative.py
-index 25e5015a91c19..60b2013f9c5f8 100644
+index 1d918bc0c4643..60b2013f9c5f8 100644
 --- a/sklearn/impute/_iterative.py
 +++ b/sklearn/impute/_iterative.py
-@@ -117,9 +117,14 @@ class IterativeImputer(_BaseImputer):
+@@ -117,6 +117,15 @@ class IterativeImputer(_BaseImputer):
          Which strategy to use to initialize the missing values. Same as the
          `strategy` parameter in :class:`~sklearn.impute.SimpleImputer`.
  
--    fill_value : float, default=None
--        The value used to replace missing values if initial_strategy=='constant'.
--        Same as the `fill_value` parameter in :class:`~sklearn.impute.SimpleImputer`.
 +    fill_value : str or numerical value, default=None
 +        When `strategy="constant"`, `fill_value` is used to replace all
 +        occurrences of missing_values. For string or object data types,
@@ -265,114 +31,65 @@ index 25e5015a91c19..60b2013f9c5f8 100644
 +        data and "missing_value" for strings or object data types.
 +
 +        .. versionadded:: 1.3
- 
++
      imputation_order : {'ascending', 'descending', 'roman', 'arabic', \
              'random'}, default='ascending'
-
-From a54b561e06cef235c1bd317f0deb09729d43ecbd Mon Sep 17 00:00:00 2001
-From: Thijs van Weezel <117186594+ValueInvestorThijs@users.noreply.github.com>
-Date: Mon, 9 Jan 2023 11:50:29 +0100
-Subject: [PATCH 6/9] Update sklearn/impute/tests/test_impute.py
-
-Co-authored-by: Guillaume Lemaitre <g.lemaitre58@gmail.com>
----
- sklearn/impute/tests/test_impute.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
+         The order in which the features will be imputed. Possible values:
+@@ -281,6 +290,7 @@ class IterativeImputer(_BaseImputer):
+         "initial_strategy": [
+             StrOptions({"mean", "median", "most_frequent", "constant"})
+         ],
++        "fill_value": "no_validation",  # any object is valid
+         "imputation_order": [
+             StrOptions({"ascending", "descending", "roman", "arabic", "random"})
+         ],
+@@ -301,6 +311,7 @@ def __init__(
+         tol=1e-3,
+         n_nearest_features=None,
+         initial_strategy="mean",
++        fill_value=None,
+         imputation_order="ascending",
+         skip_complete=False,
+         min_value=-np.inf,
+@@ -322,6 +333,7 @@ def __init__(
+         self.tol = tol
+         self.n_nearest_features = n_nearest_features
+         self.initial_strategy = initial_strategy
++        self.fill_value = fill_value
+         self.imputation_order = imputation_order
+         self.skip_complete = skip_complete
+         self.min_value = min_value
+@@ -613,6 +625,7 @@ def _initial_imputation(self, X, in_fit=False):
+             self.initial_imputer_ = SimpleImputer(
+                 missing_values=self.missing_values,
+                 strategy=self.initial_strategy,
++                fill_value=self.fill_value,
+                 keep_empty_features=self.keep_empty_features,
+             )
+             X_filled = self.initial_imputer_.fit_transform(X)
 diff --git a/sklearn/impute/tests/test_impute.py b/sklearn/impute/tests/test_impute.py
-index b463c2bc95f28..c8235d7c6a893 100644
+index 86553effafcbf..8851d10b0f14c 100644
 --- a/sklearn/impute/tests/test_impute.py
 +++ b/sklearn/impute/tests/test_impute.py
-@@ -1525,7 +1525,7 @@ def test_iterative_imputer_keep_empty_features(initial_strategy):
+@@ -1524,6 +1524,21 @@ def test_iterative_imputer_keep_empty_features(initial_strategy):
+     assert_allclose(X_imputed[:, 1], 0)
  
  
- def test_iterative_imputer_constant_fill_value():
--    # Test initial imputation using the constant strategy.
++def test_iterative_imputer_constant_fill_value():
 +    """Check that we propagate properly the parameter `fill_value`."""
-     X = np.array([[-1, 2, 3, -1], [4, -1, 5, -1], [6, 7, -1, -1], [8, 9, 0, -1]])
- 
-     X_true = np.array([[0, 2, 3, 0], [4, 0, 5, 0], [6, 7, 0, 0], [8, 9, 0, 0]])
-
-From 7198b3b63924bc3543e6e00eabe5a1907d552918 Mon Sep 17 00:00:00 2001
-From: Thijs van Weezel <117186594+ValueInvestorThijs@users.noreply.github.com>
-Date: Mon, 9 Jan 2023 11:50:42 +0100
-Subject: [PATCH 7/9] Update sklearn/impute/tests/test_impute.py
-
-Co-authored-by: Guillaume Lemaitre <g.lemaitre58@gmail.com>
----
- sklearn/impute/tests/test_impute.py | 10 ++++------
- 1 file changed, 4 insertions(+), 6 deletions(-)
-
-diff --git a/sklearn/impute/tests/test_impute.py b/sklearn/impute/tests/test_impute.py
-index c8235d7c6a893..94839c081b287 100644
---- a/sklearn/impute/tests/test_impute.py
-+++ b/sklearn/impute/tests/test_impute.py
-@@ -1528,14 +1528,12 @@ def test_iterative_imputer_constant_fill_value():
-     """Check that we propagate properly the parameter `fill_value`."""
-     X = np.array([[-1, 2, 3, -1], [4, -1, 5, -1], [6, 7, -1, -1], [8, 9, 0, -1]])
- 
--    X_true = np.array([[0, 2, 3, 0], [4, 0, 5, 0], [6, 7, 0, 0], [8, 9, 0, 0]])
--
++    X = np.array([[-1, 2, 3, -1], [4, -1, 5, -1], [6, 7, -1, -1], [8, 9, 0, -1]])
++
 +    fill_value = 100
-     imputer = IterativeImputer(
--        missing_values=-1, initial_strategy="constant", fill_value=0, max_iter=0
-+        missing_values=-1, initial_strategy="constant", fill_value=100, max_iter=0
-     )
--    X_trans = imputer.fit_transform(X)
--
--    assert_array_equal(X_trans, X_true)
-+    imputer.fit_transform(X)
-+    assert_array_equal(imputer.initial_imputer_.statistics_, fill_value)
- 
- 
- @pytest.mark.parametrize("keep_empty_features", [True, False])
-
-From 927ff61480cce8ba36be9aa09ca006567c3b60be Mon Sep 17 00:00:00 2001
-From: Thijs van Weezel <117186594+ValueInvestorThijs@users.noreply.github.com>
-Date: Mon, 9 Jan 2023 14:21:08 +0100
-Subject: [PATCH 8/9] Update sklearn/impute/tests/test_impute.py
-
-Co-authored-by: Tim Head <betatim@gmail.com>
----
- sklearn/impute/tests/test_impute.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sklearn/impute/tests/test_impute.py b/sklearn/impute/tests/test_impute.py
-index 94839c081b287..5a88b34dae2aa 100644
---- a/sklearn/impute/tests/test_impute.py
-+++ b/sklearn/impute/tests/test_impute.py
-@@ -1530,7 +1530,7 @@ def test_iterative_imputer_constant_fill_value():
- 
-     fill_value = 100
-     imputer = IterativeImputer(
--        missing_values=-1, initial_strategy="constant", fill_value=100, max_iter=0
-+        missing_values=-1, initial_strategy="constant", fill_value=fill_value, max_iter=0
-     )
-     imputer.fit_transform(X)
-     assert_array_equal(imputer.initial_imputer_.statistics_, fill_value)
-
-From cf62faebbb0f8e9569ef5887f33f2379345688b4 Mon Sep 17 00:00:00 2001
-From: Thijs van Weezel <117186594+ValueInvestorThijs@users.noreply.github.com>
-Date: Mon, 9 Jan 2023 15:55:40 +0100
-Subject: [PATCH 9/9] Update sklearn/impute/tests/test_impute.py
-
----
- sklearn/impute/tests/test_impute.py | 5 ++++-
- 1 file changed, 4 insertions(+), 1 deletion(-)
-
-diff --git a/sklearn/impute/tests/test_impute.py b/sklearn/impute/tests/test_impute.py
-index 5a88b34dae2aa..8851d10b0f14c 100644
---- a/sklearn/impute/tests/test_impute.py
-+++ b/sklearn/impute/tests/test_impute.py
-@@ -1530,7 +1530,10 @@ def test_iterative_imputer_constant_fill_value():
- 
-     fill_value = 100
-     imputer = IterativeImputer(
--        missing_values=-1, initial_strategy="constant", fill_value=fill_value, max_iter=0
++    imputer = IterativeImputer(
 +        missing_values=-1,
 +        initial_strategy="constant",
 +        fill_value=fill_value,
 +        max_iter=0,
-     )
-     imputer.fit_transform(X)
-     assert_array_equal(imputer.initial_imputer_.statistics_, fill_value)
++    )
++    imputer.fit_transform(X)
++    assert_array_equal(imputer.initial_imputer_.statistics_, fill_value)
++
++
+ @pytest.mark.parametrize("keep_empty_features", [True, False])
+ def test_knn_imputer_keep_empty_features(keep_empty_features):
+     """Check the behaviour of `keep_empty_features` for `KNNImputer`."""

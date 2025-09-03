@@ -1,20 +1,3 @@
-From 4035bab56f2862a25cd7bfba41a84e58672cb1cc Mon Sep 17 00:00:00 2001
-From: DevilsAutumn <bhuvnesh875@gmail.com>
-Date: Tue, 22 Nov 2022 15:04:55 +0530
-Subject: [PATCH] Fixed #34171 -- Fixed QuerySet.bulk_create() on fields with
- db_column in unique_fields/update_fields.
-
-Bug in 0f6946495a8ec955b471ca1baaf408ceb53d4796.
-
-Thanks Joshua Brooks for the report.
----
- django/db/models/query.py        |  9 ++++-----
- django/db/models/sql/compiler.py |  4 ++--
- docs/releases/4.1.4.txt          |  3 +++
- tests/bulk_create/models.py      |  5 +++++
- tests/bulk_create/tests.py       | 32 ++++++++++++++++++++++++++++++++
- 5 files changed, 46 insertions(+), 7 deletions(-)
-
 diff --git a/django/db/models/query.py b/django/db/models/query.py
 index be8580f2c446..cf419cb8cf7f 100644
 --- a/django/db/models/query.py

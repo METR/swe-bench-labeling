@@ -1,17 +1,3 @@
-From e571479d5485e787c26497918a10801c12d9a98e Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sat, 2 Apr 2022 23:39:47 +0900
-Subject: [PATCH] Fix #10318: literalinclude: :prepend: option working with
- :dedent:
-
-It will always be warned because prepending is processed before
-dedenting.  This changes the order of processing options.
----
- CHANGES                      |  2 ++
- sphinx/directives/code.py    |  4 ++--
- tests/test_directive_code.py | 13 +++++++++++++
- 3 files changed, 17 insertions(+), 2 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index 7037723fe50..581c22a5120 100644
 --- a/CHANGES

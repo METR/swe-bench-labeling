@@ -1,33 +1,20 @@
-From 4ceedc102ddaeb7926a66ae9d6e672dd4060f4b1 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sat, 15 May 2021 16:09:23 +0900
-Subject: [PATCH] Close #8061, #9218: autodoc: Support variable comment for
- alias classes
-
----
- CHANGES                                        |  1 +
- sphinx/ext/autodoc/__init__.py                 | 17 +++++++++++++++--
- tests/roots/test-ext-autodoc/target/classes.py |  3 +++
- tests/test_ext_autodoc_autoclass.py            | 12 ++++++++++++
- 4 files changed, 31 insertions(+), 2 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
-index 3ef0bb53eaf..c81f9a4b4d3 100644
+index da8580fe67a..36caf8f7775 100644
 --- a/CHANGES
 +++ b/CHANGES
-@@ -28,6 +28,7 @@ Features added
- * #9195: autodoc: The arguments of ``typing.Literal`` are wrongly rendered
- * #9185: autodoc: :confval:`autodoc_typehints` allows ``'both'`` setting to
+@@ -30,6 +30,7 @@ Features added
    allow typehints to be included both in the signature and description
+ * #4257: autodoc: Add :confval:`autodoc_class_signature` to separate the class
+   entry and the definition of ``__init__()`` method
 +* #8061, #9218: autodoc: Support variable comment for alias classes
  * #3257: autosummary: Support instance attributes for classes
  * #9129: html search: Show search summaries when html_copy_source = False
  * #9120: html theme: Eliminate prompt characters of code-block from copyable
 diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
-index c6449613992..1658376b7ba 100644
+index 1f4c98284bc..18fb0c92e91 100644
 --- a/sphinx/ext/autodoc/__init__.py
 +++ b/sphinx/ext/autodoc/__init__.py
-@@ -1661,7 +1661,11 @@ def get_object_members(self, want_all: bool) -> Tuple[bool, ObjectMembers]:
+@@ -1676,7 +1676,11 @@ def get_object_members(self, want_all: bool) -> Tuple[bool, ObjectMembers]:
      def get_doc(self, ignore: int = None) -> Optional[List[List[str]]]:
          if self.doc_as_attr:
              # Don't show the docstring of the class when it is an alias.
@@ -40,7 +27,7 @@ index c6449613992..1658376b7ba 100644
  
          lines = getattr(self, '_new_docstrings', None)
          if lines is not None:
-@@ -1706,9 +1710,18 @@ def get_doc(self, ignore: int = None) -> Optional[List[List[str]]]:
+@@ -1721,9 +1725,18 @@ def get_doc(self, ignore: int = None) -> Optional[List[List[str]]]:
          tab_width = self.directive.state.document.settings.tab_width
          return [prepare_docstring(docstring, ignore, tab_width) for docstring in docstrings]
  

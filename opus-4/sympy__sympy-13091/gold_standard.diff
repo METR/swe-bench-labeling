@@ -1,47 +1,3 @@
-From 4edfd3c7342dce7ebc672f36cde11314b21d8724 Mon Sep 17 00:00:00 2001
-From: Daniel Wennberg <daniel.wennberg@gmail.com>
-Date: Fri, 4 Aug 2017 21:27:52 -0700
-Subject: [PATCH 1/3] Improve rich comparison with unknown types
-
-Return NotImplemented when a rich comparison is unable to make sense of
-the input types. This way, the python interpreter is able to delegate to
-reflected methods as appropriate in order to maintain symmetric
-relations.
-
-This commit also removes direct invocations of rich comparison
-methods, like __eq__, except in super calls, explicitly reflected calls,
-and other cases where the order is essential (see, e.g.,
-sympy/sympy#7951). These calls may sidestep the desired dispatching and
-introduce bugs by evaluating, e.g., not NotImplemented to False.
-
-Closes sympy/sympy#13078.
----
- sympy/core/basic.py                     |  6 +-
- sympy/core/expr.py                      |  8 +--
- sympy/core/exprtools.py                 |  4 +-
- sympy/core/numbers.py                   | 70 ++++++++++----------
- sympy/core/tests/test_basic.py          | 37 +++++++++++
- sympy/core/tests/test_numbers.py        | 86 +++++++++++++++++++++++++
- sympy/geometry/entity.py                |  2 +-
- sympy/physics/optics/medium.py          |  4 +-
- sympy/physics/vector/dyadic.py          |  2 +-
- sympy/physics/vector/frame.py           |  2 +-
- sympy/physics/vector/vector.py          |  2 +-
- sympy/polys/agca/modules.py             |  2 +-
- sympy/polys/domains/domain.py           |  2 +-
- sympy/polys/domains/expressiondomain.py |  2 +-
- sympy/polys/domains/pythonrational.py   |  2 +-
- sympy/polys/domains/quotientring.py     |  2 +-
- sympy/polys/fields.py                   |  4 +-
- sympy/polys/monomials.py                |  2 +-
- sympy/polys/polyclasses.py              | 28 ++++----
- sympy/polys/polytools.py                |  6 +-
- sympy/polys/rings.py                    |  4 +-
- sympy/polys/rootoftools.py              |  2 +-
- sympy/tensor/array/ndim_array.py        |  2 +-
- sympy/utilities/enumerative.py          |  2 +-
- 24 files changed, 203 insertions(+), 80 deletions(-)
-
 diff --git a/sympy/core/basic.py b/sympy/core/basic.py
 index db4e97184839..2ad720d35a69 100644
 --- a/sympy/core/basic.py
@@ -73,46 +29,6 @@ index db4e97184839..2ad720d35a69 100644
  
      def replace(self, query, value, map=False, simultaneous=True, exact=False):
          """
-diff --git a/sympy/core/expr.py b/sympy/core/expr.py
-index 34e0ecb7862c..b0e61b889f2a 100644
---- a/sympy/core/expr.py
-+++ b/sympy/core/expr.py
-@@ -248,7 +248,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-@@ -270,7 +270,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-@@ -292,7 +292,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-@@ -314,7 +314,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
 diff --git a/sympy/core/exprtools.py b/sympy/core/exprtools.py
 index b13e4c106ece..5d245c1fa496 100644
 --- a/sympy/core/exprtools.py
@@ -136,44 +52,9 @@ index b13e4c106ece..5d245c1fa496 100644
  
  def _gcd_terms(terms, isprimitive=False, fraction=True):
 diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
-index 864d05508723..7ea232a00766 100644
+index 864d05508723..ba6ee29a9c2e 100644
 --- a/sympy/core/numbers.py
 +++ b/sympy/core/numbers.py
-@@ -697,7 +697,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
-         raise NotImplementedError('%s needs .__lt__() method' %
-             (self.__class__.__name__))
- 
-@@ -705,7 +705,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
-         raise NotImplementedError('%s needs .__le__() method' %
-             (self.__class__.__name__))
- 
-@@ -713,14 +713,14 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
-         return _sympify(other).__lt__(self)
- 
-     def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
-         return _sympify(other).__le__(self)
- 
-     def __hash__(self):
 @@ -1258,7 +1258,7 @@ def __eq__(self, other):
          try:
              other = _sympify(other)
@@ -183,7 +64,7 @@ index 864d05508723..7ea232a00766 100644
          if isinstance(other, NumberSymbol):
              if other.is_irrational:
                  return False
-@@ -1276,13 +1276,13 @@ def __eq__(self, other):
+@@ -1276,7 +1276,7 @@ def __eq__(self, other):
          return False    # Float != non-Number
  
      def __ne__(self, other):
@@ -192,40 +73,42 @@ index 864d05508723..7ea232a00766 100644
  
      def __gt__(self, other):
          try:
-             other = _sympify(other)
+@@ -1284,7 +1284,7 @@ def __gt__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s > %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__le__(self)
+-            return other.__le__(self)
++            return other.__lt__(self)
          if other.is_comparable:
-@@ -1296,7 +1296,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
+             other = other.evalf()
+         if isinstance(other, Number) and other is not S.NaN:
+@@ -1298,7 +1298,7 @@ def __ge__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s >= %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__lt__(self)
+-            return other.__lt__(self)
++            return other.__le__(self)
          if other.is_comparable:
-@@ -1310,7 +1310,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
+             other = other.evalf()
+         if isinstance(other, Number) and other is not S.NaN:
+@@ -1312,7 +1312,7 @@ def __lt__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s < %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__ge__(self)
+-            return other.__ge__(self)
++            return other.__gt__(self)
          if other.is_real and other.is_number:
-@@ -1324,7 +1324,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
+             other = other.evalf()
+         if isinstance(other, Number) and other is not S.NaN:
+@@ -1326,7 +1326,7 @@ def __le__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s <= %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__gt__(self)
+-            return other.__gt__(self)
++            return other.__ge__(self)
          if other.is_real and other.is_number:
+             other = other.evalf()
+         if isinstance(other, Number) and other is not S.NaN:
 @@ -1719,7 +1719,7 @@ def __eq__(self, other):
          try:
              other = _sympify(other)
@@ -235,7 +118,7 @@ index 864d05508723..7ea232a00766 100644
          if isinstance(other, NumberSymbol):
              if other.is_irrational:
                  return False
-@@ -1734,13 +1734,13 @@ def __eq__(self, other):
+@@ -1734,7 +1734,7 @@ def __eq__(self, other):
          return False
  
      def __ne__(self, other):
@@ -244,41 +127,43 @@ index 864d05508723..7ea232a00766 100644
  
      def __gt__(self, other):
          try:
-             other = _sympify(other)
+@@ -1742,7 +1742,7 @@ def __gt__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s > %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__le__(self)
+-            return other.__le__(self)
++            return other.__lt__(self)
          expr = self
-@@ -1758,7 +1758,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
+         if isinstance(other, Number):
+             if isinstance(other, Rational):
+@@ -1760,7 +1760,7 @@ def __ge__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s >= %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__lt__(self)
+-            return other.__lt__(self)
++            return other.__le__(self)
          expr = self
-@@ -1776,7 +1776,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
+         if isinstance(other, Number):
+             if isinstance(other, Rational):
+@@ -1778,7 +1778,7 @@ def __lt__(self, other):
          except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
+             raise TypeError("Invalid comparison %s < %s" % (self, other))
          if isinstance(other, NumberSymbol):
-             return other.__ge__(self)
+-            return other.__ge__(self)
++            return other.__gt__(self)
          expr = self
-@@ -1794,7 +1794,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
+         if isinstance(other, Number):
+             if isinstance(other, Rational):
+@@ -1797,7 +1797,7 @@ def __le__(self, other):
+             raise TypeError("Invalid comparison %s <= %s" % (self, other))
          expr = self
          if isinstance(other, NumberSymbol):
-             return other.__gt__(self)
-@@ -2112,13 +2112,13 @@ def __eq__(self, other):
+-            return other.__gt__(self)
++            return other.__ge__(self)
+         elif isinstance(other, Number):
+             if isinstance(other, Rational):
+                 return _sympify(bool(self.p*other.q <= self.q*other.p))
+@@ -2112,7 +2112,7 @@ def __eq__(self, other):
          return Rational.__eq__(self, other)
  
      def __ne__(self, other):
@@ -287,112 +172,6 @@ index 864d05508723..7ea232a00766 100644
  
      def __gt__(self, other):
          try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
-         if isinstance(other, Integer):
-             return _sympify(self.p > other.p)
-         return Rational.__gt__(self, other)
-@@ -2127,7 +2127,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
-         if isinstance(other, Integer):
-             return _sympify(self.p < other.p)
-         return Rational.__lt__(self, other)
-@@ -2136,7 +2136,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
-         if isinstance(other, Integer):
-             return _sympify(self.p >= other.p)
-         return Rational.__ge__(self, other)
-@@ -2145,7 +2145,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
-         if isinstance(other, Integer):
-             return _sympify(self.p <= other.p)
-         return Rational.__le__(self, other)
-@@ -2840,7 +2840,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             return S.false
-         return Expr.__lt__(self, other)
-@@ -2849,7 +2849,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             if other.is_finite or other is S.NegativeInfinity:
-                 return S.false
-@@ -2863,7 +2863,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             if other.is_finite or other is S.NegativeInfinity:
-                 return S.true
-@@ -2877,7 +2877,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             return S.true
-         return Expr.__ge__(self, other)
-@@ -3061,7 +3061,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             if other.is_finite or other is S.Infinity:
-                 return S.true
-@@ -3075,7 +3075,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             return S.true
-         return Expr.__le__(self, other)
-@@ -3084,7 +3084,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             return S.false
-         return Expr.__gt__(self, other)
-@@ -3093,7 +3093,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
-         if other.is_real:
-             if other.is_finite or other is S.Infinity:
-                 return S.false
 @@ -3339,7 +3339,7 @@ def __eq__(self, other):
          try:
              other = _sympify(other)
@@ -402,7 +181,7 @@ index 864d05508723..7ea232a00766 100644
          if self is other:
              return True
          if isinstance(other, Number) and self.is_irrational:
-@@ -3348,13 +3348,13 @@ def __eq__(self, other):
+@@ -3348,7 +3348,7 @@ def __eq__(self, other):
          return False    # NumberSymbol != non-(Number|self)
  
      def __ne__(self, other):
@@ -411,40 +190,6 @@ index 864d05508723..7ea232a00766 100644
  
      def __lt__(self, other):
          try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s < %s" % (self, other))
-+            return NotImplemented
-         if self is other:
-             return S.false
-         if isinstance(other, Number):
-@@ -3375,7 +3375,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-+            return NotImplemented
-         if self is other:
-             return S.true
-         if other.is_real and other.is_number:
-@@ -3388,7 +3388,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s > %s" % (self, other))
-+            return NotImplemented
-         r = _sympify((-self) < (-other))
-         if r in (S.true, S.false):
-             return r
-@@ -3399,7 +3399,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-+            return NotImplemented
-         r = _sympify((-self) <= (-other))
-         if r in (S.true, S.false):
-             return r
 diff --git a/sympy/core/tests/test_basic.py b/sympy/core/tests/test_basic.py
 index 9d4a8fa3d063..7c6ca01f1ea2 100644
 --- a/sympy/core/tests/test_basic.py
@@ -494,10 +239,10 @@ index 9d4a8fa3d063..7c6ca01f1ea2 100644
  def test_matches_basic():
      instances = [Basic(b1, b1, b2), Basic(b1, b2, b1), Basic(b2, b1, b1),
 diff --git a/sympy/core/tests/test_numbers.py b/sympy/core/tests/test_numbers.py
-index a09ff1173f83..918d1451eafe 100644
+index a09ff1173f83..1cf2e16c67af 100644
 --- a/sympy/core/tests/test_numbers.py
 +++ b/sympy/core/tests/test_numbers.py
-@@ -1653,3 +1653,89 @@ def test_mod_inverse():
+@@ -1653,3 +1653,87 @@ def test_mod_inverse():
  
  def test_golden_ratio_rewrite_as_sqrt():
      assert GoldenRatio.rewrite(sqrt) == S.Half + sqrt(5)*S.Half
@@ -506,15 +251,14 @@ index a09ff1173f83..918d1451eafe 100644
 +    class Foo(object):
 +        """
 +        Class that is unaware of Basic, and relies on both classes returning
-+        the NotImplemented singleton for equivalence to evaluate to False, and
-+        the other comparisons to raise a TypeError.
++        the NotImplemented singleton for equivalence to evaluate to False.
 +
 +        """
 +
 +    ni, nf, nr = Integer(3), Float(1.0), Rational(1, 3)
 +    foo = Foo()
 +
-+    for n in ni, nf, nr, oo:
++    for n in ni, nf, nr, oo, -oo, zoo, nan:
 +        assert n != foo
 +        assert foo != n
 +        assert not n == foo
@@ -530,63 +274,62 @@ index a09ff1173f83..918d1451eafe 100644
 +
 +    class Bar(object):
 +        """
-+        Class that considers itself greater than any instance of Number except
-+        Infinity, and relies on the NotImplemented singleton for symmetric
-+        relations.
++        Class that considers itself equal to any instance of Number except
++        infinities and nans, and relies on sympy types returning the
++        NotImplemented singleton for symmetric equality relations.
 +
 +        """
 +        def __eq__(self, other):
-+            if isinstance(other, Number):
++            if other in (oo, -oo, zoo, nan):
 +                return False
++            if isinstance(other, Number):
++                return True
 +            return NotImplemented
 +
 +        def __ne__(self, other):
 +            return not self == other
 +
-+        def __lt__(self, other):
-+            if other is oo:
-+                return True
-+            if isinstance(other, Number):
-+                return False
-+            return NotImplemented
-+
-+        def __le__(self, other):
-+            return self < other or self == other
-+
-+        def __gt__(self, other):
-+            return not self <= other
-+
-+        def __ge__(self, other):
-+            return not self < other
-+
 +    bar = Bar()
 +
 +    for n in ni, nf, nr:
++        assert n == bar
++        assert bar == n
++        assert not n != bar
++        assert not bar != n
++
++    for n in oo, -oo, zoo, nan:
 +        assert n != bar
 +        assert bar != n
 +        assert not n == bar
 +        assert not bar == n
-+        assert n < bar
-+        assert bar > n
-+        assert not n > bar
-+        assert not bar < n
-+        assert n <= bar
-+        assert bar >= n
-+        assert not n >= bar
-+        assert not bar <= n
 +
-+    assert oo != bar
-+    assert bar != oo
-+    assert not oo == bar
-+    assert not bar == oo
-+    assert not oo < bar
-+    assert not bar > oo
-+    assert oo > bar
-+    assert bar < oo
-+    assert not oo <= bar
-+    assert not bar >= oo
-+    assert oo >= bar
-+    assert bar <= oo
++    for n in ni, nf, nr, oo, -oo, zoo, nan:
++        raises(TypeError, lambda: n < bar)
++        raises(TypeError, lambda: bar > n)
++        raises(TypeError, lambda: n > bar)
++        raises(TypeError, lambda: bar < n)
++        raises(TypeError, lambda: n <= bar)
++        raises(TypeError, lambda: bar >= n)
++        raises(TypeError, lambda: n >= bar)
++        raises(TypeError, lambda: bar <= n)
++
++def test_NumberSymbol_comparison():
++    rpi = Rational('905502432259640373/288230376151711744')
++    fpi = Float(float(pi))
++
++    assert (rpi == pi) == (pi == rpi)
++    assert (rpi != pi) == (pi != rpi)
++    assert (rpi < pi) == (pi > rpi)
++    assert (rpi <= pi) == (pi >= rpi)
++    assert (rpi > pi) == (pi < rpi)
++    assert (rpi >= pi) == (pi <= rpi)
++
++    assert (fpi == pi) == (pi == fpi)
++    assert (fpi != pi) == (pi != fpi)
++    assert (fpi < pi) == (pi > fpi)
++    assert (fpi <= pi) == (pi >= fpi)
++    assert (fpi > pi) == (pi < fpi)
++    assert (fpi >= pi) == (pi <= fpi)
 diff --git a/sympy/geometry/entity.py b/sympy/geometry/entity.py
 index a9ce2f390a67..6fece70a4d23 100644
 --- a/sympy/geometry/entity.py
@@ -938,539 +681,3 @@ index be6b77094f9e..7d4e38d1d338 100644
  
  
  # This function tries to be a faithful implementation of algorithm
-
-From 7a5b5ca6cce44f8b058eaadd74535e0e9e8f25d8 Mon Sep 17 00:00:00 2001
-From: Daniel Wennberg <daniel.wennberg@gmail.com>
-Date: Fri, 4 Aug 2017 22:54:49 -0700
-Subject: [PATCH 2/3] Let NumberSymbol comparisons equal reflections
-
-Was there originally a reason for this apparently obvious bug?
-I understand that comparison with irrational NumberSymbols is finicky,
-as most recently discussed in sympy/sympy#13081, but if this was
-a "workaround" hack, it only seems to make things even more
-inconsistent. Here's to maintaining symmetric relations.
----
- sympy/core/numbers.py            | 16 ++++++++--------
- sympy/core/tests/test_numbers.py | 18 ++++++++++++++++++
- 2 files changed, 26 insertions(+), 8 deletions(-)
-
-diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
-index 7ea232a00766..bddff1e645c0 100644
---- a/sympy/core/numbers.py
-+++ b/sympy/core/numbers.py
-@@ -1284,7 +1284,7 @@ def __gt__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__le__(self)
-+            return other.__lt__(self)
-         if other.is_comparable:
-             other = other.evalf()
-         if isinstance(other, Number) and other is not S.NaN:
-@@ -1298,7 +1298,7 @@ def __ge__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__lt__(self)
-+            return other.__le__(self)
-         if other.is_comparable:
-             other = other.evalf()
-         if isinstance(other, Number) and other is not S.NaN:
-@@ -1312,7 +1312,7 @@ def __lt__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__ge__(self)
-+            return other.__gt__(self)
-         if other.is_real and other.is_number:
-             other = other.evalf()
-         if isinstance(other, Number) and other is not S.NaN:
-@@ -1326,7 +1326,7 @@ def __le__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__gt__(self)
-+            return other.__ge__(self)
-         if other.is_real and other.is_number:
-             other = other.evalf()
-         if isinstance(other, Number) and other is not S.NaN:
-@@ -1742,7 +1742,7 @@ def __gt__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__le__(self)
-+            return other.__lt__(self)
-         expr = self
-         if isinstance(other, Number):
-             if isinstance(other, Rational):
-@@ -1760,7 +1760,7 @@ def __ge__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__lt__(self)
-+            return other.__le__(self)
-         expr = self
-         if isinstance(other, Number):
-             if isinstance(other, Rational):
-@@ -1778,7 +1778,7 @@ def __lt__(self, other):
-         except SympifyError:
-             return NotImplemented
-         if isinstance(other, NumberSymbol):
--            return other.__ge__(self)
-+            return other.__gt__(self)
-         expr = self
-         if isinstance(other, Number):
-             if isinstance(other, Rational):
-@@ -1797,7 +1797,7 @@ def __le__(self, other):
-             return NotImplemented
-         expr = self
-         if isinstance(other, NumberSymbol):
--            return other.__gt__(self)
-+            return other.__ge__(self)
-         elif isinstance(other, Number):
-             if isinstance(other, Rational):
-                 return _sympify(bool(self.p*other.q <= self.q*other.p))
-diff --git a/sympy/core/tests/test_numbers.py b/sympy/core/tests/test_numbers.py
-index 918d1451eafe..136aba8d0e84 100644
---- a/sympy/core/tests/test_numbers.py
-+++ b/sympy/core/tests/test_numbers.py
-@@ -1739,3 +1739,21 @@ def __ge__(self, other):
-     assert not bar >= oo
-     assert oo >= bar
-     assert bar <= oo
-+
-+def test_NumberSymbol_comparison():
-+    rpi = Rational('905502432259640373/288230376151711744')
-+    fpi = Float(float(pi))
-+
-+    assert (rpi == pi) == (pi == rpi)
-+    assert (rpi != pi) == (pi != rpi)
-+    assert (rpi < pi) == (pi > rpi)
-+    assert (rpi <= pi) == (pi >= rpi)
-+    assert (rpi > pi) == (pi < rpi)
-+    assert (rpi >= pi) == (pi <= rpi)
-+
-+    assert (fpi == pi) == (pi == fpi)
-+    assert (fpi != pi) == (pi != fpi)
-+    assert (fpi < pi) == (pi > fpi)
-+    assert (fpi <= pi) == (pi >= fpi)
-+    assert (fpi > pi) == (pi < fpi)
-+    assert (fpi >= pi) == (pi <= fpi)
-
-From bfdaec27fd7c389e91c2ca43103d8ae24be163d2 Mon Sep 17 00:00:00 2001
-From: Daniel Wennberg <daniel.wennberg@gmail.com>
-Date: Sun, 6 Aug 2017 17:26:40 -0700
-Subject: [PATCH 3/3] Revert 4edfd3c as far as inequalities go
-
-Python 2 is all gung-ho about inequalities, so sympy must take
-responsibility. The sane behavior (raising TypeError if both operands'
-methods return NotImplemented) was not implemented until python 3.
----
- sympy/core/expr.py               |  8 ++--
- sympy/core/numbers.py            | 56 +++++++++++++-------------
- sympy/core/tests/test_numbers.py | 68 +++++++++++---------------------
- 3 files changed, 56 insertions(+), 76 deletions(-)
-
-diff --git a/sympy/core/expr.py b/sympy/core/expr.py
-index b0e61b889f2a..34e0ecb7862c 100644
---- a/sympy/core/expr.py
-+++ b/sympy/core/expr.py
-@@ -248,7 +248,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-@@ -270,7 +270,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-@@ -292,7 +292,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-@@ -314,7 +314,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         for me in (self, other):
-             if (me.is_complex and me.is_real is False) or \
-                     me.has(S.ComplexInfinity):
-diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
-index bddff1e645c0..ba6ee29a9c2e 100644
---- a/sympy/core/numbers.py
-+++ b/sympy/core/numbers.py
-@@ -697,7 +697,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         raise NotImplementedError('%s needs .__lt__() method' %
-             (self.__class__.__name__))
- 
-@@ -705,7 +705,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         raise NotImplementedError('%s needs .__le__() method' %
-             (self.__class__.__name__))
- 
-@@ -713,14 +713,14 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         return _sympify(other).__lt__(self)
- 
-     def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         return _sympify(other).__le__(self)
- 
-     def __hash__(self):
-@@ -1282,7 +1282,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__lt__(self)
-         if other.is_comparable:
-@@ -1296,7 +1296,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__le__(self)
-         if other.is_comparable:
-@@ -1310,7 +1310,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__gt__(self)
-         if other.is_real and other.is_number:
-@@ -1324,7 +1324,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__ge__(self)
-         if other.is_real and other.is_number:
-@@ -1740,7 +1740,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__lt__(self)
-         expr = self
-@@ -1758,7 +1758,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__le__(self)
-         expr = self
-@@ -1776,7 +1776,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         if isinstance(other, NumberSymbol):
-             return other.__gt__(self)
-         expr = self
-@@ -1794,7 +1794,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         expr = self
-         if isinstance(other, NumberSymbol):
-             return other.__ge__(self)
-@@ -2118,7 +2118,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         if isinstance(other, Integer):
-             return _sympify(self.p > other.p)
-         return Rational.__gt__(self, other)
-@@ -2127,7 +2127,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         if isinstance(other, Integer):
-             return _sympify(self.p < other.p)
-         return Rational.__lt__(self, other)
-@@ -2136,7 +2136,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         if isinstance(other, Integer):
-             return _sympify(self.p >= other.p)
-         return Rational.__ge__(self, other)
-@@ -2145,7 +2145,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         if isinstance(other, Integer):
-             return _sympify(self.p <= other.p)
-         return Rational.__le__(self, other)
-@@ -2840,7 +2840,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         if other.is_real:
-             return S.false
-         return Expr.__lt__(self, other)
-@@ -2849,7 +2849,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         if other.is_real:
-             if other.is_finite or other is S.NegativeInfinity:
-                 return S.false
-@@ -2863,7 +2863,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         if other.is_real:
-             if other.is_finite or other is S.NegativeInfinity:
-                 return S.true
-@@ -2877,7 +2877,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         if other.is_real:
-             return S.true
-         return Expr.__ge__(self, other)
-@@ -3061,7 +3061,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         if other.is_real:
-             if other.is_finite or other is S.Infinity:
-                 return S.true
-@@ -3075,7 +3075,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         if other.is_real:
-             return S.true
-         return Expr.__le__(self, other)
-@@ -3084,7 +3084,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         if other.is_real:
-             return S.false
-         return Expr.__gt__(self, other)
-@@ -3093,7 +3093,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         if other.is_real:
-             if other.is_finite or other is S.Infinity:
-                 return S.false
-@@ -3354,7 +3354,7 @@ def __lt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s < %s" % (self, other))
-         if self is other:
-             return S.false
-         if isinstance(other, Number):
-@@ -3375,7 +3375,7 @@ def __le__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
-         if self is other:
-             return S.true
-         if other.is_real and other.is_number:
-@@ -3388,7 +3388,7 @@ def __gt__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s > %s" % (self, other))
-         r = _sympify((-self) < (-other))
-         if r in (S.true, S.false):
-             return r
-@@ -3399,7 +3399,7 @@ def __ge__(self, other):
-         try:
-             other = _sympify(other)
-         except SympifyError:
--            return NotImplemented
-+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
-         r = _sympify((-self) <= (-other))
-         if r in (S.true, S.false):
-             return r
-diff --git a/sympy/core/tests/test_numbers.py b/sympy/core/tests/test_numbers.py
-index 136aba8d0e84..1cf2e16c67af 100644
---- a/sympy/core/tests/test_numbers.py
-+++ b/sympy/core/tests/test_numbers.py
-@@ -1658,15 +1658,14 @@ def test_comparisons_with_unknown_type():
-     class Foo(object):
-         """
-         Class that is unaware of Basic, and relies on both classes returning
--        the NotImplemented singleton for equivalence to evaluate to False, and
--        the other comparisons to raise a TypeError.
-+        the NotImplemented singleton for equivalence to evaluate to False.
- 
-         """
- 
-     ni, nf, nr = Integer(3), Float(1.0), Rational(1, 3)
-     foo = Foo()
- 
--    for n in ni, nf, nr, oo:
-+    for n in ni, nf, nr, oo, -oo, zoo, nan:
-         assert n != foo
-         assert foo != n
-         assert not n == foo
-@@ -1682,63 +1681,44 @@ class Foo(object):
- 
-     class Bar(object):
-         """
--        Class that considers itself greater than any instance of Number except
--        Infinity, and relies on the NotImplemented singleton for symmetric
--        relations.
-+        Class that considers itself equal to any instance of Number except
-+        infinities and nans, and relies on sympy types returning the
-+        NotImplemented singleton for symmetric equality relations.
- 
-         """
-         def __eq__(self, other):
--            if isinstance(other, Number):
-+            if other in (oo, -oo, zoo, nan):
-                 return False
-+            if isinstance(other, Number):
-+                return True
-             return NotImplemented
- 
-         def __ne__(self, other):
-             return not self == other
- 
--        def __lt__(self, other):
--            if other is oo:
--                return True
--            if isinstance(other, Number):
--                return False
--            return NotImplemented
--
--        def __le__(self, other):
--            return self < other or self == other
--
--        def __gt__(self, other):
--            return not self <= other
--
--        def __ge__(self, other):
--            return not self < other
--
-     bar = Bar()
- 
-     for n in ni, nf, nr:
-+        assert n == bar
-+        assert bar == n
-+        assert not n != bar
-+        assert not bar != n
-+
-+    for n in oo, -oo, zoo, nan:
-         assert n != bar
-         assert bar != n
-         assert not n == bar
-         assert not bar == n
--        assert n < bar
--        assert bar > n
--        assert not n > bar
--        assert not bar < n
--        assert n <= bar
--        assert bar >= n
--        assert not n >= bar
--        assert not bar <= n
--
--    assert oo != bar
--    assert bar != oo
--    assert not oo == bar
--    assert not bar == oo
--    assert not oo < bar
--    assert not bar > oo
--    assert oo > bar
--    assert bar < oo
--    assert not oo <= bar
--    assert not bar >= oo
--    assert oo >= bar
--    assert bar <= oo
-+
-+    for n in ni, nf, nr, oo, -oo, zoo, nan:
-+        raises(TypeError, lambda: n < bar)
-+        raises(TypeError, lambda: bar > n)
-+        raises(TypeError, lambda: n > bar)
-+        raises(TypeError, lambda: bar < n)
-+        raises(TypeError, lambda: n <= bar)
-+        raises(TypeError, lambda: bar >= n)
-+        raises(TypeError, lambda: n >= bar)
-+        raises(TypeError, lambda: bar <= n)
- 
- def test_NumberSymbol_comparison():
-     rpi = Rational('905502432259640373/288230376151711744')

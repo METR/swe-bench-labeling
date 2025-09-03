@@ -1,17 +1,3 @@
-From b38d44229ff185ad156bcb443d6db0db7ae3eb98 Mon Sep 17 00:00:00 2001
-From: Nicolas Baccelli <nicolas.baccelli@abc-culture.fr>
-Date: Fri, 5 Jun 2020 21:01:39 +0200
-Subject: [PATCH] Fixed #31664 -- Reallowed using non-expressions having
- filterable attribute as rhs in queryset filters.
-
-Regression in 4edad1ddf6203326e0be4bdb105beecb0fe454c4.
----
- django/db/models/sql/query.py |  5 ++++-
- docs/releases/3.0.8.txt       |  4 ++++
- tests/queries/models.py       |  1 +
- tests/queries/tests.py        | 12 +++++++++---
- 4 files changed, 18 insertions(+), 4 deletions(-)
-
 diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
 index ce18098fd26b..d65141b834d3 100644
 --- a/django/db/models/sql/query.py

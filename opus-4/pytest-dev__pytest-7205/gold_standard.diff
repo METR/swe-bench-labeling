@@ -1,18 +1,3 @@
-From 903e2ab6eef5a99625f4ef58115c9455b018feda Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sat, 9 May 2020 13:57:17 +0300
-Subject: [PATCH 1/8] Fix #7126 - saferepr for bytes params
-
-bytes parametrize parameters cause error when --setup-show is used
-and Python is called with -bb flag
----
- AUTHORS                   |  1 +
- changelog/7126.bugfix.rst |  3 +++
- src/_pytest/setuponly.py  |  7 ++++++-
- testing/test_setuponly.py | 18 ++++++++++++++++++
- 4 files changed, 28 insertions(+), 1 deletion(-)
- create mode 100644 changelog/7126.bugfix.rst
-
 diff --git a/AUTHORS b/AUTHORS
 index b59ebc2a27f..68f156862c5 100644
 --- a/AUTHORS
@@ -27,15 +12,14 @@ index b59ebc2a27f..68f156862c5 100644
  Philipp Loose
 diff --git a/changelog/7126.bugfix.rst b/changelog/7126.bugfix.rst
 new file mode 100644
-index 00000000000..6817ee21192
+index 00000000000..1a85e899781
 --- /dev/null
 +++ b/changelog/7126.bugfix.rst
-@@ -0,0 +1,3 @@
-+Use ``saferepr`` to format bytes ``parametrize`` parameters  for ``--setup-show``
-+output to prevent errors when Python is called with ``-bb`` to catch bytearray with
-+unicode comparison.
+@@ -0,0 +1,2 @@
++``--setup-show`` now doesn't raise an error when a bytes value is used as a ``parametrize``
++parameter when Python is called with the ``-bb`` flag.
 diff --git a/src/_pytest/setuponly.py b/src/_pytest/setuponly.py
-index c9cc589ffee..e18208e59a9 100644
+index c9cc589ffee..9e4cd951947 100644
 --- a/src/_pytest/setuponly.py
 +++ b/src/_pytest/setuponly.py
 @@ -1,4 +1,5 @@
@@ -44,21 +28,17 @@ index c9cc589ffee..e18208e59a9 100644
  
  
  def pytest_addoption(parser):
-@@ -66,7 +67,11 @@ def _show_fixture_action(fixturedef, msg):
+@@ -66,7 +67,7 @@ def _show_fixture_action(fixturedef, msg):
              tw.write(" (fixtures used: {})".format(", ".join(deps)))
  
      if hasattr(fixturedef, "cached_param"):
 -        tw.write("[{}]".format(fixturedef.cached_param))
-+        if isinstance(fixturedef.cached_param, bytes):
-+            param = saferepr(fixturedef.cached_param, maxsize=42)
-+        else:
-+            param = fixturedef.cached_param
-+        tw.write("[{}]".format(param))
++        tw.write("[{}]".format(saferepr(fixturedef.cached_param, maxsize=42)))
  
      tw.flush()
  
 diff --git a/testing/test_setuponly.py b/testing/test_setuponly.py
-index e26a33dee38..779c17fbd23 100644
+index e26a33dee38..221c32a310b 100644
 --- a/testing/test_setuponly.py
 +++ b/testing/test_setuponly.py
 @@ -1,3 +1,5 @@
@@ -67,133 +47,7 @@ index e26a33dee38..779c17fbd23 100644
  import pytest
  from _pytest.config import ExitCode
  
-@@ -292,3 +294,19 @@ def test_arg(arg):
-         ]
-     )
-     assert result.ret == ExitCode.INTERRUPTED
-+
-+
-+def test_parametrize_no_comparing_bytearray_error(testdir):
-+    test_file = testdir.makepyfile(
-+        """
-+        import pytest
-+
-+        @pytest.mark.parametrize('data', [b'Hello World'])
-+        def test_data(data):
-+            pass
-+        """
-+    )
-+    result = testdir.run(
-+        sys.executable, "-bb", "-m", "pytest", "--setup-show", str(test_file)
-+    )
-+    assert result.ret == 0
-
-From a2280d39ec9ff030abcbaba8e246c269587b9bea Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sat, 9 May 2020 14:14:23 +0300
-Subject: [PATCH 2/8] #7126, use past tense in changelog
-
----
- changelog/7126.bugfix.rst | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/changelog/7126.bugfix.rst b/changelog/7126.bugfix.rst
-index 6817ee21192..ad3368d77f1 100644
---- a/changelog/7126.bugfix.rst
-+++ b/changelog/7126.bugfix.rst
-@@ -1,3 +1,3 @@
--Use ``saferepr`` to format bytes ``parametrize`` parameters  for ``--setup-show``
--output to prevent errors when Python is called with ``-bb`` to catch bytearray with
--unicode comparison.
-+Switched to ``saferepr`` to format bytes ``parametrize`` parameters
-+for ``--setup-show`` output to prevent errors when Python is called with ``-bb``
-+to catch bytearray with unicode comparison.
-
-From feb7a5f0d1589bdc82473537e9017ff832e684f3 Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sun, 10 May 2020 12:11:59 +0300
-Subject: [PATCH 3/8] Omit internal solution details
-
----
- changelog/7126.bugfix.rst | 5 ++---
- 1 file changed, 2 insertions(+), 3 deletions(-)
-
-diff --git a/changelog/7126.bugfix.rst b/changelog/7126.bugfix.rst
-index ad3368d77f1..a547688cb46 100644
---- a/changelog/7126.bugfix.rst
-+++ b/changelog/7126.bugfix.rst
-@@ -1,3 +1,2 @@
--Switched to ``saferepr`` to format bytes ``parametrize`` parameters
--for ``--setup-show`` output to prevent errors when Python is called with ``-bb``
--to catch bytearray with unicode comparison.
-+``--setup-show`` now doesn't raise an error if bytearray is used as ``parametrize``
-+parameter when Python is called with ``-bb`` flag.
-
-From 6b26f0f890f161f91d81b443468f10de1d5046a2 Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sun, 10 May 2020 12:19:52 +0300
-Subject: [PATCH 4/8] Rename test method and reference issue
-
----
- testing/test_setuponly.py | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
-
-diff --git a/testing/test_setuponly.py b/testing/test_setuponly.py
-index 779c17fbd23..57c95ae06ae 100644
---- a/testing/test_setuponly.py
-+++ b/testing/test_setuponly.py
-@@ -296,7 +296,8 @@ def test_arg(arg):
-     assert result.ret == ExitCode.INTERRUPTED
- 
- 
--def test_parametrize_no_comparing_bytearray_error(testdir):
-+def test_show_fixture_action_with_bytearrays(testdir):
-+    # Issue 7126, BytesWarning when using --setup-show with bytes parameter
-     test_file = testdir.makepyfile(
-         """
-         import pytest
-
-From 7b196747ddb55dd484ad5dfa8276d2d65cd737d4 Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sun, 10 May 2020 12:47:26 +0300
-Subject: [PATCH 5/8] Use saferepr for all types
-
----
- src/_pytest/setuponly.py | 6 +-----
- 1 file changed, 1 insertion(+), 5 deletions(-)
-
-diff --git a/src/_pytest/setuponly.py b/src/_pytest/setuponly.py
-index e18208e59a9..9e4cd951947 100644
---- a/src/_pytest/setuponly.py
-+++ b/src/_pytest/setuponly.py
-@@ -67,11 +67,7 @@ def _show_fixture_action(fixturedef, msg):
-             tw.write(" (fixtures used: {})".format(", ".join(deps)))
- 
-     if hasattr(fixturedef, "cached_param"):
--        if isinstance(fixturedef.cached_param, bytes):
--            param = saferepr(fixturedef.cached_param, maxsize=42)
--        else:
--            param = fixturedef.cached_param
--        tw.write("[{}]".format(param))
-+        tw.write("[{}]".format(saferepr(fixturedef.cached_param, maxsize=42)))
- 
-     tw.flush()
- 
-
-From 184528d0c28f2cde73a0457414c55218fd6a2ddf Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sun, 10 May 2020 13:06:36 +0300
-Subject: [PATCH 6/8] Fix tests to expected repr output
-
----
- testing/test_setuponly.py | 14 ++++++++------
- 1 file changed, 8 insertions(+), 6 deletions(-)
-
-diff --git a/testing/test_setuponly.py b/testing/test_setuponly.py
-index 57c95ae06ae..9b0bb909bf1 100644
---- a/testing/test_setuponly.py
-+++ b/testing/test_setuponly.py
-@@ -148,10 +148,10 @@ def test_arg1(arg_other):
+@@ -146,10 +148,10 @@ def test_arg1(arg_other):
  
      result.stdout.fnmatch_lines(
          [
@@ -208,7 +62,7 @@ index 57c95ae06ae..9b0bb909bf1 100644
          ]
      )
  
-@@ -181,7 +181,7 @@ def test_arg1(arg_other):
+@@ -179,7 +181,7 @@ def test_arg1(arg_other):
      assert result.ret == 0
  
      result.stdout.fnmatch_lines(
@@ -217,7 +71,7 @@ index 57c95ae06ae..9b0bb909bf1 100644
      )
  
  
-@@ -200,7 +200,9 @@ def test_foobar(foobar):
+@@ -198,7 +200,9 @@ def test_foobar(foobar):
      result = testdir.runpytest(mode, p)
      assert result.ret == 0
  
@@ -228,47 +82,24 @@ index 57c95ae06ae..9b0bb909bf1 100644
  
  
  def test_dynamic_fixture_request(testdir):
-
-From 17857b67df4c4cf1ba7def1d896426e583e4120c Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sun, 10 May 2020 16:58:22 +0300
-Subject: [PATCH 7/8] Better changelog wording
-
-Co-authored-by: Ran Benita <ran@unusedvar.com>
----
- changelog/7126.bugfix.rst | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/changelog/7126.bugfix.rst b/changelog/7126.bugfix.rst
-index a547688cb46..1a85e899781 100644
---- a/changelog/7126.bugfix.rst
-+++ b/changelog/7126.bugfix.rst
-@@ -1,2 +1,2 @@
--``--setup-show`` now doesn't raise an error if bytearray is used as ``parametrize``
--parameter when Python is called with ``-bb`` flag.
-+``--setup-show`` now doesn't raise an error when a bytes value is used as a ``parametrize``
-+parameter when Python is called with the ``-bb`` flag.
-
-From 8bd3f1a72bf794e919f0fe2d06b426729f53b092 Mon Sep 17 00:00:00 2001
-From: Pavel Karateev <lancelote.du.lac@gmail.com>
-Date: Sun, 10 May 2020 16:59:20 +0300
-Subject: [PATCH 8/8] Better test method name
-
-Co-authored-by: Ran Benita <ran@unusedvar.com>
----
- testing/test_setuponly.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/testing/test_setuponly.py b/testing/test_setuponly.py
-index 9b0bb909bf1..221c32a310b 100644
---- a/testing/test_setuponly.py
-+++ b/testing/test_setuponly.py
-@@ -298,7 +298,7 @@ def test_arg(arg):
+@@ -292,3 +296,20 @@ def test_arg(arg):
+         ]
+     )
      assert result.ret == ExitCode.INTERRUPTED
- 
- 
--def test_show_fixture_action_with_bytearrays(testdir):
++
++
 +def test_show_fixture_action_with_bytes(testdir):
-     # Issue 7126, BytesWarning when using --setup-show with bytes parameter
-     test_file = testdir.makepyfile(
-         """
++    # Issue 7126, BytesWarning when using --setup-show with bytes parameter
++    test_file = testdir.makepyfile(
++        """
++        import pytest
++
++        @pytest.mark.parametrize('data', [b'Hello World'])
++        def test_data(data):
++            pass
++        """
++    )
++    result = testdir.run(
++        sys.executable, "-bb", "-m", "pytest", "--setup-show", str(test_file)
++    )
++    assert result.ret == 0

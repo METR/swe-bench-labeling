@@ -1,17 +1,3 @@
-From 800dcf0f0a8040ae84c4aaa7053f62201170c47d Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sat, 30 May 2020 13:15:19 +0900
-Subject: [PATCH] Close #2106: autodoc: Support multiple signatures on
- docstring
-
----
- CHANGES                                       |  1 +
- doc/usage/extensions/autodoc.rst              |  7 ++
- sphinx/ext/autodoc/__init__.py                | 90 +++++++++++++------
- .../target/docstring_signature.py             |  6 ++
- tests/test_ext_autodoc_configs.py             | 14 +++
- 5 files changed, 91 insertions(+), 27 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index 6c2761c53e8..70cb5dcbd36 100644
 --- a/CHANGES

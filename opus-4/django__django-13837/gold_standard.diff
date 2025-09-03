@@ -1,23 +1,3 @@
-From ec6d2531c59466924b645f314ac33f54470d7ac3 Mon Sep 17 00:00:00 2001
-From: William Schwartz <wkschwartz@gmail.com>
-Date: Mon, 4 Jan 2021 08:50:49 -0600
-Subject: [PATCH] Fixed #32314 -- Fixed detection when started non-django
- modules with "python -m" in autoreloader.
-
-django.utils.autoreload.get_child_arguments() detected when Python was
-started with the `-m` option only for `django` module. This commit
-changes the logic to check __spec__, see
-https://docs.python.org/3/reference/import.html#main-spec
-
-Now packages can implement their own __main__ with the runserver
-command.
----
- django/utils/autoreload.py                | 10 +++++-----
- tests/utils_tests/test_autoreload.py      | 14 +++++++++++++-
- tests/utils_tests/test_module/__main__.py |  0
- 3 files changed, 18 insertions(+), 6 deletions(-)
- create mode 100644 tests/utils_tests/test_module/__main__.py
-
 diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
 index b8efb9f88148..faa3252c71d4 100644
 --- a/django/utils/autoreload.py

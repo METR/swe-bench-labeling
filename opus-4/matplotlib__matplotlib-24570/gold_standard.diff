@@ -1,17 +1,3 @@
-From b51c471f0bea8ad2bd3e295ebf896cba0efbb5ef Mon Sep 17 00:00:00 2001
-From: Greg Lucas <greg.m.lucas@gmail.com>
-Date: Wed, 30 Nov 2022 08:45:49 -0700
-Subject: [PATCH] FIX: VPacker and HPacker bottom/top alignment
-
-The bottom and top alignments were incorrectly defined before,
-this updates them to have the expected alignment.
----
- .../next_api_changes/behavior/24570-GL.rst    |  5 +++
- lib/matplotlib/offsetbox.py                   |  4 +-
- lib/matplotlib/tests/test_offsetbox.py        | 45 ++++++++++++++++++-
- 3 files changed, 51 insertions(+), 3 deletions(-)
- create mode 100644 doc/api/next_api_changes/behavior/24570-GL.rst
-
 diff --git a/doc/api/next_api_changes/behavior/24570-GL.rst b/doc/api/next_api_changes/behavior/24570-GL.rst
 new file mode 100644
 index 000000000000..4ab0f5d1bcdb

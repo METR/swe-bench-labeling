@@ -1,17 +1,3 @@
-From ffcf1a8ebfbdc8e3afac84aed88d6ed29a57c72b Mon Sep 17 00:00:00 2001
-From: Shubham singh <shubham1.singh15@gmail.com>
-Date: Sun, 5 Jan 2020 13:21:33 +0530
-Subject: [PATCH] Fixed #31118 -- Made FileInput to avoid the required
- attribute when initial data exists.
-
----
- django/forms/widgets.py                       |  6 ++--
- docs/ref/forms/widgets.txt                    | 15 ++++++----
- docs/releases/3.1.txt                         |  3 ++
- tests/forms_tests/tests/test_forms.py         | 29 +++++++++++++++----
- .../widget_tests/test_fileinput.py            |  6 ++++
- 5 files changed, 46 insertions(+), 13 deletions(-)
-
 diff --git a/django/forms/widgets.py b/django/forms/widgets.py
 index 338d54d72f16..40ac1d316242 100644
 --- a/django/forms/widgets.py

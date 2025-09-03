@@ -1,66 +1,3 @@
-From 54f60bc85df7fe38ba6ef6779996d8544d340d3e Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Wed, 17 Mar 2021 11:44:09 +0100
-Subject: [PATCH 1/2] Refs #32548 -- Added tests for passing conditional
- expressions to Q().
-
----
- tests/expressions/tests.py     |  6 ++++++
- tests/queryset_pickle/tests.py | 11 +++++++++++
- 2 files changed, 17 insertions(+)
-
-diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
-index 9ecc033b6b2b..82d8a9f35168 100644
---- a/tests/expressions/tests.py
-+++ b/tests/expressions/tests.py
-@@ -838,6 +838,12 @@ def test_boolean_expression_combined_with_empty_Q(self):
-             with self.subTest(conditions):
-                 self.assertCountEqual(Employee.objects.filter(conditions), [self.max])
- 
-+    def test_boolean_expression_in_Q(self):
-+        is_poc = Company.objects.filter(point_of_contact=OuterRef('pk'))
-+        self.gmbh.point_of_contact = self.max
-+        self.gmbh.save()
-+        self.assertCountEqual(Employee.objects.filter(Q(Exists(is_poc))), [self.max])
-+
- 
- class IterableLookupInnerExpressionsTests(TestCase):
-     @classmethod
-diff --git a/tests/queryset_pickle/tests.py b/tests/queryset_pickle/tests.py
-index d0ae963cd9ad..bf6196041938 100644
---- a/tests/queryset_pickle/tests.py
-+++ b/tests/queryset_pickle/tests.py
-@@ -172,6 +172,17 @@ def test_pickle_prefetch_related_with_m2m_and_objects_deletion(self):
-         m2ms = pickle.loads(pickle.dumps(m2ms))
-         self.assertSequenceEqual(m2ms, [m2m])
- 
-+    def test_pickle_boolean_expression_in_Q__queryset(self):
-+        group = Group.objects.create(name='group')
-+        Event.objects.create(title='event', group=group)
-+        groups = Group.objects.filter(
-+            models.Q(models.Exists(
-+                Event.objects.filter(group_id=models.OuterRef('id')),
-+            )),
-+        )
-+        groups2 = pickle.loads(pickle.dumps(groups))
-+        self.assertSequenceEqual(groups2, [group])
-+
-     def test_pickle_exists_queryset_still_usable(self):
-         group = Group.objects.create(name='group')
-         Event.objects.create(title='event', group=group)
-
-From 00b0786de533dbb3f6208d8d5eaddbf765b4e5b8 Mon Sep 17 00:00:00 2001
-From: Jonathan Richards <jonathan@golorry.com>
-Date: Sun, 14 Mar 2021 14:00:40 -0700
-Subject: [PATCH 2/2] Fixed #32548 -- Fixed crash when combining Q() objects
- with boolean expressions.
-
----
- django/db/models/query_utils.py | 12 ++++--------
- tests/expressions/tests.py      |  4 ++++
- tests/queries/test_q.py         | 22 ++++++++++++++--------
- 3 files changed, 22 insertions(+), 16 deletions(-)
-
 diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
 index ae0f8861075c..43c93ce4552f 100644
 --- a/django/db/models/query_utils.py
@@ -85,10 +22,10 @@ index ae0f8861075c..43c93ce4552f 100644
              kwargs['_negated'] = True
          return path, args, kwargs
 diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
-index 82d8a9f35168..eb1bfdc2be62 100644
+index 9ecc033b6b2b..eb1bfdc2be62 100644
 --- a/tests/expressions/tests.py
 +++ b/tests/expressions/tests.py
-@@ -833,6 +833,10 @@ def test_boolean_expression_combined_with_empty_Q(self):
+@@ -833,11 +833,21 @@ def test_boolean_expression_combined_with_empty_Q(self):
              Q() & Exists(is_poc),
              Exists(is_poc) | Q(),
              Q() | Exists(is_poc),
@@ -99,6 +36,17 @@ index 82d8a9f35168..eb1bfdc2be62 100644
          ]
          for conditions in tests:
              with self.subTest(conditions):
+                 self.assertCountEqual(Employee.objects.filter(conditions), [self.max])
+ 
++    def test_boolean_expression_in_Q(self):
++        is_poc = Company.objects.filter(point_of_contact=OuterRef('pk'))
++        self.gmbh.point_of_contact = self.max
++        self.gmbh.save()
++        self.assertCountEqual(Employee.objects.filter(Q(Exists(is_poc))), [self.max])
++
+ 
+ class IterableLookupInnerExpressionsTests(TestCase):
+     @classmethod
 diff --git a/tests/queries/test_q.py b/tests/queries/test_q.py
 index 6dcf36ce025b..24a705f07f06 100644
 --- a/tests/queries/test_q.py
@@ -149,3 +97,25 @@ index 6dcf36ce025b..24a705f07f06 100644
      def test_reconstruct(self):
          q = Q(price__gt=F('discounted_price'))
          path, args, kwargs = q.deconstruct()
+diff --git a/tests/queryset_pickle/tests.py b/tests/queryset_pickle/tests.py
+index d0ae963cd9ad..bf6196041938 100644
+--- a/tests/queryset_pickle/tests.py
++++ b/tests/queryset_pickle/tests.py
+@@ -172,6 +172,17 @@ def test_pickle_prefetch_related_with_m2m_and_objects_deletion(self):
+         m2ms = pickle.loads(pickle.dumps(m2ms))
+         self.assertSequenceEqual(m2ms, [m2m])
+ 
++    def test_pickle_boolean_expression_in_Q__queryset(self):
++        group = Group.objects.create(name='group')
++        Event.objects.create(title='event', group=group)
++        groups = Group.objects.filter(
++            models.Q(models.Exists(
++                Event.objects.filter(group_id=models.OuterRef('id')),
++            )),
++        )
++        groups2 = pickle.loads(pickle.dumps(groups))
++        self.assertSequenceEqual(groups2, [group])
++
+     def test_pickle_exists_queryset_still_usable(self):
+         group = Group.objects.create(name='group')
+         Event.objects.create(title='event', group=group)

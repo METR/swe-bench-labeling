@@ -1,23 +1,3 @@
-From 600628f8f0ab077c62223a54a6c8cde6cbbd1ed1 Mon Sep 17 00:00:00 2001
-From: Simon Charette <simon.charette@zapier.com>
-Date: Sun, 1 Sep 2019 14:25:28 -0400
-Subject: [PATCH 1/2] Refs #28442 -- Adjusted related lookups handling of
- expression rhs.
-
-Expressions should never be prepared as other Lookup.get_prep_lookup
-implementations hint at by returning early on the presence of the
-resolve_expression attribute.
-
-The previous solution was only handling lookups against related fields
-pointing at AutoFields and would break for foreign keys to other fields.
-
-It was also causing bidirectional coupling between model fields and
-expressions which the method level import of OuterRef was a symptom of.
----
- django/db/models/fields/__init__.py        | 4 ----
- django/db/models/fields/related_lookups.py | 2 +-
- 2 files changed, 1 insertion(+), 5 deletions(-)
-
 diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
 index 6e924a4adfc9..9ce46e3f7363 100644
 --- a/django/db/models/fields/__init__.py
@@ -46,21 +26,6 @@ index 12f7fb0b9b67..c20e220141ac 100644
              # If we get here, we are dealing with single-column relations.
              self.rhs = get_normalized_value(self.rhs, self.lhs)[0]
              # We need to run the related field's get_prep_value(). Consider case
-
-From 13a8884a08342817094cc6287c7ae346100a297d Mon Sep 17 00:00:00 2001
-From: Simon Charette <simon.charette@zapier.com>
-Date: Sun, 1 Sep 2019 14:35:27 -0400
-Subject: [PATCH 2/2] Fixed #30739 -- Fixed exclusion of multi-valued lookup
- against outer rhs.
-
-OuterRef right hand sides have to be nested, just like F rhs have to,
-during the subquery pushdown split_exclude performs to ensure they are
-resolved against the outer query aliases.
----
- django/db/models/sql/query.py |  4 +++-
- tests/queries/tests.py        | 14 +++++++++++---
- 2 files changed, 14 insertions(+), 4 deletions(-)
-
 diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
 index 35f3c5e1ea55..8e55bd092d8a 100644
 --- a/django/db/models/sql/query.py

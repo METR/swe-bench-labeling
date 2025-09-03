@@ -1,22 +1,3 @@
-From c0678a4a509c1d2f8b4ee79916234e5b21291f52 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Thu, 17 Dec 2020 01:04:03 +0900
-Subject: [PATCH] Fix #741: autodoc: inherited-members doesn't support instance
- attributes on super class
-
-To support instance attributes on super class, get_class_members() scans
-the instance attributes defined at super classes using ModuleAnalyzer.
-It allows to generate document for them when users gives :
-inherited-members: option.
----
- CHANGES                                       |  2 +
- sphinx/ext/autodoc/__init__.py                |  2 +-
- sphinx/ext/autodoc/importer.py                | 48 +++++++++-------
- .../target/instance_variable.py               | 10 ++++
- tests/test_ext_autodoc_autoclass.py           | 55 +++++++++++++++++++
- 5 files changed, 96 insertions(+), 21 deletions(-)
- create mode 100644 tests/roots/test-ext-autodoc/target/instance_variable.py
-
 diff --git a/CHANGES b/CHANGES
 index b4dbf1ef7d7..327dc5e43ee 100644
 --- a/CHANGES

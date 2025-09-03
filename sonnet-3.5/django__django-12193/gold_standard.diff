@@ -1,15 +1,3 @@
-From 02eff7ef60466da108b1a33f1e4dc01eec45c99d Mon Sep 17 00:00:00 2001
-From: Peter Andersen <peter@porksmash.com>
-Date: Mon, 9 Dec 2019 08:54:40 -0800
-Subject: [PATCH] Fixed #31073 -- Prevented CheckboxInput.get_context() from
- mutating attrs.
-
----
- django/forms/widgets.py                              |  4 +---
- tests/forms_tests/widget_tests/test_checkboxinput.py |  5 +++++
- tests/postgres_tests/test_array.py                   | 11 +++++++++++
- 3 files changed, 17 insertions(+), 3 deletions(-)
-
 diff --git a/django/forms/widgets.py b/django/forms/widgets.py
 index 6fe220bea703..d83d63c16971 100644
 --- a/django/forms/widgets.py

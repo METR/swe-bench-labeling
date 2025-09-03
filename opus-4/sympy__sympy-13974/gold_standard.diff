@@ -1,42 +1,20 @@
-From 7cad5a0649697a668e2412068974af3088ed3e30 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Johan=20Bl=C3=A5b=C3=A4ck?= <johan_bluecreek@riseup.net>
-Date: Sat, 20 Jan 2018 15:13:00 +0100
-Subject: [PATCH 1/4] Adding support for simplifying powers of tensorproducts
-
-This commit adds support for `tensor_product_simp()` to also handle `Pow`
-expressions with tensorproducts.
-
-There is a new function `tensor_product_simp_Pow()` that only evaluates powers
-whose base is a tensorproduct, and `tensor_product_simp_Mul()` has been
-changed to call `tensor_product_simp_Pow()` when appropraite.
-
-This solves issue #13779, resolves one of the "TODO" items present in a
-comment in `tensorproduct.py` (comment has been changed) and is an alternative
-solution to the PR #13784.
----
- sympy/physics/quantum/tensorproduct.py | 42 +++++++++++++++++++++-----
- 1 file changed, 34 insertions(+), 8 deletions(-)
-
 diff --git a/sympy/physics/quantum/tensorproduct.py b/sympy/physics/quantum/tensorproduct.py
-index 9dd10d219e43..997d30851bfd 100644
+index 9dd10d219e43..3ffda734c2ec 100644
 --- a/sympy/physics/quantum/tensorproduct.py
 +++ b/sympy/physics/quantum/tensorproduct.py
-@@ -18,6 +18,8 @@
+@@ -18,6 +18,7 @@
      matrix_tensor_product
  )
  
-+from sympy import srepr
 +
  __all__ = [
      'TensorProduct',
      'tensor_product_simp'
-@@ -309,14 +311,18 @@ def tensor_product_simp_Mul(e):
-         (A*C)x(B*D)
+@@ -310,18 +311,26 @@ def tensor_product_simp_Mul(e):
  
      """
--    # TODO: This won't work with Muls that have other composites of
+     # TODO: This won't work with Muls that have other composites of
 -    # TensorProducts, like an Add, Pow, Commutator, etc.
-+    # TODO: This don't work with Muls that have other composites of
 +    # TensorProducts, like an Add, Commutator, etc.
      # TODO: This only works for the equivalent of single Qbit gates.
      if not isinstance(e, Mul):
@@ -52,7 +30,17 @@ index 9dd10d219e43..997d30851bfd 100644
          return e
      elif e.has(TensorProduct):
          current = nc_part[0]
-@@ -335,15 +341,32 @@ def tensor_product_simp_Mul(e):
+         if not isinstance(current, TensorProduct):
+-            raise TypeError('TensorProduct expected, got: %r' % current)
++            if isinstance(current, Pow):
++                if isinstance(current.base, TensorProduct):
++                    current = tensor_product_simp_Pow(current)
++            else:
++                raise TypeError('TensorProduct expected, got: %r' % current)
+         n_terms = len(current.args)
+         new_args = list(current.args)
+         for next in nc_part[1:]:
+@@ -335,15 +344,32 @@ def tensor_product_simp_Mul(e):
                  for i in range(len(new_args)):
                      new_args[i] = new_args[i] * next.args[i]
              else:
@@ -61,14 +49,14 @@ index 9dd10d219e43..997d30851bfd 100644
 -                for i in range(len(new_args)):
 -                    new_args[i] = new_args[i] * next
 +                if isinstance(next, Pow):
-+                    new_tp = tensor_product_simp_Pow(next)
-+                    for i in range(len(new_args)):
-+                        new_args[i] = new_args[i] * new_tp.args[i]
++                    if isinstance(next.base, TensorProduct):
++                        new_tp = tensor_product_simp_Pow(next)
++                        for i in range(len(new_args)):
++                            new_args[i] = new_args[i] * new_tp.args[i]
++                    else:
++                        raise TypeError('TensorProduct expected, got: %r' % next)
 +                else:
-+                    # this won't quite work as we don't want next in the
-+                    # TensorProduct
-+                    for i in range(len(new_args)):
-+                        new_args[i] = new_args[i] * next
++                    raise TypeError('TensorProduct expected, got: %r' % next)
              current = next
          return Mul(*c_part) * TensorProduct(*new_args)
 +    elif e.has(Pow):
@@ -89,7 +77,7 @@ index 9dd10d219e43..997d30851bfd 100644
  
  def tensor_product_simp(e, **hints):
      """Try to simplify and combine TensorProducts.
-@@ -382,7 +405,10 @@ def tensor_product_simp(e, **hints):
+@@ -382,7 +408,10 @@ def tensor_product_simp(e, **hints):
      if isinstance(e, Add):
          return Add(*[tensor_product_simp(arg) for arg in e.args])
      elif isinstance(e, Pow):
@@ -101,75 +89,6 @@ index 9dd10d219e43..997d30851bfd 100644
      elif isinstance(e, Mul):
          return tensor_product_simp_Mul(e)
      elif isinstance(e, Commutator):
-
-From ae978e16f4b4baaddb5ca572e42081c08e6d05d7 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Johan=20Bl=C3=A5b=C3=A4ck?= <johan_bluecreek@riseup.net>
-Date: Sat, 20 Jan 2018 18:56:40 +0100
-Subject: [PATCH 2/4] Fix errors for simplifying non-commuting symbols
- multiplying tensorproducts
-
-Previous to this fix `tensor_product_simp(C*TensorProduct(A,B))` caused errors
-while `tensor_product_simp(TensorProduct(A,B)*C)` did not, for `A, B, C`
-non-commuting symbols. `tensor_product_simp()` will now raise errors for both,
-forcing the user to be more specific to avoid unexpected results. Meaning, in
-the above examples `C` can be imagined to be composite `C = TensorProduct(C1,
-C2)`, or to represent another block in the tenstor product, e.g.
-`TensorProduct(A,B,1) * TensorProduct(1,1,C)`.
----
- sympy/physics/quantum/tensorproduct.py | 20 ++++++++++++--------
- 1 file changed, 12 insertions(+), 8 deletions(-)
-
-diff --git a/sympy/physics/quantum/tensorproduct.py b/sympy/physics/quantum/tensorproduct.py
-index 997d30851bfd..b861d9a12ca1 100644
---- a/sympy/physics/quantum/tensorproduct.py
-+++ b/sympy/physics/quantum/tensorproduct.py
-@@ -327,7 +327,11 @@ def tensor_product_simp_Mul(e):
-     elif e.has(TensorProduct):
-         current = nc_part[0]
-         if not isinstance(current, TensorProduct):
--            raise TypeError('TensorProduct expected, got: %r' % current)
-+            if isinstance(current, Pow):
-+                if isinstance(current.base, TensorProduct):
-+                    current = tensor_product_simp_Pow(current)
-+            else:
-+                raise TypeError('TensorProduct expected, got: %r' % current)
-         n_terms = len(current.args)
-         new_args = list(current.args)
-         for next in nc_part[1:]:
-@@ -342,14 +346,14 @@ def tensor_product_simp_Mul(e):
-                     new_args[i] = new_args[i] * next.args[i]
-             else:
-                 if isinstance(next, Pow):
--                    new_tp = tensor_product_simp_Pow(next)
--                    for i in range(len(new_args)):
--                        new_args[i] = new_args[i] * new_tp.args[i]
-+                    if isinstance(next.base, TensorProduct):
-+                        new_tp = tensor_product_simp_Pow(next)
-+                        for i in range(len(new_args)):
-+                            new_args[i] = new_args[i] * new_tp.args[i]
-+                    else:
-+                        raise TypeError('TensorProduct expected, got: %r' % next)
-                 else:
--                    # this won't quite work as we don't want next in the
--                    # TensorProduct
--                    for i in range(len(new_args)):
--                        new_args[i] = new_args[i] * next
-+                    raise TypeError('TensorProduct expected, got: %r' % next)
-             current = next
-         return Mul(*c_part) * TensorProduct(*new_args)
-     elif e.has(Pow):
-
-From 3cfa3377eec97cdfbf55b8dd70a7472576ef28d6 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Johan=20Bl=C3=A5b=C3=A4ck?= <johan_bluecreek@riseup.net>
-Date: Sat, 20 Jan 2018 19:07:34 +0100
-Subject: [PATCH 3/4] Tests for `tensor_product_simp()` acting on expressions
- with powers
-
-Non-trivial tests for expressions mixing powers and tensorproducts
----
- sympy/physics/quantum/tests/test_tensorproduct.py | 7 ++++++-
- 1 file changed, 6 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/physics/quantum/tests/test_tensorproduct.py b/sympy/physics/quantum/tests/test_tensorproduct.py
 index 9f65844c85d6..c8955a08f164 100644
 --- a/sympy/physics/quantum/tests/test_tensorproduct.py
@@ -195,34 +114,3 @@ index 9f65844c85d6..c8955a08f164 100644
  
  
  def test_issue_5923():
-
-From c2360561e9fe2119791149f5b097bd860e0ab4cc Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Johan=20Bl=C3=A5b=C3=A4ck?= <johan_bluecreek@riseup.net>
-Date: Tue, 23 Jan 2018 13:11:22 +0100
-Subject: [PATCH 4/4] Fixing minor issues mentioned by reviewers
-
----
- sympy/physics/quantum/tensorproduct.py | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
-
-diff --git a/sympy/physics/quantum/tensorproduct.py b/sympy/physics/quantum/tensorproduct.py
-index b861d9a12ca1..3ffda734c2ec 100644
---- a/sympy/physics/quantum/tensorproduct.py
-+++ b/sympy/physics/quantum/tensorproduct.py
-@@ -18,7 +18,6 @@
-     matrix_tensor_product
- )
- 
--from sympy import srepr
- 
- __all__ = [
-     'TensorProduct',
-@@ -311,7 +310,7 @@ def tensor_product_simp_Mul(e):
-         (A*C)x(B*D)
- 
-     """
--    # TODO: This don't work with Muls that have other composites of
-+    # TODO: This won't work with Muls that have other composites of
-     # TensorProducts, like an Add, Commutator, etc.
-     # TODO: This only works for the equivalent of single Qbit gates.
-     if not isinstance(e, Mul):

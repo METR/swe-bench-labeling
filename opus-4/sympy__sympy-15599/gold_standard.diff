@@ -1,437 +1,66 @@
-From ae4b6d621df6a919555e219470d241aa9eb128c3 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Thu, 6 Dec 2018 10:48:04 +0530
-Subject: [PATCH 01/15] modified mod
-
----
- sympy/core/mod.py | 5 +++++
- 1 file changed, 5 insertions(+)
-
 diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index eae25630cc21..6d035dbff2fd 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -123,6 +123,9 @@ def doit(p, q):
-             for arg in p.args:
-                 both_l[isinstance(arg, cls)].append(arg)
- 
-+            if q.is_Number:
-+                non_mod_l = [(x%q if x.is_Number else x) for x in non_mod_l]
-+
-             if mod_l and all(inner.args[1] == q for inner in mod_l):
-                 # finding distributive term
-                 non_mod_l = [cls(x, q) for x in non_mod_l]
-@@ -138,6 +141,8 @@ def doit(p, q):
-                 prod_mod1 = Mul(*[i.args[0] for i in mod_l])
-                 net = prod_mod1*prod_mod
-                 return prod_non_mod*cls(net, q)
-+            print("here")
-+            return Mul(*non_mod_l)*cls(Mul(*mod_l), q)
- 
-         # XXX other possibilities?
- 
-
-From bb205305ba5214507d964895e3afd699c4e5f1f2 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Thu, 6 Dec 2018 11:15:55 +0530
-Subject: [PATCH 02/15] issue with Mod(e/2, 2)
-
----
- sympy/core/mod.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index 6d035dbff2fd..9ba8a26d2a8d 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -124,7 +124,7 @@ def doit(p, q):
-                 both_l[isinstance(arg, cls)].append(arg)
- 
-             if q.is_Number:
--                non_mod_l = [(x%q if x.is_Number else x) for x in non_mod_l]
-+                non_mod_l = [(x%q if x.is_Integer else x) for x in non_mod_l]
- 
-             if mod_l and all(inner.args[1] == q for inner in mod_l):
-                 # finding distributive term
-@@ -141,8 +141,8 @@ def doit(p, q):
-                 prod_mod1 = Mul(*[i.args[0] for i in mod_l])
-                 net = prod_mod1*prod_mod
-                 return prod_non_mod*cls(net, q)
--            print("here")
--            return Mul(*non_mod_l)*cls(Mul(*mod_l), q)
-+
-+            return cls(Mul(*non_mod_l), q)
- 
-         # XXX other possibilities?
- 
-
-From b3c0f9625574b550a467c6f99c1baa7851983207 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Thu, 6 Dec 2018 23:03:22 +0530
-Subject: [PATCH 03/15] added test into test_arit
-
----
- sympy/core/tests/test_arit.py | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
-index 04d3b1ab9fe5..314c85e62bb9 100644
---- a/sympy/core/tests/test_arit.py
-+++ b/sympy/core/tests/test_arit.py
-@@ -1662,6 +1662,9 @@ def test_Mod():
-     assert Mod(Mod(x + 2, 4)*(x + 4), 4) == Mod(x*(x + 2), 4)
-     assert Mod(Mod(x + 2, 4)*4, 4) == 0
- 
-+    # issue 15493
-+    assert Mod(3*i, 2) == Mod(i, 2)
-+
- 
- def test_Mod_is_integer():
-     p = Symbol('p', integer=True)
-
-From 54377c89fb3985afbbc9fc47f7a87427eb4ba4c8 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Thu, 6 Dec 2018 23:04:31 +0530
-Subject: [PATCH 04/15] optimized function of Mod
-
----
- sympy/core/mod.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index 9ba8a26d2a8d..fd2b9c691400 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -142,7 +142,7 @@ def doit(p, q):
-                 net = prod_mod1*prod_mod
-                 return prod_non_mod*cls(net, q)
- 
--            return cls(Mul(*non_mod_l), q)
-+            p = Mul(*non_mod_l)
- 
-         # XXX other possibilities?
- 
-
-From 2d51c4da3ddd9b61c973ed5d987d70a99ceceee6 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Sun, 16 Dec 2018 14:27:40 +0530
-Subject: [PATCH 05/15] bug with mod fixed
-
----
- sympy/core/mod.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index fd2b9c691400..1eb0a0082442 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -123,7 +123,7 @@ def doit(p, q):
-             for arg in p.args:
-                 both_l[isinstance(arg, cls)].append(arg)
- 
--            if q.is_Number:
-+            if q is 2:
-                 non_mod_l = [(x%q if x.is_Integer else x) for x in non_mod_l]
- 
-             if mod_l and all(inner.args[1] == q for inner in mod_l):
-
-From 461af761b2e8cf7ddcd5d3e835ffe03d2cad9f02 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Wed, 19 Dec 2018 19:03:51 +0530
-Subject: [PATCH 06/15] bug with q as 1 fixed
-
----
- sympy/core/mod.py | 15 ++++++++++-----
- 1 file changed, 10 insertions(+), 5 deletions(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index 1eb0a0082442..6afe2e836832 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -44,8 +44,6 @@ def doit(p, q):
-                 return S.Zero
- 
-             if q.is_Number:
--                if p.is_Number:
--                    return (p % q)
-                 if q == 2:
-                     if p.is_even:
-                         return S.Zero
-@@ -123,8 +121,15 @@ def doit(p, q):
-             for arg in p.args:
-                 both_l[isinstance(arg, cls)].append(arg)
- 
--            if q is 2:
--                non_mod_l = [(x%q if x.is_Integer else x) for x in non_mod_l]
-+            if q.is_Integer and q is not S.One:
-+                _ = []
-+                for i in non_mod_l:
-+                    if i.is_Integer:
-+                        # and (i % q is not S.Zero)
-+                        _.append(i%q)
-+                    else:
-+                        _.append(i)
-+                non_mod_l = _
- 
-             if mod_l and all(inner.args[1] == q for inner in mod_l):
-                 # finding distributive term
-@@ -142,7 +147,7 @@ def doit(p, q):
-                 net = prod_mod1*prod_mod
-                 return prod_non_mod*cls(net, q)
- 
--            p = Mul(*non_mod_l)
-+            p = Mul(*non_mod_l, *mod_l)
- 
-         # XXX other possibilities?
- 
-
-From 29906201099dfb2a32ef30148e94593648b11583 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Wed, 19 Dec 2018 23:56:49 +0530
-Subject: [PATCH 07/15] bug with Mul
-
----
- sympy/core/mod.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index 6afe2e836832..a5a024d9ae6c 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -147,7 +147,7 @@ def doit(p, q):
-                 net = prod_mod1*prod_mod
-                 return prod_non_mod*cls(net, q)
- 
--            p = Mul(*non_mod_l, *mod_l)
-+            p = Mul(*non_mod_l)
- 
-         # XXX other possibilities?
- 
-
-From 83e2a00808a7cbfd024974d4122e032687b2bf33 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Thu, 20 Dec 2018 11:41:26 +0530
-Subject: [PATCH 08/15] resolved bug with unpacking of vars
-
----
- sympy/core/mod.py | 22 +++++++++++-----------
- 1 file changed, 11 insertions(+), 11 deletions(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index a5a024d9ae6c..fc63babc0fbc 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -121,16 +121,6 @@ def doit(p, q):
-             for arg in p.args:
-                 both_l[isinstance(arg, cls)].append(arg)
- 
--            if q.is_Integer and q is not S.One:
--                _ = []
--                for i in non_mod_l:
--                    if i.is_Integer:
--                        # and (i % q is not S.Zero)
--                        _.append(i%q)
--                    else:
--                        _.append(i)
--                non_mod_l = _
--
-             if mod_l and all(inner.args[1] == q for inner in mod_l):
-                 # finding distributive term
-                 non_mod_l = [cls(x, q) for x in non_mod_l]
-@@ -147,7 +137,17 @@ def doit(p, q):
-                 net = prod_mod1*prod_mod
-                 return prod_non_mod*cls(net, q)
- 
--            p = Mul(*non_mod_l)
-+            if q.is_Integer and q is not S.One:
-+                _ = []
-+                for i in non_mod_l:
-+                    if i.is_Integer:
-+                        # and (i % q is not S.Zero)
-+                        _.append(i%q)
-+                    else:
-+                        _.append(i)
-+                non_mod_l = _
-+
-+            p = Mul(* [*non_mod_l, *mod_l])
- 
-         # XXX other possibilities?
- 
-
-From 88167fba955a145e481f6f36ea72bf8d5be90c30 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Thu, 20 Dec 2018 21:39:29 +0530
-Subject: [PATCH 09/15] bug with concatination of list
-
----
- sympy/core/mod.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index fc63babc0fbc..5c5ce3fc2463 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -147,7 +147,7 @@ def doit(p, q):
-                         _.append(i)
-                 non_mod_l = _
- 
--            p = Mul(* [*non_mod_l, *mod_l])
-+            p = Mul(*(non_mod_l + mod_l))
- 
-         # XXX other possibilities?
- 
-
-From cf02bc619981dc3edfbe71442a1ca5037232f0a7 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Sat, 22 Dec 2018 21:35:12 +0530
-Subject: [PATCH 10/15] bug with usage og long in python2.7
-
----
- sympy/core/mod.py | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index 5c5ce3fc2463..f2844602f661 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -1,6 +1,6 @@
- from __future__ import print_function, division
- 
--from sympy.core.numbers import nan
-+from sympy.core.numbers import nan, Integer
- from .function import Function
- 
- 
-@@ -62,7 +62,7 @@ def doit(p, q):
-             except TypeError:
-                 pass
-             else:
--                if type(d) is int:
-+                if type(d) is int or type(d) is long:
-                     rv = p - d*q
-                     if (rv*q < 0) == True:
-                         rv += q
-
-From d82b63b4aee4eeaf6a9739dbb13185397b6a7519 Mon Sep 17 00:00:00 2001
-From: kunal <kunalgk1999@protonmail.com>
-Date: Wed, 2 Jan 2019 11:30:15 +0530
-Subject: [PATCH 11/15] quick exit if p and q both are numbers
-
----
- sympy/core/mod.py | 2 ++
- 1 file changed, 2 insertions(+)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index f2844602f661..6befbddc0a8a 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -44,6 +44,8 @@ def doit(p, q):
-                 return S.Zero
- 
-             if q.is_Number:
-+                if p.is_Number:
-+                    return p%q
-                 if q == 2:
-                     if p.is_even:
-                         return S.Zero
-
-From 5864a845774f6c597dca3e96ad67a3b21b9ea57b Mon Sep 17 00:00:00 2001
-From: kunal <kunalgk1999@protonmail.com>
-Date: Wed, 2 Jan 2019 11:32:05 +0530
-Subject: [PATCH 12/15] conflict with long resolved
-
----
- sympy/core/mod.py | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index 6befbddc0a8a..d38c30e11714 100644
+index eae25630cc21..0498f7a75dbe 100644
 --- a/sympy/core/mod.py
 +++ b/sympy/core/mod.py
 @@ -1,6 +1,7 @@
  from __future__ import print_function, division
  
- from sympy.core.numbers import nan, Integer
+-from sympy.core.numbers import nan
++from sympy.core.numbers import nan, Integer
 +from sympy.core.compatibility import integer_types
  from .function import Function
  
  
+@@ -45,7 +46,7 @@ def doit(p, q):
+ 
+             if q.is_Number:
+                 if p.is_Number:
+-                    return (p % q)
++                    return p%q
+                 if q == 2:
+                     if p.is_even:
+                         return S.Zero
 @@ -64,7 +65,7 @@ def doit(p, q):
              except TypeError:
                  pass
              else:
--                if type(d) is int or type(d) is long:
+-                if type(d) is int:
 +                if isinstance(d, integer_types):
                      rv = p - d*q
                      if (rv*q < 0) == True:
                          rv += q
-
-From 32624236975a1ab0c4f677a5a974d1586ddded88 Mon Sep 17 00:00:00 2001
-From: Christopher Smith <smichr@gmail.com>
-Date: Thu, 3 Jan 2019 06:22:14 -0600
-Subject: [PATCH 13/15] Update test_arit.py
-
----
- sympy/core/tests/test_arit.py | 2 ++
- 1 file changed, 2 insertions(+)
-
+@@ -139,6 +140,17 @@ def doit(p, q):
+                 net = prod_mod1*prod_mod
+                 return prod_non_mod*cls(net, q)
+ 
++            if q.is_Integer and q is not S.One:
++                _ = []
++                for i in non_mod_l:
++                    if i.is_Integer and (i % q is not S.Zero):
++                        _.append(i%q)
++                    else:
++                        _.append(i)
++                non_mod_l = _
++
++            p = Mul(*(non_mod_l + mod_l))
++
+         # XXX other possibilities?
+ 
+         # extract gcd; any further simplification should be done by the user
 diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
-index 314c85e62bb9..c6c1b02c411a 100644
+index 04d3b1ab9fe5..5f58f9284c9a 100644
 --- a/sympy/core/tests/test_arit.py
 +++ b/sympy/core/tests/test_arit.py
-@@ -1663,7 +1663,9 @@ def test_Mod():
+@@ -1662,6 +1662,12 @@ def test_Mod():
+     assert Mod(Mod(x + 2, 4)*(x + 4), 4) == Mod(x*(x + 2), 4)
      assert Mod(Mod(x + 2, 4)*4, 4) == 0
  
-     # issue 15493
++    # issue 15493
 +    i, j = symbols('i j', integer=True, positive=True)
-     assert Mod(3*i, 2) == Mod(i, 2)
++    assert Mod(3*i, 2) == Mod(i, 2)
 +    assert Mod(8*i/j, 4) == 4*Mod(2*i/j, 1)
- 
- 
- def test_Mod_is_integer():
-
-From 595b35aad5b4938c2b4494041cbcd977d8784484 Mon Sep 17 00:00:00 2001
-From: rationa-kunal <kunalgk1999@gmail.com>
-Date: Sat, 5 Jan 2019 18:21:04 +0530
-Subject: [PATCH 14/15] multiplication with denom
-
----
- sympy/core/mod.py | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
-
-diff --git a/sympy/core/mod.py b/sympy/core/mod.py
-index d38c30e11714..0498f7a75dbe 100644
---- a/sympy/core/mod.py
-+++ b/sympy/core/mod.py
-@@ -143,8 +143,7 @@ def doit(p, q):
-             if q.is_Integer and q is not S.One:
-                 _ = []
-                 for i in non_mod_l:
--                    if i.is_Integer:
--                        # and (i % q is not S.Zero)
-+                    if i.is_Integer and (i % q is not S.Zero):
-                         _.append(i%q)
-                     else:
-                         _.append(i)
-
-From 6858e5c6b47f323c07fa821ec559c8c2d7890b39 Mon Sep 17 00:00:00 2001
-From: Christopher Smith <smichr@gmail.com>
-Date: Sun, 6 Jan 2019 06:05:20 -0600
-Subject: [PATCH 15/15] Update test_arit.py
-
----
- sympy/core/tests/test_arit.py | 1 +
- 1 file changed, 1 insertion(+)
-
-diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
-index c6c1b02c411a..5f58f9284c9a 100644
---- a/sympy/core/tests/test_arit.py
-+++ b/sympy/core/tests/test_arit.py
-@@ -1666,6 +1666,7 @@ def test_Mod():
-     i, j = symbols('i j', integer=True, positive=True)
-     assert Mod(3*i, 2) == Mod(i, 2)
-     assert Mod(8*i/j, 4) == 4*Mod(2*i/j, 1)
 +    assert Mod(8*i, 4) == 0
- 
++
  
  def test_Mod_is_integer():
+     p = Symbol('p', integer=True)

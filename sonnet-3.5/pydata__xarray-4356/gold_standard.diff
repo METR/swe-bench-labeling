@@ -1,13 +1,20 @@
-From 94b5d13a8e7bb88e883b8a6e8ae0328f3b580f34 Mon Sep 17 00:00:00 2001
-From: Maximilian Roos <m@maxroos.com>
-Date: Wed, 19 Aug 2020 16:47:33 -0700
-Subject: [PATCH 1/2] Allow multiple dims to be passed with min_count
-
----
- xarray/core/nanops.py               |  6 +-----
- xarray/tests/test_duck_array_ops.py | 25 ++++++++++++++++++++++---
- 2 files changed, 23 insertions(+), 8 deletions(-)
-
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 2652af5d9fd..901e2f7f281 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -28,8 +28,11 @@ New Features
+ - Support multiple outputs in :py:func:`xarray.apply_ufunc` when using ``dask='parallelized'``. (:issue:`1815`, :pull:`4060`)
+   By `Kai Mühlbauer <https://github.com/kmuehlbauer>`_.
+ - :py:meth:`~xarray.DataArray.rolling` and :py:meth:`~xarray.Dataset.rolling`
+-  now accept more than 1 dimension.(:pull:`4219`)
++  now accept more than 1 dimension. (:pull:`4219`)
+   By `Keisuke Fujii <https://github.com/fujiisoup>`_.
++- ``min_count`` can be supplied to reductions such as ``.sum`` when specifying
++  multiple dimension to reduce over. (:pull:`4356`) 
++  By `Maximilian Roos <https://github.com/max-sixty>`_.
+ - Build ``CFTimeIndex.__repr__`` explicitly as :py:class:`pandas.Index`. Add ``calendar`` as a new
+   property for :py:class:`CFTimeIndex` and show ``calendar`` and ``length`` in
+   ``CFTimeIndex.__repr__`` (:issue:`2416`, :pull:`4092`)
 diff --git a/xarray/core/nanops.py b/xarray/core/nanops.py
 index 41c8d258d7a..bc7dc510817 100644
 --- a/xarray/core/nanops.py
@@ -75,30 +82,3 @@ index b542dad998b..6db0b6eef87 100644
      assert_allclose(actual, expected)
  
  
-
-From 5b84e4143fb399ce20e88573d000e020efeea10e Mon Sep 17 00:00:00 2001
-From: Maximilian Roos <m@maxroos.com>
-Date: Thu, 20 Aug 2020 09:21:37 -0700
-Subject: [PATCH 2/2] Add whatsnew
-
----
- doc/whats-new.rst | 5 ++++-
- 1 file changed, 4 insertions(+), 1 deletion(-)
-
-diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index 2652af5d9fd..901e2f7f281 100644
---- a/doc/whats-new.rst
-+++ b/doc/whats-new.rst
-@@ -28,8 +28,11 @@ New Features
- - Support multiple outputs in :py:func:`xarray.apply_ufunc` when using ``dask='parallelized'``. (:issue:`1815`, :pull:`4060`)
-   By `Kai Mühlbauer <https://github.com/kmuehlbauer>`_.
- - :py:meth:`~xarray.DataArray.rolling` and :py:meth:`~xarray.Dataset.rolling`
--  now accept more than 1 dimension.(:pull:`4219`)
-+  now accept more than 1 dimension. (:pull:`4219`)
-   By `Keisuke Fujii <https://github.com/fujiisoup>`_.
-+- ``min_count`` can be supplied to reductions such as ``.sum`` when specifying
-+  multiple dimension to reduce over. (:pull:`4356`) 
-+  By `Maximilian Roos <https://github.com/max-sixty>`_.
- - Build ``CFTimeIndex.__repr__`` explicitly as :py:class:`pandas.Index`. Add ``calendar`` as a new
-   property for :py:class:`CFTimeIndex` and show ``calendar`` and ``length`` in
-   ``CFTimeIndex.__repr__`` (:issue:`2416`, :pull:`4092`)

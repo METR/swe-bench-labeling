@@ -1,20 +1,3 @@
-From a03a36121d22c8784985c7e45727eddef6a3ea7f Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Wed, 20 Jan 2021 12:07:14 +0100
-Subject: [PATCH] Fixed #32367 -- Fixed system check for specifying type of
- auto-created primary keys for inherited PKs.
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
-
-Regression in b5e12d490af3debca8c55ab3c1698189fdedbbdb.
-
-Thanks אורי for the report.
----
- django/db/models/base.py                   |  5 ++
- tests/check_framework/test_model_checks.py | 63 +++++++++++++++++-----
- 2 files changed, 56 insertions(+), 12 deletions(-)
-
 diff --git a/django/db/models/base.py b/django/db/models/base.py
 index 4038859cfabd..2428218696b8 100644
 --- a/django/db/models/base.py

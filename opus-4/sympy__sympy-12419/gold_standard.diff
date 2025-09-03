@@ -1,16 +1,3 @@
-From 3f76b710989b8d0ae9819d4a05dc9e78a02b5fd5 Mon Sep 17 00:00:00 2001
-From: Chris Smith <smichr@gmail.com>
-Date: Sat, 25 Mar 2017 09:44:49 -0500
-Subject: [PATCH] Identity's _entry returns KroneckerDelta for symbolic indices
-
-It might be preferable to use Piecewise((1, Eq(i, j)), (0, True)) when
-issue #12418 is addressed. On the other hand, KD is used elsewhere so
-perhaps this is fine as is.
----
- sympy/matrices/expressions/matexpr.py            | 10 ++++++----
- sympy/matrices/expressions/tests/test_matexpr.py |  8 ++++++++
- 2 files changed, 14 insertions(+), 4 deletions(-)
-
 diff --git a/sympy/matrices/expressions/matexpr.py b/sympy/matrices/expressions/matexpr.py
 index b4d759836e32..63951e62d0ed 100644
 --- a/sympy/matrices/expressions/matexpr.py

@@ -1,23 +1,3 @@
-From 614250d90c011fffb63e6cc460aa881a206b8d53 Mon Sep 17 00:00:00 2001
-From: Sjoerd Job Postmus <sjoerdjob@sjec.nl>
-Date: Sat, 13 Apr 2019 12:11:34 +0200
-Subject: [PATCH] Fixed #30363 -- Do not use exponential notation for small
- decimal numbers.
-
-In 9cc6a60040b0f64f8ea066dd215176d4bd16621d a security patch was
-introduced to prevent allocating large segments of memory when a
-very large or very small decimal number was to be formatted.
-
-As a side-effect, there was a change in formatting of small decimal
-numbers even when the `decimal_pos` argument was provided, which meant
-that reasonable small decimal numbers (above 1e-199) would be formatted
-as `0.00`, while smaller decimal numbers (under 1e-200) would be
-formatted as `1e-200`.
----
- django/utils/numberformat.py           | 8 ++++++++
- tests/utils_tests/test_numberformat.py | 2 +-
- 2 files changed, 9 insertions(+), 1 deletion(-)
-
 diff --git a/django/utils/numberformat.py b/django/utils/numberformat.py
 index 88b35fc435c9..961a60e37d65 100644
 --- a/django/utils/numberformat.py

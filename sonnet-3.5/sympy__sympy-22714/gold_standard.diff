@@ -1,13 +1,3 @@
-From 1890bc635cdf0d88ee09bc798c8d423874b5c823 Mon Sep 17 00:00:00 2001
-From: Oscar Gustafsson <oscar.gustafsson@gmail.com>
-Date: Sun, 19 Dec 2021 19:50:41 +0100
-Subject: [PATCH] Fixed issue with unevaluated Point2D
-
----
- sympy/geometry/point.py            | 2 +-
- sympy/geometry/tests/test_point.py | 7 +++++++
- 2 files changed, 8 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
 index 73c20334d09e..11bad7ff9c99 100644
 --- a/sympy/geometry/point.py

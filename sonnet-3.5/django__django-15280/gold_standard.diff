@@ -1,22 +1,3 @@
-From f5233dce309543c826224be9dfa9c9f4f855f73c Mon Sep 17 00:00:00 2001
-From: Jamie Matthews <jamie@dabapps.com>
-Date: Tue, 4 Jan 2022 11:10:49 +0000
-Subject: [PATCH] Fixed #32511 -- Corrected handling prefetched nested reverse
- relationships.
-
-When prefetching a set of child objects related to a set of parent
-objects, we usually want to populate the relationship back from the
-child to the parent to avoid a query when accessing that relationship
-attribute. However, there's an edge case where the child queryset
-itself specifies a prefetch back to the parent. In that case, we want
-to use the prefetched relationship rather than populating the reverse
-relationship from the parent.
----
- AUTHORS                                       |  1 +
- .../db/models/fields/related_descriptors.py   |  5 ++--
- tests/prefetch_related/tests.py               | 26 +++++++++++++++++++
- 3 files changed, 30 insertions(+), 2 deletions(-)
-
 diff --git a/AUTHORS b/AUTHORS
 index 3ca8ad40f523..77053c9568ac 100644
 --- a/AUTHORS

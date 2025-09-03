@@ -1,23 +1,25 @@
-From 38a04e95a78c5440b495792247330bdac2ee8c4b Mon Sep 17 00:00:00 2001
-From: Nikhil Pappu <nkhlpappu@gmail.com>
-Date: Sun, 17 Dec 2017 16:34:47 -0500
-Subject: [PATCH 1/5] Fixes issue 13079
-
-Added _op_priority to class Poly
----
- sympy/polys/polytools.py            | 1 +
- sympy/polys/tests/test_polytools.py | 6 ++++++
- 2 files changed, 7 insertions(+)
-
+diff --git a/sympy/core/tests/test_match.py b/sympy/core/tests/test_match.py
+index 60e37094cc3a..324d66aed0b1 100644
+--- a/sympy/core/tests/test_match.py
++++ b/sympy/core/tests/test_match.py
+@@ -134,7 +134,7 @@ def test_mul():
+     assert e.match(x**p*exp(x*q)) == {p: 0, q: 1}
+ 
+     e = I*Poly(x, x)
+-    assert e.match(I*p) == {p: Poly(x, x)}
++    assert e.match(I*p) == {p: x}
+ 
+ 
+ def test_mul_noncommutative():
 diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
-index d5ac051f636a..66fe8329bf8d 100644
+index d5ac051f636a..32b7027a285d 100644
 --- a/sympy/polys/polytools.py
 +++ b/sympy/polys/polytools.py
 @@ -106,6 +106,7 @@ class Poly(Expr):
  
      is_commutative = True
      is_Poly = True
-+    _op_priority = 11.0
++    _op_priority = 10.001
  
      def __new__(cls, rep, *gens, **args):
          """Create a new polynomial instance out of something useful. """
@@ -38,137 +40,3 @@ index 1f889e9f18cc..371cba5844f7 100644
  
  def test_Poly_sqr():
      assert Poly(x*y, x, y).sqr() == Poly(x**2*y**2, x, y)
-
-From 405859efdfdf0598d6bd33121ff94263cac13027 Mon Sep 17 00:00:00 2001
-From: Nikhil Pappu <nkhlpappu@gmail.com>
-Date: Sun, 17 Dec 2017 18:01:57 -0500
-Subject: [PATCH 2/5] Changed _op_priority to 10
-
----
- sympy/polys/polytools.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
-index 66fe8329bf8d..3d6a22ace449 100644
---- a/sympy/polys/polytools.py
-+++ b/sympy/polys/polytools.py
-@@ -106,7 +106,7 @@ class Poly(Expr):
- 
-     is_commutative = True
-     is_Poly = True
--    _op_priority = 11.0
-+    _op_priority = 10.0
- 
-     def __new__(cls, rep, *gens, **args):
-         """Create a new polynomial instance out of something useful. """
-
-From eeba4f29b1d705b2c46eccdbc848465740a7391c Mon Sep 17 00:00:00 2001
-From: Nikhil Pappu <nkhlpappu@gmail.com>
-Date: Mon, 18 Dec 2017 00:18:07 -0500
-Subject: [PATCH 3/5] changed op priorities
-
----
- sympy/polys/polytools.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
-index 3d6a22ace449..930ea0ced13b 100644
---- a/sympy/polys/polytools.py
-+++ b/sympy/polys/polytools.py
-@@ -106,7 +106,7 @@ class Poly(Expr):
- 
-     is_commutative = True
-     is_Poly = True
--    _op_priority = 10.0
-+    _op_priority = 10.00000001
- 
-     def __new__(cls, rep, *gens, **args):
-         """Create a new polynomial instance out of something useful. """
-
-From 74762c9e7be5efadeb0a687d05844b8c1b785524 Mon Sep 17 00:00:00 2001
-From: Nikhil Pappu <nkhlpappu@gmail.com>
-Date: Mon, 18 Dec 2017 00:19:49 -0500
-Subject: [PATCH 4/5] changed op priorities
-
----
- sympy/core/numbers.py    | 2 +-
- sympy/polys/polytools.py | 2 +-
- 2 files changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
-index 8c8e2d738cef..7c680a5553fb 100644
---- a/sympy/core/numbers.py
-+++ b/sympy/core/numbers.py
-@@ -3739,7 +3739,7 @@ class ImaginaryUnit(with_metaclass(Singleton, AtomicExpr)):
-     is_number = True
-     is_algebraic = True
-     is_transcendental = False
--
-+    _op_priority = 10.001
-     __slots__ = []
- 
-     def _latex(self, printer):
-diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
-index 930ea0ced13b..15cbe3fd8dcb 100644
---- a/sympy/polys/polytools.py
-+++ b/sympy/polys/polytools.py
-@@ -106,7 +106,7 @@ class Poly(Expr):
- 
-     is_commutative = True
-     is_Poly = True
--    _op_priority = 10.00000001
-+    _op_priority = 10.0001
- 
-     def __new__(cls, rep, *gens, **args):
-         """Create a new polynomial instance out of something useful. """
-
-From cd925ae89e85307c73f3581fd24148d7f47d2b0d Mon Sep 17 00:00:00 2001
-From: Nikhil Pappu <nkhlpappu@gmail.com>
-Date: Mon, 18 Dec 2017 18:39:04 -0500
-Subject: [PATCH 5/5] Changed a test in test_match.py
-
----
- sympy/core/numbers.py          | 2 +-
- sympy/core/tests/test_match.py | 2 +-
- sympy/polys/polytools.py       | 2 +-
- 3 files changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
-index 7c680a5553fb..8c8e2d738cef 100644
---- a/sympy/core/numbers.py
-+++ b/sympy/core/numbers.py
-@@ -3739,7 +3739,7 @@ class ImaginaryUnit(with_metaclass(Singleton, AtomicExpr)):
-     is_number = True
-     is_algebraic = True
-     is_transcendental = False
--    _op_priority = 10.001
-+
-     __slots__ = []
- 
-     def _latex(self, printer):
-diff --git a/sympy/core/tests/test_match.py b/sympy/core/tests/test_match.py
-index 60e37094cc3a..324d66aed0b1 100644
---- a/sympy/core/tests/test_match.py
-+++ b/sympy/core/tests/test_match.py
-@@ -134,7 +134,7 @@ def test_mul():
-     assert e.match(x**p*exp(x*q)) == {p: 0, q: 1}
- 
-     e = I*Poly(x, x)
--    assert e.match(I*p) == {p: Poly(x, x)}
-+    assert e.match(I*p) == {p: x}
- 
- 
- def test_mul_noncommutative():
-diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
-index 15cbe3fd8dcb..32b7027a285d 100644
---- a/sympy/polys/polytools.py
-+++ b/sympy/polys/polytools.py
-@@ -106,7 +106,7 @@ class Poly(Expr):
- 
-     is_commutative = True
-     is_Poly = True
--    _op_priority = 10.0001
-+    _op_priority = 10.001
- 
-     def __new__(cls, rep, *gens, **args):
-         """Create a new polynomial instance out of something useful. """

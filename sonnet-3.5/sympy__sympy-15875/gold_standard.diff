@@ -1,163 +1,26 @@
-From b04a785999b03d6bfc1186defc53000ac5993e93 Mon Sep 17 00:00:00 2001
-From: "S.Y. Lee" <sylee957@gmail.com>
-Date: Tue, 29 Jan 2019 12:08:35 +0900
-Subject: [PATCH 1/4] Experiment with re and im function
-
----
- sympy/core/add.py | 38 ++++++++------------------------------
- 1 file changed, 8 insertions(+), 30 deletions(-)
-
 diff --git a/sympy/core/add.py b/sympy/core/add.py
-index 83a5f2aedc6a..5b5eab4164de 100644
+index 83a5f2aedc6a..24ae64f2c906 100644
 --- a/sympy/core/add.py
 +++ b/sympy/core/add.py
-@@ -534,36 +534,14 @@ def _eval_is_zero(self):
-             # issue 10528: there is no way to know if a nc symbol
-             # is zero or not
-             return
--        nz = []
--        z = 0
--        im_or_z = False
--        im = False
--        for a in self.args:
--            if a.is_real:
--                if a.is_zero:
--                    z += 1
--                elif a.is_zero is False:
--                    nz.append(a)
--                else:
--                    return
--            elif a.is_imaginary:
--                im = True
--            elif (S.ImaginaryUnit*a).is_real:
--                im_or_z = True
--            else:
--                return
--        if z == len(self.args):
--            return True
+@@ -554,7 +554,7 @@ def _eval_is_zero(self):
+                 return
+         if z == len(self.args):
+             return True
 -        if len(nz) == len(self.args):
--            return None
--        b = self.func(*nz)
--        if b.is_zero:
--            if not im_or_z and not im:
--                return True
--            if im and not im_or_z:
--                return False
--        if b.is_zero is False:
--            return False
-+
-+        from sympy.functions.elementary.complexes import re, im
-+        real_list = [re(arg) for arg in self.args]
-+        imag_list = [im(arg) for arg in self.args]
-+
-+        return (
-+            self.func(*real_list).is_zero and
-+            self.func(*imag_list).is_zero)
- 
-     def _eval_is_odd(self):
-         l = [f for f in self.args if not (f.is_even is True)]
-
-From a590659d05d32c7a40408fd2b84bc9bad7ee1d80 Mon Sep 17 00:00:00 2001
-From: "S.Y. Lee" <sylee957@gmail.com>
-Date: Tue, 29 Jan 2019 12:10:57 +0900
-Subject: [PATCH 2/4] Add test
-
----
- sympy/core/tests/test_arit.py | 3 +++
- 1 file changed, 3 insertions(+)
-
++        if len(nz) == 0 or len(nz) == len(self.args):
+             return None
+         b = self.func(*nz)
+         if b.is_zero:
 diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
-index e2398a4e7c26..9e9866a64972 100644
+index e2398a4e7c26..28af93d2392b 100644
 --- a/sympy/core/tests/test_arit.py
 +++ b/sympy/core/tests/test_arit.py
-@@ -1986,6 +1986,9 @@ def test_Add_is_zero():
+@@ -1986,10 +1986,15 @@ def test_Add_is_zero():
      x, y = symbols('x y', zero=True)
      assert (x + y).is_zero
  
 +    # Issue 15873
 +    e = -2*I + (1 + I)**2
-+    assert e.is_zero == True
- 
- def test_issue_14392():
-     assert (sin(zoo)**2).as_real_imag() == (nan, nan)
-
-From 221dbba1354d315d86e0854bcacb1f84100d1ad2 Mon Sep 17 00:00:00 2001
-From: "S.Y. Lee" <sylee957@gmail.com>
-Date: Tue, 29 Jan 2019 13:32:47 +0900
-Subject: [PATCH 3/4] Experiment with len(nz) == 0
-
----
- sympy/core/add.py | 38 ++++++++++++++++++++++++++++++--------
- 1 file changed, 30 insertions(+), 8 deletions(-)
-
-diff --git a/sympy/core/add.py b/sympy/core/add.py
-index 5b5eab4164de..24ae64f2c906 100644
---- a/sympy/core/add.py
-+++ b/sympy/core/add.py
-@@ -534,14 +534,36 @@ def _eval_is_zero(self):
-             # issue 10528: there is no way to know if a nc symbol
-             # is zero or not
-             return
--
--        from sympy.functions.elementary.complexes import re, im
--        real_list = [re(arg) for arg in self.args]
--        imag_list = [im(arg) for arg in self.args]
--
--        return (
--            self.func(*real_list).is_zero and
--            self.func(*imag_list).is_zero)
-+        nz = []
-+        z = 0
-+        im_or_z = False
-+        im = False
-+        for a in self.args:
-+            if a.is_real:
-+                if a.is_zero:
-+                    z += 1
-+                elif a.is_zero is False:
-+                    nz.append(a)
-+                else:
-+                    return
-+            elif a.is_imaginary:
-+                im = True
-+            elif (S.ImaginaryUnit*a).is_real:
-+                im_or_z = True
-+            else:
-+                return
-+        if z == len(self.args):
-+            return True
-+        if len(nz) == 0 or len(nz) == len(self.args):
-+            return None
-+        b = self.func(*nz)
-+        if b.is_zero:
-+            if not im_or_z and not im:
-+                return True
-+            if im and not im_or_z:
-+                return False
-+        if b.is_zero is False:
-+            return False
- 
-     def _eval_is_odd(self):
-         l = [f for f in self.args if not (f.is_even is True)]
-
-From cad9a23ed48dcf42b09fdbde5a22edbd43b1ce37 Mon Sep 17 00:00:00 2001
-From: Christopher Smith <smichr@gmail.com>
-Date: Mon, 28 Jan 2019 23:51:15 -0600
-Subject: [PATCH 4/4] Update test_arit.py
-
----
- sympy/core/tests/test_arit.py | 4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
-
-diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
-index 9e9866a64972..28af93d2392b 100644
---- a/sympy/core/tests/test_arit.py
-+++ b/sympy/core/tests/test_arit.py
-@@ -1988,11 +1988,13 @@ def test_Add_is_zero():
- 
-     # Issue 15873
-     e = -2*I + (1 + I)**2
--    assert e.is_zero == True
 +    assert e.is_zero is None
 +
  

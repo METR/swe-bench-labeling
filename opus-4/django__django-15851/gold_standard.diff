@@ -1,13 +1,3 @@
-From eb591b43ec2aa5a3a2651a16d5b56e60583afb86 Mon Sep 17 00:00:00 2001
-From: Jarrett Keifer <jkeifer@pdx.edu>
-Date: Sun, 17 Jul 2022 18:17:13 -0700
-Subject: [PATCH] Fixed #33854 -- Additional dbshell parameters work with psql
-
----
- django/db/backends/postgresql/client.py | 2 +-
- tests/dbshell/test_postgresql.py        | 2 +-
- 2 files changed, 2 insertions(+), 2 deletions(-)
-
 diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
 index 4c9bd635465a..3b5ddafacaaa 100644
 --- a/django/db/backends/postgresql/client.py

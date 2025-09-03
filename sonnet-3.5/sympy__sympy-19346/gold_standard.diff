@@ -1,18 +1,8 @@
-From b8b80cf44b9fdcb7198911784aba8b707309d99f Mon Sep 17 00:00:00 2001
-From: kunal <kunalgk1999@gmail.com>
-Date: Sun, 17 May 2020 17:38:23 +0530
-Subject: [PATCH 1/4] fixed: srepr not printing dict and set properly
-
----
- sympy/printing/repr.py            |  8 ++++++++
- sympy/printing/tests/test_repr.py | 20 ++++++++++++++++++++
- 2 files changed, 28 insertions(+)
-
 diff --git a/sympy/printing/repr.py b/sympy/printing/repr.py
-index c936a692c0cd..3c6aa1264f6b 100644
+index c936a692c0cd..04cfee5c3e61 100644
 --- a/sympy/printing/repr.py
 +++ b/sympy/printing/repr.py
-@@ -144,6 +144,14 @@ def _print_EmptySequence(self, expr):
+@@ -144,6 +144,16 @@ def _print_EmptySequence(self, expr):
      def _print_list(self, expr):
          return "[%s]" % self.reprify(expr, ", ")
  
@@ -22,16 +12,18 @@ index c936a692c0cd..3c6aa1264f6b 100644
 +        return "{%s}" % sep.join(dict_kvs)
 +
 +    def _print_set(self, expr):
++        if not expr:
++            return "set()"
 +        return "{%s}" % self.reprify(expr, ", ")
 +
      def _print_MatrixBase(self, expr):
          # special case for some empty matrices
          if (expr.rows == 0) ^ (expr.cols == 0):
 diff --git a/sympy/printing/tests/test_repr.py b/sympy/printing/tests/test_repr.py
-index f749683ff743..54dbb100e2aa 100644
+index f749683ff743..d3298da71dfd 100644
 --- a/sympy/printing/tests/test_repr.py
 +++ b/sympy/printing/tests/test_repr.py
-@@ -318,3 +318,23 @@ def test_diffgeom():
+@@ -318,3 +318,26 @@ def test_diffgeom():
      assert srepr(rect) == "CoordSystem('rect', Patch('P', Manifold('M', 2)), ('rect_0', 'rect_1'))"
      b = BaseScalarField(rect, 0)
      assert srepr(b) == "BaseScalarField(CoordSystem('rect', Patch('P', Manifold('M', 2)), ('rect_0', 'rect_1')), Integer(0))"
@@ -44,98 +36,17 @@ index f749683ff743..54dbb100e2aa 100644
 +    d = {x: y}
 +    assert srepr(d) == "{Symbol('x'): Symbol('y')}"
 +    d = {x: y, y: z}
-+    assert srepr(d) == "{Symbol('x'): Symbol('y'), Symbol('y'): Symbol('z')}"
++    assert srepr(d) in (
++        "{Symbol('x'): Symbol('y'), Symbol('y'): Symbol('z')}",
++        "{Symbol('y'): Symbol('z'), Symbol('x'): Symbol('y')}",
++    )
 +    d = {x: {y: z}}
 +    assert srepr(d) == "{Symbol('x'): {Symbol('y'): Symbol('z')}}"
 +
 +def test_set():
 +    from sympy import srepr
 +    from sympy.abc import x, y
-+    s = {x}
-+    assert srepr(s) == "{Symbol('x')}"
-+    s = {x, y}
-+    assert srepr(s) == "{Symbol('x'), Symbol('y')}"
-
-From 398751d63715489c3d8030faab2ff4995cdce0cd Mon Sep 17 00:00:00 2001
-From: kunal <kunalgk1999@gmail.com>
-Date: Sun, 17 May 2020 19:12:16 +0530
-Subject: [PATCH 2/4] handled printing empty set with srepr
-
----
- sympy/printing/repr.py            | 2 ++
- sympy/printing/tests/test_repr.py | 4 ++--
- 2 files changed, 4 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/printing/repr.py b/sympy/printing/repr.py
-index 3c6aa1264f6b..04cfee5c3e61 100644
---- a/sympy/printing/repr.py
-+++ b/sympy/printing/repr.py
-@@ -150,6 +150,8 @@ def _print_dict(self, expr):
-         return "{%s}" % sep.join(dict_kvs)
- 
-     def _print_set(self, expr):
-+        if not expr:
-+            return "set()"
-         return "{%s}" % self.reprify(expr, ", ")
- 
-     def _print_MatrixBase(self, expr):
-diff --git a/sympy/printing/tests/test_repr.py b/sympy/printing/tests/test_repr.py
-index 54dbb100e2aa..7405943d86c1 100644
---- a/sympy/printing/tests/test_repr.py
-+++ b/sympy/printing/tests/test_repr.py
-@@ -334,7 +334,7 @@ def test_dict():
- def test_set():
-     from sympy import srepr
-     from sympy.abc import x, y
--    s = {x}
--    assert srepr(s) == "{Symbol('x')}"
 +    s = set()
 +    assert srepr(s) == "set()"
-     s = {x, y}
-     assert srepr(s) == "{Symbol('x'), Symbol('y')}"
-
-From 90e549c25dab804240a33e772dc9157d7d19ff84 Mon Sep 17 00:00:00 2001
-From: kunal <kunalgk1999@gmail.com>
-Date: Sun, 17 May 2020 19:20:57 +0530
-Subject: [PATCH 3/4] fixed issue with printing sets
-
----
- sympy/printing/tests/test_repr.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/printing/tests/test_repr.py b/sympy/printing/tests/test_repr.py
-index 7405943d86c1..0fb4a05987a8 100644
---- a/sympy/printing/tests/test_repr.py
-+++ b/sympy/printing/tests/test_repr.py
-@@ -337,4 +337,4 @@ def test_set():
-     s = set()
-     assert srepr(s) == "set()"
-     s = {x, y}
--    assert srepr(s) == "{Symbol('x'), Symbol('y')}"
++    s = {x, y}
 +    assert srepr(s) in ("{Symbol('x'), Symbol('y')}", "{Symbol('y'), Symbol('x')}")
-
-From 2a7b8a475b4a9883d6821bb3412518381d4fa797 Mon Sep 17 00:00:00 2001
-From: kunal <kunalgk1999@gmail.com>
-Date: Sun, 17 May 2020 21:29:10 +0530
-Subject: [PATCH 4/4] fixed arbitary test fail due to dictionary
-
----
- sympy/printing/tests/test_repr.py | 5 ++++-
- 1 file changed, 4 insertions(+), 1 deletion(-)
-
-diff --git a/sympy/printing/tests/test_repr.py b/sympy/printing/tests/test_repr.py
-index 0fb4a05987a8..d3298da71dfd 100644
---- a/sympy/printing/tests/test_repr.py
-+++ b/sympy/printing/tests/test_repr.py
-@@ -327,7 +327,10 @@ def test_dict():
-     d = {x: y}
-     assert srepr(d) == "{Symbol('x'): Symbol('y')}"
-     d = {x: y, y: z}
--    assert srepr(d) == "{Symbol('x'): Symbol('y'), Symbol('y'): Symbol('z')}"
-+    assert srepr(d) in (
-+        "{Symbol('x'): Symbol('y'), Symbol('y'): Symbol('z')}",
-+        "{Symbol('y'): Symbol('z'), Symbol('x'): Symbol('y')}",
-+    )
-     d = {x: {y: z}}
-     assert srepr(d) == "{Symbol('x'): {Symbol('y'): Symbol('z')}}"
- 

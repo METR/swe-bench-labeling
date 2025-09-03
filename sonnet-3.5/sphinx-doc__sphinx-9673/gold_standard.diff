@@ -1,17 +1,3 @@
-From 5fb6fb603965fe32ecbb45f408eea4060a979c28 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 26 Sep 2021 00:45:18 +0900
-Subject: [PATCH] Fix #9651: autodoc_typehints_description_target was confused
- by :returns:
-
-It only checks the existence of `:return:` field.  And it does not check
-`:returns:` field.  It causes the absence of return types.
----
- CHANGES                           |  3 +++
- sphinx/ext/autodoc/typehints.py   |  4 ++--
- tests/test_ext_autodoc_configs.py | 12 ++++++++++++
- 3 files changed, 17 insertions(+), 2 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index 49d8dcf8123..0f7a516010f 100644
 --- a/CHANGES

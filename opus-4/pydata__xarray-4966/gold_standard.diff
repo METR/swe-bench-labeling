@@ -1,21 +1,16 @@
-From 17c89b27fa1675a072aeaf712f43fde168cdf3b9 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Tobias=20K=C3=B6lling?= <tobias.koelling@mpimet.mpg.de>
-Date: Fri, 26 Feb 2021 12:59:58 +0100
-Subject: [PATCH 1/2] conventions: decode unsigned integers to signed if
- _Unsigned=false
-
-netCDF3 doesn't know unsigned while OPeNDAP doesn't know signed (bytes).
-Depending on which backend source is used, the original data is stored
-with the wrong signedness and needs to be decoded based on the _Unsigned
-attribute. While the netCDF3 variant is already implemented, this commit
-adds the symmetric case covering OPeNDAP.
-
-closes #4954
----
- xarray/coding/variables.py  |  8 ++++++++
- xarray/tests/test_coding.py | 28 ++++++++++++++++++++++++++++
- 2 files changed, 36 insertions(+)
-
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 9e59fdc5b35..48ef6690e22 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -38,6 +38,8 @@ Bug fixes
+ ~~~~~~~~~
+ - Don't allow passing ``axis`` to :py:meth:`Dataset.reduce` methods (:issue:`3510`, :pull:`4940`).
+   By `Justus Magin <https://github.com/keewis>`_.
++- Decode values as signed if attribute `_Unsigned = "false"` (:issue:`4954`)
++  By `Tobias Kölling <https://github.com/d70-t>`_.
+ 
+ Documentation
+ ~~~~~~~~~~~~~
 diff --git a/xarray/coding/variables.py b/xarray/coding/variables.py
 index b035ff82086..938752c4efc 100644
 --- a/xarray/coding/variables.py
@@ -71,33 +66,3 @@ index e0df7782aa7..839f2fd1f2e 100644
 +    decoded = coder.decode(encoded)
 +    assert decoded.dtype == signed_dtype
 +    assert decoded.values == original_values
-
-From 76176f2eb456f07f1f1866b204af282e2caafc57 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Tobias=20K=C3=B6lling?= <tobias.koelling@mpimet.mpg.de>
-Date: Fri, 26 Feb 2021 13:21:29 +0100
-Subject: [PATCH 2/2] whats-new.rst: added _Unsigned = "false"
-
----
- doc/whats-new.rst | 9 +++++++++
- 1 file changed, 9 insertions(+)
-
-diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index ef7f5b43fdd..38fcdb471ac 100644
---- a/doc/whats-new.rst
-+++ b/doc/whats-new.rst
-@@ -14,6 +14,15 @@ What's New
- 
-     np.random.seed(123456)
- 
-+.. _whats-new.unreleased:
-+
-+unreleased
-+----------
-+
-+Bug fixes
-+~~~~~~~~~
-+- Decode values as signed if attribute `_Unsigned = "false"` (:issue:`4954`)
-+  By `Tobias Kölling <https://github.com/d70-t>`_.
- 
- .. _whats-new.0.17.0:
- 

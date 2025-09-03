@@ -1,19 +1,8 @@
-From 37b314228e6ac524c6ebfc60ca03e97387c2ad82 Mon Sep 17 00:00:00 2001
-From: dcherian <deepak@cherian.net>
-Date: Fri, 24 Jun 2022 12:42:12 -0600
-Subject: [PATCH 1/2] Fix .chunks loading lazy backed array data
-
-Closes #6538
----
- doc/whats-new.rst     | 2 ++
- xarray/core/common.py | 2 +-
- 2 files changed, 3 insertions(+), 1 deletion(-)
-
 diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index 9badedbb8f2..6f8b20e6343 100644
+index dc9a8adf4bc..dba4f1d3256 100644
 --- a/doc/whats-new.rst
 +++ b/doc/whats-new.rst
-@@ -193,6 +193,8 @@ Bug fixes
+@@ -197,6 +197,8 @@ Bug fixes
  - Fixed silent overflow issue when decoding times encoded with 32-bit and below
    unsigned integer data types (:issue:`6589`, :pull:`6598`).
    By `Spencer Clark <https://github.com/spencerkclark>`_.
@@ -35,16 +24,6 @@ index 3c328f42e98..a3636cbac66 100644
              for dim, c in v.chunksizes.items():
                  if dim in chunks and c != chunks[dim]:
                      raise ValueError(
-
-From 283affda2a6999d3e5e44ff1688af9ba9977f278 Mon Sep 17 00:00:00 2001
-From: dcherian <deepak@cherian.net>
-Date: Fri, 24 Jun 2022 13:21:08 -0600
-Subject: [PATCH 2/2] Add test
-
----
- xarray/tests/test_dataset.py | 7 +++++++
- 1 file changed, 7 insertions(+)
-
 diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
 index e3ab430a833..bc5bf1c0f1c 100644
 --- a/xarray/tests/test_dataset.py

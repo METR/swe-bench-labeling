@@ -1,13 +1,3 @@
-From 9229e5a2e9d186dcb2f0d27b7be26156afe5424d Mon Sep 17 00:00:00 2001
-From: Greg Lucas <greg.m.lucas@gmail.com>
-Date: Fri, 13 Jan 2023 07:20:39 -0700
-Subject: [PATCH] FIX: Handle uint8 indices properly for colormap lookups
-
----
- lib/matplotlib/colors.py            | 21 +++++++++++----------
- lib/matplotlib/tests/test_colors.py |  7 +++++++
- 2 files changed, 18 insertions(+), 10 deletions(-)
-
 diff --git a/lib/matplotlib/colors.py b/lib/matplotlib/colors.py
 index 2d3072da04de..ab0d73c4b5fb 100644
 --- a/lib/matplotlib/colors.py

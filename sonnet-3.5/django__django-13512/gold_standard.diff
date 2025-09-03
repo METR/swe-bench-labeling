@@ -1,18 +1,3 @@
-From de81676b51e4dad510ef387c3ae625f9091fe57f Mon Sep 17 00:00:00 2001
-From: Qi Zhao <zhaoqi99@outlook.com>
-Date: Thu, 8 Oct 2020 21:51:14 +0800
-Subject: [PATCH] Fixed #32080 -- Fixed displaying Unicode chars in
- forms.JSONField and read-only JSONField values in admin.
-
----
- AUTHORS                                         | 1 +
- django/contrib/admin/utils.py                   | 3 ++-
- django/forms/fields.py                          | 2 +-
- docs/releases/3.1.3.txt                         | 5 +++++
- tests/admin_utils/tests.py                      | 1 +
- tests/forms_tests/field_tests/test_jsonfield.py | 6 ++++++
- 6 files changed, 16 insertions(+), 2 deletions(-)
-
 diff --git a/AUTHORS b/AUTHORS
 index 9253740857de..bb18fe15dbb4 100644
 --- a/AUTHORS

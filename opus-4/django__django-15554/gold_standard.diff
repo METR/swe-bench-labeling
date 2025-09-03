@@ -1,20 +1,3 @@
-From 5542795bf6ff25993b898f6e2d97e55ab616cf10 Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Tue, 29 Mar 2022 11:38:45 +0200
-Subject: [PATCH] Fixed #33598 -- Reverted "Removed unnecessary
- reuse_with_filtered_relation argument from Query methods."
-
-Thanks lind-marcus for the report.
-
-This reverts commit 0c71e0f9cfa714a22297ad31dd5613ee548db379.
-
-Regression in 0c71e0f9cfa714a22297ad31dd5613ee548db379.
----
- django/db/models/sql/query.py    | 47 ++++++++++++++++++++++++++------
- docs/releases/4.0.4.txt          |  3 +-
- tests/filtered_relation/tests.py | 28 +++++++++++++++++++
- 3 files changed, 68 insertions(+), 10 deletions(-)
-
 diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
 index 54f3258eacce..efe0e28c89db 100644
 --- a/django/db/models/sql/query.py

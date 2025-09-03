@@ -1,17 +1,3 @@
-From 4237050684427db45ea834fe89d9e11c0520201e Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Sat, 4 Apr 2020 20:55:20 +0200
-Subject: [PATCH] Fixed #31420 -- Fixed crash when filtering subquery
- annotation against a SimpleLazyObject.
-
-Thanks Simon Charette for the solution and analysis.
----
- django/db/models/sql/query.py |  3 ++-
- docs/releases/3.0.6.txt       |  4 +++-
- tests/expressions/models.py   |  5 +++++
- tests/expressions/tests.py    | 20 ++++++++++++++++++--
- 4 files changed, 28 insertions(+), 4 deletions(-)
-
 diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
 index 9fe0c9a656db..e5524a8198e5 100644
 --- a/django/db/models/sql/query.py

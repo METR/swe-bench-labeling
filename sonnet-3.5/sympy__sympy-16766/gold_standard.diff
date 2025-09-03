@@ -1,144 +1,21 @@
-From 20658480bb912b68ec87871e2f629ec9b9f73eed Mon Sep 17 00:00:00 2001
-From: kkkkx <709563092@qq.com>
-Date: Sat, 30 Mar 2019 02:14:42 +0100
-Subject: [PATCH 1/4] Fixed 'indices' parameter optional
-
-Make 'indices' parameter optional in .replace_with_arrays
-Add tests about this change
----
- sympy/tensor/tensor.py            | 5 +++--
- sympy/tensor/tests/test_tensor.py | 2 ++
- 2 files changed, 5 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/tensor/tensor.py b/sympy/tensor/tensor.py
-index ecd47e7d599d..6c825494de74 100644
---- a/sympy/tensor/tensor.py
-+++ b/sympy/tensor/tensor.py
-@@ -2110,7 +2110,7 @@ def contract_and_permute(metric, array, pos):
- 
-         return free_ind2, array
- 
--    def replace_with_arrays(self, replacement_dict, indices):
-+    def replace_with_arrays(self, replacement_dict, indices=[]):
-         """
-         Replace the tensorial expressions with arrays. The final array will
-         correspond to the N-dimensional array with indices arranged according
-@@ -2122,7 +2122,8 @@ def replace_with_arrays(self, replacement_dict, indices):
-         replacement_dict
-             dictionary containing the replacement rules for tensors.
-         indices
--            the index order with respect to which the array is read.
-+            the index order with respect to which the array is read. The
-+            original index order will be used if no value is passed.
- 
-         Examples
-         ========
-diff --git a/sympy/tensor/tests/test_tensor.py b/sympy/tensor/tests/test_tensor.py
-index a3856c1e11da..49e5ed8b607a 100644
---- a/sympy/tensor/tests/test_tensor.py
-+++ b/sympy/tensor/tests/test_tensor.py
-@@ -1897,6 +1897,7 @@ def test_tensor_replacement():
-     repl = {H(i,-j): [[1,2],[3,4]], L: diag(1, -1)}
-     assert expr._extract_data(repl) == ([i, j], Array([[1, -2], [3, -4]]))
- 
-+    assert expr.replace_with_arrays(repl) == Array([[1, -2], [3, -4]])
-     assert expr.replace_with_arrays(repl, [i, j]) == Array([[1, -2], [3, -4]])
-     assert expr.replace_with_arrays(repl, [i, -j]) == Array([[1, 2], [3, 4]])
-     assert expr.replace_with_arrays(repl, [-i, j]) == Array([[1, -2], [-3, 4]])
-@@ -1910,6 +1911,7 @@ def test_tensor_replacement():
-     repl = {H(i,j): [[1,2],[3,4]], L: diag(1, -1)}
-     assert expr._extract_data(repl) == ([i, j], Array([[1, 2], [3, 4]]))
- 
-+    assert expr.replace_with_arrays(repl) == Array([[1, 2], [3, 4]])
-     assert expr.replace_with_arrays(repl, [i, j]) == Array([[1, 2], [3, 4]])
-     assert expr.replace_with_arrays(repl, [i, -j]) == Array([[1, -2], [3, -4]])
-     assert expr.replace_with_arrays(repl, [-i, j]) == Array([[1, 2], [-3, -4]])
-
-From 789b0eb8e022a91ce78d1d7ff932bc7096975f11 Mon Sep 17 00:00:00 2001
-From: kkkkx <709563092@qq.com>
-Date: Sat, 30 Mar 2019 02:16:57 +0100
-Subject: [PATCH 2/4] Revert "Fixed 'indices' parameter optional"
-
-This reverts commit 20658480bb912b68ec87871e2f629ec9b9f73eed.
----
- sympy/tensor/tensor.py            | 5 ++---
- sympy/tensor/tests/test_tensor.py | 2 --
- 2 files changed, 2 insertions(+), 5 deletions(-)
-
-diff --git a/sympy/tensor/tensor.py b/sympy/tensor/tensor.py
-index 6c825494de74..ecd47e7d599d 100644
---- a/sympy/tensor/tensor.py
-+++ b/sympy/tensor/tensor.py
-@@ -2110,7 +2110,7 @@ def contract_and_permute(metric, array, pos):
- 
-         return free_ind2, array
- 
--    def replace_with_arrays(self, replacement_dict, indices=[]):
-+    def replace_with_arrays(self, replacement_dict, indices):
-         """
-         Replace the tensorial expressions with arrays. The final array will
-         correspond to the N-dimensional array with indices arranged according
-@@ -2122,8 +2122,7 @@ def replace_with_arrays(self, replacement_dict, indices=[]):
-         replacement_dict
-             dictionary containing the replacement rules for tensors.
-         indices
--            the index order with respect to which the array is read. The
--            original index order will be used if no value is passed.
-+            the index order with respect to which the array is read.
- 
-         Examples
-         ========
-diff --git a/sympy/tensor/tests/test_tensor.py b/sympy/tensor/tests/test_tensor.py
-index 49e5ed8b607a..a3856c1e11da 100644
---- a/sympy/tensor/tests/test_tensor.py
-+++ b/sympy/tensor/tests/test_tensor.py
-@@ -1897,7 +1897,6 @@ def test_tensor_replacement():
-     repl = {H(i,-j): [[1,2],[3,4]], L: diag(1, -1)}
-     assert expr._extract_data(repl) == ([i, j], Array([[1, -2], [3, -4]]))
- 
--    assert expr.replace_with_arrays(repl) == Array([[1, -2], [3, -4]])
-     assert expr.replace_with_arrays(repl, [i, j]) == Array([[1, -2], [3, -4]])
-     assert expr.replace_with_arrays(repl, [i, -j]) == Array([[1, 2], [3, 4]])
-     assert expr.replace_with_arrays(repl, [-i, j]) == Array([[1, -2], [-3, 4]])
-@@ -1911,7 +1910,6 @@ def test_tensor_replacement():
-     repl = {H(i,j): [[1,2],[3,4]], L: diag(1, -1)}
-     assert expr._extract_data(repl) == ([i, j], Array([[1, 2], [3, 4]]))
- 
--    assert expr.replace_with_arrays(repl) == Array([[1, 2], [3, 4]])
-     assert expr.replace_with_arrays(repl, [i, j]) == Array([[1, 2], [3, 4]])
-     assert expr.replace_with_arrays(repl, [i, -j]) == Array([[1, -2], [3, -4]])
-     assert expr.replace_with_arrays(repl, [-i, j]) == Array([[1, 2], [-3, -4]])
-
-From 0a84019ad782e462fb579a33ca873bb3c97981f6 Mon Sep 17 00:00:00 2001
-From: kkkkx <709563092@qq.com>
-Date: Wed, 1 May 2019 22:21:55 +0200
-Subject: [PATCH 3/4] Added function _print_Indexed and test
-
--made PythonCodePrinter support Indexed by adding _print_Indexed
-function
--added test to _print_Indexed
----
- sympy/printing/pycode.py            | 4 ++++
- sympy/printing/tests/test_pycode.py | 4 +++-
- 2 files changed, 7 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
-index 6f50380a093e..bb7f67fef800 100644
+index a3f031073523..a96d4a2fbe83 100644
 --- a/sympy/printing/pycode.py
 +++ b/sympy/printing/pycode.py
-@@ -357,6 +357,10 @@ def _print_Not(self, expr):
+@@ -357,6 +357,11 @@ def _print_Not(self, expr):
          PREC = precedence(expr)
          return self._operators['not'] + self.parenthesize(expr.args[0], PREC)
  
 +    def _print_Indexed(self, expr):
-+        base, *index = expr.args
++        base = expr.args[0]
++        index = expr.args[1:]
 +        return "{}[{}]".format(str(base), ", ".join([self._print(ind) for ind in index]))
 +
  
  for k in PythonCodePrinter._kf:
      setattr(PythonCodePrinter, '_print_%s' % k, _print_known_func)
 diff --git a/sympy/printing/tests/test_pycode.py b/sympy/printing/tests/test_pycode.py
-index f1a9a3789807..a489ae80f130 100644
+index f1a9a3789807..0253d7218f5a 100644
 --- a/sympy/printing/tests/test_pycode.py
 +++ b/sympy/printing/tests/test_pycode.py
 @@ -12,9 +12,10 @@
@@ -157,44 +34,6 @@ index f1a9a3789807..a489ae80f130 100644
                          (3, Gt(x, 0)), evaluate=False)) == '((2) if (x <= 0) else'\
                                                          ' (3) if (x > 0) else None)'
      assert prntr.doprint(sign(x)) == '(0.0 if x == 0 else math.copysign(1, x))'
-+    assert prntr.doprint(p[0]) == 'p[0]'
- 
- 
- def test_MpmathPrinter():
-
-From b2b3a6d6cf9e274f063d57ff368c7caab9c3f249 Mon Sep 17 00:00:00 2001
-From: kangzhia <709563092@qq.com>
-Date: Thu, 2 May 2019 18:23:23 +0200
-Subject: [PATCH 4/4] Change asterisk to index syntax
-
----
- sympy/printing/pycode.py            | 3 ++-
- sympy/printing/tests/test_pycode.py | 2 +-
- 2 files changed, 3 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
-index a284707d6075..a96d4a2fbe83 100644
---- a/sympy/printing/pycode.py
-+++ b/sympy/printing/pycode.py
-@@ -358,7 +358,8 @@ def _print_Not(self, expr):
-         return self._operators['not'] + self.parenthesize(expr.args[0], PREC)
- 
-     def _print_Indexed(self, expr):
--        base, *index = expr.args
-+        base = expr.args[0]
-+        index = expr.args[1:]
-         return "{}[{}]".format(str(base), ", ".join([self._print(ind) for ind in index]))
- 
- 
-diff --git a/sympy/printing/tests/test_pycode.py b/sympy/printing/tests/test_pycode.py
-index a489ae80f130..0253d7218f5a 100644
---- a/sympy/printing/tests/test_pycode.py
-+++ b/sympy/printing/tests/test_pycode.py
-@@ -35,7 +35,7 @@ def test_PythonCodePrinter():
-                         (3, Gt(x, 0)), evaluate=False)) == '((2) if (x <= 0) else'\
-                                                         ' (3) if (x > 0) else None)'
-     assert prntr.doprint(sign(x)) == '(0.0 if x == 0 else math.copysign(1, x))'
--    assert prntr.doprint(p[0]) == 'p[0]'
 +    assert prntr.doprint(p[0, 1]) == 'p[0, 1]'
  
  

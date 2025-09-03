@@ -1,19 +1,3 @@
-From 7927e1aab77a4ed18f4e41dd1b4daee946b12de6 Mon Sep 17 00:00:00 2001
-From: 2torus <boris.ettinger@gmail.com>
-Date: Sat, 6 Oct 2018 22:34:34 +0300
-Subject: [PATCH] quaternions: fix a sign mistake in definition of rotation
- matrix
-
-addresses issue 15193. See
-https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Quaternion-derived_rotation_matrix
-for correct definition
-unit test was added to test the issue.
-Other tests corrected
----
- sympy/algebras/quaternion.py            |  2 +-
- sympy/algebras/tests/test_quaternion.py | 22 +++++++++++++++++++---
- 2 files changed, 20 insertions(+), 4 deletions(-)
-
 diff --git a/sympy/algebras/quaternion.py b/sympy/algebras/quaternion.py
 index b84e7cb95a85..7eae8d73d0eb 100644
 --- a/sympy/algebras/quaternion.py

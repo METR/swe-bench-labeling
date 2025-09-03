@@ -1,15 +1,5 @@
-From 8779f99166eae65e124330b66fc4086700fd5334 Mon Sep 17 00:00:00 2001
-From: Alexander Dunlap <alexander.dunlap@gmail.com>
-Date: Thu, 4 Oct 2018 22:56:36 -0700
-Subject: [PATCH 1/2] Mathematica code printing of Max and Min
-
----
- sympy/printing/mathematica.py            | 5 ++++-
- sympy/printing/tests/test_mathematica.py | 3 ++-
- 2 files changed, 6 insertions(+), 2 deletions(-)
-
 diff --git a/sympy/printing/mathematica.py b/sympy/printing/mathematica.py
-index ea7e3a2d9478..eaf90d7512f8 100644
+index ea7e3a2d9478..9505e008dc31 100644
 --- a/sympy/printing/mathematica.py
 +++ b/sympy/printing/mathematica.py
 @@ -31,7 +31,8 @@
@@ -26,7 +16,7 @@ index ea7e3a2d9478..eaf90d7512f8 100644
                      return "%s[%s]" % (mfunc, self.stringify(expr.args, ", "))
          return expr.func.__name__ + "[%s]" % self.stringify(expr.args, ", ")
  
-+    _print_Expr = _print_Function
++    _print_MinMaxBase = _print_Function
 +
      def _print_Integral(self, expr):
          if len(expr.variables) == 1 and not expr.limits[0][1:]:
@@ -52,26 +42,3 @@ index dd636d0623aa..1a49cb1fccde 100644
  
  
  def test_Pow():
-
-From 311b75f48fcea27bb4f97f64523fd595dcd4706b Mon Sep 17 00:00:00 2001
-From: Alexander Dunlap <alexander.dunlap@gmail.com>
-Date: Fri, 5 Oct 2018 08:58:09 -0700
-Subject: [PATCH 2/2] just changing _print_MinMaxBase instead of _print_Expr
-
----
- sympy/printing/mathematica.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/printing/mathematica.py b/sympy/printing/mathematica.py
-index eaf90d7512f8..9505e008dc31 100644
---- a/sympy/printing/mathematica.py
-+++ b/sympy/printing/mathematica.py
-@@ -102,7 +102,7 @@ def _print_Function(self, expr):
-                     return "%s[%s]" % (mfunc, self.stringify(expr.args, ", "))
-         return expr.func.__name__ + "[%s]" % self.stringify(expr.args, ", ")
- 
--    _print_Expr = _print_Function
-+    _print_MinMaxBase = _print_Function
- 
-     def _print_Integral(self, expr):
-         if len(expr.variables) == 1 and not expr.limits[0][1:]:

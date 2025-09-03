@@ -1,17 +1,3 @@
-From 6c9778a58e4f680db180d4cc9dc5639d2ec1b40c Mon Sep 17 00:00:00 2001
-From: Sam Reynolds <sam@smjr.co.uk>
-Date: Tue, 17 Sep 2019 15:21:50 +0100
-Subject: [PATCH] Fixed #30776 -- Restored max length validation on
- AuthenticationForm.UsernameField.
-
-Regression in 5ceaf14686ce626404afb6a5fbd3d8286410bf13.
-
-Thanks gopackgo90 for the report and Mariusz Felisiak for tests.
----
- django/contrib/auth/forms.py   | 4 +++-
- tests/auth_tests/test_forms.py | 2 ++
- 2 files changed, 5 insertions(+), 1 deletion(-)
-
 diff --git a/django/contrib/auth/forms.py b/django/contrib/auth/forms.py
 index a0cfed09954e..b4fb55c1b4d2 100644
 --- a/django/contrib/auth/forms.py

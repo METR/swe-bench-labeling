@@ -1,15 +1,3 @@
-From e3d546a1d986f83d8698c32e13afd048b65d06eb Mon Sep 17 00:00:00 2001
-From: Patrick Seebauer <patrick.seebauer@gmail.com>
-Date: Sun, 29 Dec 2019 22:04:14 +0100
-Subject: [PATCH] Fixed #31128 -- Fixed TemplateSyntaxError in simple_tag() and
- inclusion_tag() for kwargs.
-
----
- django/template/library.py                    |  2 +-
- .../template_tests/templatetags/inclusion.py  |  9 +++++++
- tests/template_tests/test_custom.py           | 26 +++++++++++++++++++
- 3 files changed, 36 insertions(+), 1 deletion(-)
-
 diff --git a/django/template/library.py b/django/template/library.py
 index 20bc86dac84b..2f7455626856 100644
 --- a/django/template/library.py

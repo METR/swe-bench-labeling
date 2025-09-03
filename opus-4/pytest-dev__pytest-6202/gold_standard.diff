@@ -1,15 +1,3 @@
-From 329f56ecec5a9fcbfa160d4b467342a7c19ef2c0 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=E6=9E=97=E7=8E=AE?= <linw1995@icloud.com>
-Date: Sat, 16 Nov 2019 14:49:17 +0800
-Subject: [PATCH 1/2] Fix incorrect result of getmodpath method.
-
----
- AUTHORS                   | 1 +
- changelog/6189.bugfix.rst | 1 +
- src/_pytest/python.py     | 3 +--
- 3 files changed, 3 insertions(+), 2 deletions(-)
- create mode 100644 changelog/6189.bugfix.rst
-
 diff --git a/AUTHORS b/AUTHORS
 index d0e584f6367..c10ee5c15ce 100644
 --- a/AUTHORS
@@ -43,16 +31,6 @@ index b8b365ad34d..734a92f9bb7 100644
  
      def reportinfo(self):
          # XXX caching?
-
-From 5d5f48097922dae26da06a12482a7a74de7ba924 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?=E6=9E=97=E7=8E=AE?= <linw1995@icloud.com>
-Date: Mon, 18 Nov 2019 23:46:18 +0800
-Subject: [PATCH 2/2] Hardening an existing test for demonstrating this change.
-
----
- testing/test_collection.py | 11 +++++++++--
- 1 file changed, 9 insertions(+), 2 deletions(-)
-
 diff --git a/testing/test_collection.py b/testing/test_collection.py
 index 8050e80f989..fe5d66e9482 100644
 --- a/testing/test_collection.py

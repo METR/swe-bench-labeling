@@ -1,15 +1,3 @@
-From 7800596924375978df3ca995df4c3466f1cd168e Mon Sep 17 00:00:00 2001
-From: Chris Jerdonek <chris.jerdonek@gmail.com>
-Date: Thu, 12 Aug 2021 01:50:54 -0400
-Subject: [PATCH] Fixed #33014 -- Made ProjectState raise exception when
- real_apps argument is not a set.
-
----
- django/db/migrations/state.py  | 7 ++++---
- docs/releases/4.0.txt          | 4 ++++
- tests/migrations/test_state.py | 4 ++++
- 3 files changed, 12 insertions(+), 3 deletions(-)
-
 diff --git a/django/db/migrations/state.py b/django/db/migrations/state.py
 index 088f5c41f05f..6e023415bdad 100644
 --- a/django/db/migrations/state.py

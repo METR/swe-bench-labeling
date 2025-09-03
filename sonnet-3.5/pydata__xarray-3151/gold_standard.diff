@@ -1,12 +1,43 @@
-From baf7bee062e95dcd4b8b0780afec1c2fcca20e98 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <tegn500@york.ac.uk>
-Date: Sat, 20 Jul 2019 13:23:28 +0100
-Subject: [PATCH 1/5] New test for issue
-
----
- xarray/tests/test_combine.py | 19 +++++++++++++++++++
- 1 file changed, 19 insertions(+)
-
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index a8c5342374e..b5e4e903719 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -41,6 +41,9 @@ Bug fixes
+ - XFAIL several tests which are expected to fail on ARM systems
+   due to a ``datetime`` issue in NumPy (:issue:`2334`).
+   By `Graham Inggs <https://github.com/ginggs>`_.
++- Fixed bug in ``combine_by_coords()`` causing a `ValueError` if the input had
++  an unused dimension with coordinates which were not monotonic (:issue`3150`).
++  By `Tom Nicholas <http://github.com/TomNicholas>`_.
+ 
+ .. _whats-new.0.12.3:
+ 
+diff --git a/xarray/core/combine.py b/xarray/core/combine.py
+index 37ae903b6c3..5718698f852 100644
+--- a/xarray/core/combine.py
++++ b/xarray/core/combine.py
+@@ -501,14 +501,13 @@ def combine_by_coords(datasets, compat='no_conflicts', data_vars='all',
+                                    fill_value=fill_value)
+ 
+         # Check the overall coordinates are monotonically increasing
+-        for dim in concatenated.dims:
+-            if dim in concatenated:
+-                indexes = concatenated.indexes.get(dim)
+-                if not (indexes.is_monotonic_increasing
+-                        or indexes.is_monotonic_decreasing):
+-                    raise ValueError("Resulting object does not have monotonic"
+-                                     " global indexes along dimension {}"
+-                                     .format(dim))
++        for dim in concat_dims:
++            indexes = concatenated.indexes.get(dim)
++            if not (indexes.is_monotonic_increasing
++                    or indexes.is_monotonic_decreasing):
++                raise ValueError("Resulting object does not have monotonic"
++                                 " global indexes along dimension {}"
++                                 .format(dim))
+         concatenated_grouped_by_data_vars.append(concatenated)
+ 
+     return merge(concatenated_grouped_by_data_vars, compat=compat,
 diff --git a/xarray/tests/test_combine.py b/xarray/tests/test_combine.py
 index 77e2993b7fd..2a71a3a3ed4 100644
 --- a/xarray/tests/test_combine.py
@@ -37,90 +68,3 @@ index 77e2993b7fd..2a71a3a3ed4 100644
      def test_combine_by_coords_previously_failed(self):
          # In the above scenario, one file is missing, containing the data for
          # one year's data for one variable.
-
-From 755e777ddd05de97643c08658315acc130aa9130 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <tegn500@york.ac.uk>
-Date: Sat, 20 Jul 2019 13:23:56 +0100
-Subject: [PATCH 2/5] Fix
-
----
- xarray/core/combine.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/xarray/core/combine.py b/xarray/core/combine.py
-index 37ae903b6c3..facb695e884 100644
---- a/xarray/core/combine.py
-+++ b/xarray/core/combine.py
-@@ -501,7 +501,7 @@ def combine_by_coords(datasets, compat='no_conflicts', data_vars='all',
-                                    fill_value=fill_value)
- 
-         # Check the overall coordinates are monotonically increasing
--        for dim in concatenated.dims:
-+        for dim in concat_dims:
-             if dim in concatenated:
-                 indexes = concatenated.indexes.get(dim)
-                 if not (indexes.is_monotonic_increasing
-
-From 577ff223554afbe3e2bf9d1f6c5be774d21a6ae8 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <tegn500@york.ac.uk>
-Date: Sat, 20 Jul 2019 13:32:38 +0100
-Subject: [PATCH 3/5] Removed redundant if statement
-
----
- xarray/core/combine.py | 13 ++++++-------
- 1 file changed, 6 insertions(+), 7 deletions(-)
-
-diff --git a/xarray/core/combine.py b/xarray/core/combine.py
-index facb695e884..5718698f852 100644
---- a/xarray/core/combine.py
-+++ b/xarray/core/combine.py
-@@ -502,13 +502,12 @@ def combine_by_coords(datasets, compat='no_conflicts', data_vars='all',
- 
-         # Check the overall coordinates are monotonically increasing
-         for dim in concat_dims:
--            if dim in concatenated:
--                indexes = concatenated.indexes.get(dim)
--                if not (indexes.is_monotonic_increasing
--                        or indexes.is_monotonic_decreasing):
--                    raise ValueError("Resulting object does not have monotonic"
--                                     " global indexes along dimension {}"
--                                     .format(dim))
-+            indexes = concatenated.indexes.get(dim)
-+            if not (indexes.is_monotonic_increasing
-+                    or indexes.is_monotonic_decreasing):
-+                raise ValueError("Resulting object does not have monotonic"
-+                                 " global indexes along dimension {}"
-+                                 .format(dim))
-         concatenated_grouped_by_data_vars.append(concatenated)
- 
-     return merge(concatenated_grouped_by_data_vars, compat=compat,
-
-From bef56285d47153e77c5e4512e693ffd13609f63e Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <tegn500@york.ac.uk>
-Date: Wed, 31 Jul 2019 12:54:09 +0100
-Subject: [PATCH 4/5] Trigger tests rerun
-
-
-From b1682404f6d5f4fe02a02aee660b3dbd247e8b29 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <tegn500@york.ac.uk>
-Date: Wed, 31 Jul 2019 14:19:43 +0100
-Subject: [PATCH 5/5] Updated what's new
-
----
- doc/whats-new.rst | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index a8c5342374e..b5e4e903719 100644
---- a/doc/whats-new.rst
-+++ b/doc/whats-new.rst
-@@ -41,6 +41,9 @@ Bug fixes
- - XFAIL several tests which are expected to fail on ARM systems
-   due to a ``datetime`` issue in NumPy (:issue:`2334`).
-   By `Graham Inggs <https://github.com/ginggs>`_.
-+- Fixed bug in ``combine_by_coords()`` causing a `ValueError` if the input had
-+  an unused dimension with coordinates which were not monotonic (:issue`3150`).
-+  By `Tom Nicholas <http://github.com/TomNicholas>`_.
- 
- .. _whats-new.0.12.3:
- 

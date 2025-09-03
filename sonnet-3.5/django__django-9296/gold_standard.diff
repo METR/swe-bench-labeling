@@ -1,15 +1,3 @@
-From dc838c2775109cff99d43a9fd02a369a2a975283 Mon Sep 17 00:00:00 2001
-From: Tanner Stirrat <tstirrat@gmail.com>
-Date: Fri, 20 Sep 2019 15:04:34 -0600
-Subject: [PATCH] Fixed #14218 -- Added Paginator.__iter__().
-
----
- django/core/paginator.py  |  4 ++++
- docs/ref/paginator.txt    | 11 +++++++++--
- docs/releases/3.1.txt     |  5 +++++
- tests/pagination/tests.py |  7 +++++++
- 4 files changed, 25 insertions(+), 2 deletions(-)
-
 diff --git a/django/core/paginator.py b/django/core/paginator.py
 index 1f92da5d4fdc..ec0ebe04039c 100644
 --- a/django/core/paginator.py

@@ -1,15 +1,3 @@
-From 31ec519d3808617e333794493e0aabc5fe5d4f81 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 30 May 2021 02:15:28 +0900
-Subject: [PATCH] Close #9272: autodoc: Render enum values for the default
- argument value better
-
----
- CHANGES                    | 1 +
- sphinx/util/inspect.py     | 7 +++++--
- tests/test_util_inspect.py | 9 +++++++++
- 3 files changed, 15 insertions(+), 2 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index 64410011e3a..8007636a8cc 100644
 --- a/CHANGES

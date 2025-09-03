@@ -1,13 +1,3 @@
-From 7f1c6fa99baed184c11bc4bfd42eddbba5b8769e Mon Sep 17 00:00:00 2001
-From: Oscar Gustafsson <oscar.gustafsson@gmail.com>
-Date: Thu, 21 Apr 2022 15:04:04 +0200
-Subject: [PATCH] Fix year offset not always being added
-
----
- lib/matplotlib/dates.py            | 6 ++++--
- lib/matplotlib/tests/test_dates.py | 4 ++++
- 2 files changed, 8 insertions(+), 2 deletions(-)
-
 diff --git a/lib/matplotlib/dates.py b/lib/matplotlib/dates.py
 index 4d8ddf3ee50b..c43e566242ad 100644
 --- a/lib/matplotlib/dates.py

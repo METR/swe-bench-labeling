@@ -1,32 +1,21 @@
-From 6bc199763e0af50c99e19654f1a9f43ed6061781 Mon Sep 17 00:00:00 2001
-From: dcherian <deepak@cherian.net>
-Date: Mon, 25 May 2020 18:35:05 -0600
-Subject: [PATCH] Fix to_unstacked_dataset for single dimension variables.
-
----
- doc/whats-new.rst            | 2 ++
- xarray/core/dataarray.py     | 2 +-
- xarray/tests/test_dataset.py | 8 ++++++++
- 3 files changed, 11 insertions(+), 1 deletion(-)
-
 diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index 447aaf5b0bf..648b321e5a3 100644
+index c1440ec1108..126ea28d416 100644
 --- a/doc/whats-new.rst
 +++ b/doc/whats-new.rst
-@@ -121,6 +121,8 @@ Bug fixes
-   By `Ryan May <https://github.com/dopplershift>`_.
+@@ -160,6 +160,8 @@ Bug fixes
+   By `Mathias Hauser <https://github.com/mathause>`_.
  - Fix html repr in untrusted notebooks: fallback to plain text repr. (:pull:`4053`)
    By `Benoit Bovy <https://github.com/benbovy>`_.
 +- Fix :py:meth:`DataArray.to_unstacked_dataset` for single-dimension variables. (:issue:`4049`)
 +  By `Deepak Cherian <https://github.com/dcherian>`_
+ - Fix :py:func:`open_rasterio` for ``WarpedVRT`` with specified ``src_crs``. (:pull:`4104`)
+   By `Dave Cole <https://github.com/dtpc>`_.
  
- Documentation
- ~~~~~~~~~~~~~
 diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
-index 236938bac74..3ef96921943 100644
+index b0df874953b..3be9bb79c60 100644
 --- a/xarray/core/dataarray.py
 +++ b/xarray/core/dataarray.py
-@@ -1909,7 +1909,7 @@ def to_unstacked_dataset(self, dim, level=0):
+@@ -1961,7 +1961,7 @@ def to_unstacked_dataset(self, dim, level=0):
          # pull variables out of datarray
          data_dict = {}
          for k in variables:
@@ -36,10 +25,10 @@ index 236938bac74..3ef96921943 100644
          # unstacked dataset
          return Dataset(data_dict)
 diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
-index 2a89920766c..2c25db2598e 100644
+index 9c8d40724da..9d2623d99e8 100644
 --- a/xarray/tests/test_dataset.py
 +++ b/xarray/tests/test_dataset.py
-@@ -3024,6 +3024,14 @@ def test_to_stacked_array_dtype_dims(self):
+@@ -3031,6 +3031,14 @@ def test_to_stacked_array_dtype_dims(self):
          assert y.dims == ("x", "features")
  
      def test_to_stacked_array_to_unstacked_dataset(self):

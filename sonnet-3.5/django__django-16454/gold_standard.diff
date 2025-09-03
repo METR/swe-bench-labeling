@@ -1,16 +1,3 @@
-From 017fa23d3b0aee9142f531c2a0002fc86c82a54c Mon Sep 17 00:00:00 2001
-From: Adam Johnson <me@adamj.eu>
-Date: Sun, 15 Jan 2023 09:19:52 +0000
-Subject: [PATCH] Fixed #34259 -- Passed called_from_command_line to command
- subparsers.
-
----
- django/core/management/base.py                | 10 ++++++++
- .../management/commands/subparser_vanilla.py  | 13 ++++++++++
- tests/user_commands/tests.py                  | 24 +++++++++++++++++++
- 3 files changed, 47 insertions(+)
- create mode 100644 tests/user_commands/management/commands/subparser_vanilla.py
-
 diff --git a/django/core/management/base.py b/django/core/management/base.py
 index abc6f79a1570..631c761c004a 100644
 --- a/django/core/management/base.py

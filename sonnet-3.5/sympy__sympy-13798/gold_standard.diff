@@ -1,20 +1,8 @@
-From d54b260b8394899843cf52a72aa1d44bbf5c8630 Mon Sep 17 00:00:00 2001
-From: Subhash <subhashsaurabh419@gmail.com>
-Date: Tue, 26 Dec 2017 23:29:30 +0530
-Subject: [PATCH 1/4] mul_symbol in latex can take user defined values
-
-mul_symbol can now take user defined values other than the four defined in
-mul_symbol_table
----
- sympy/printing/latex.py            | 18 ++++++++++++------
- sympy/printing/tests/test_latex.py |  1 +
- 2 files changed, 13 insertions(+), 6 deletions(-)
-
 diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
-index f4eb3143c8af..c4397a54d4b2 100644
+index f4eb3143c8af..68810dd2a231 100644
 --- a/sympy/printing/latex.py
 +++ b/sympy/printing/latex.py
-@@ -155,12 +155,18 @@ def __init__(self, settings=None):
+@@ -155,12 +155,23 @@ def __init__(self, settings=None):
              "dot": r" \cdot ",
              "times": r" \times "
          }
@@ -34,69 +22,8 @@ index f4eb3143c8af..c4397a54d4b2 100644
 +            self._settings['mul_symbol_latex_numbers'] = \
 +                mul_symbol_table[self._settings['mul_symbol'] or 'dot']
 +        except KeyError:
-+            self._settings['mul_symbol_latex_numbers'] = \
-+                self._settings['mul_symbol'] or mul_symbol_table['dot']
- 
-         self._delim_dict = {'(': ')', '[': ']'}
- 
-diff --git a/sympy/printing/tests/test_latex.py b/sympy/printing/tests/test_latex.py
-index 426c2f62dbb9..295a30f4071d 100644
---- a/sympy/printing/tests/test_latex.py
-+++ b/sympy/printing/tests/test_latex.py
-@@ -62,6 +62,7 @@ def test_latex_basic():
- 
-     assert latex(2*x*y) == "2 x y"
-     assert latex(2*x*y, mul_symbol='dot') == r"2 \cdot x \cdot y"
-+    assert latex(3*x**2*y, mul_symbol='\,') == r"3\,x^{2}\,y"
- 
-     assert latex(1/x) == r"\frac{1}{x}"
-     assert latex(1/x, fold_short_frac=True) == "1 / x"
-
-From dca07c78c6ed8e691bd2ba26da2d8f04663e9c26 Mon Sep 17 00:00:00 2001
-From: Subhash <subhashsaurabh419@gmail.com>
-Date: Wed, 27 Dec 2017 16:26:32 +0530
-Subject: [PATCH 2/4] Added escaping character
-
----
- sympy/printing/tests/test_latex.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/printing/tests/test_latex.py b/sympy/printing/tests/test_latex.py
-index 295a30f4071d..05cf3f04fcd3 100644
---- a/sympy/printing/tests/test_latex.py
-+++ b/sympy/printing/tests/test_latex.py
-@@ -62,7 +62,7 @@ def test_latex_basic():
- 
-     assert latex(2*x*y) == "2 x y"
-     assert latex(2*x*y, mul_symbol='dot') == r"2 \cdot x \cdot y"
--    assert latex(3*x**2*y, mul_symbol='\,') == r"3\,x^{2}\,y"
-+    assert latex(3*x**2*y, mul_symbol='\\,') == r"3\,x^{2}\,y"
- 
-     assert latex(1/x) == r"\frac{1}{x}"
-     assert latex(1/x, fold_short_frac=True) == "1 / x"
-
-From 13e7dbb0a09ab03b388b0e2d1d965187dd874bb5 Mon Sep 17 00:00:00 2001
-From: Subhash <subhashsaurabh419@gmail.com>
-Date: Fri, 29 Dec 2017 00:05:16 +0530
-Subject: [PATCH 3/4] Changed setting for mul_symbol_latex_number
-
----
- sympy/printing/latex.py            | 9 +++++++--
- sympy/printing/tests/test_latex.py | 1 +
- 2 files changed, 8 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
-index c4397a54d4b2..1ca45e88ae40 100644
---- a/sympy/printing/latex.py
-+++ b/sympy/printing/latex.py
-@@ -165,8 +165,13 @@ def __init__(self, settings=None):
-             self._settings['mul_symbol_latex_numbers'] = \
-                 mul_symbol_table[self._settings['mul_symbol'] or 'dot']
-         except KeyError:
--            self._settings['mul_symbol_latex_numbers'] = \
--                self._settings['mul_symbol'] or mul_symbol_table['dot']
-+            if (self._settings['mul_symbol'] == ' ' or
-+                    self._settings['mul_symbol'] == '\\,'):
++            if (self._settings['mul_symbol'].strip() in
++                    ['', ' ', '\\', '\\,', '\\:', '\\;', '\\quad']):
 +                self._settings['mul_symbol_latex_numbers'] = \
 +                    mul_symbol_table['dot']
 +            else:
@@ -106,39 +33,15 @@ index c4397a54d4b2..1ca45e88ae40 100644
          self._delim_dict = {'(': ')', '[': ']'}
  
 diff --git a/sympy/printing/tests/test_latex.py b/sympy/printing/tests/test_latex.py
-index 05cf3f04fcd3..6913397dbcf3 100644
+index 426c2f62dbb9..6913397dbcf3 100644
 --- a/sympy/printing/tests/test_latex.py
 +++ b/sympy/printing/tests/test_latex.py
-@@ -63,6 +63,7 @@ def test_latex_basic():
+@@ -62,6 +62,8 @@ def test_latex_basic():
+ 
      assert latex(2*x*y) == "2 x y"
      assert latex(2*x*y, mul_symbol='dot') == r"2 \cdot x \cdot y"
-     assert latex(3*x**2*y, mul_symbol='\\,') == r"3\,x^{2}\,y"
++    assert latex(3*x**2*y, mul_symbol='\\,') == r"3\,x^{2}\,y"
 +    assert latex(1.5*3**x, mul_symbol='\\,') == r"1.5 \cdot 3^{x}"
  
      assert latex(1/x) == r"\frac{1}{x}"
      assert latex(1/x, fold_short_frac=True) == "1 / x"
-
-From 00743f29559762bbfd7ff4f195a1d11c0dfd6008 Mon Sep 17 00:00:00 2001
-From: Subhash <subhashsaurabh419@gmail.com>
-Date: Sat, 30 Dec 2017 11:19:30 +0530
-Subject: [PATCH 4/4] Added more latex spacing and whitespaces
-
----
- sympy/printing/latex.py | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
-index 1ca45e88ae40..68810dd2a231 100644
---- a/sympy/printing/latex.py
-+++ b/sympy/printing/latex.py
-@@ -165,8 +165,8 @@ def __init__(self, settings=None):
-             self._settings['mul_symbol_latex_numbers'] = \
-                 mul_symbol_table[self._settings['mul_symbol'] or 'dot']
-         except KeyError:
--            if (self._settings['mul_symbol'] == ' ' or
--                    self._settings['mul_symbol'] == '\\,'):
-+            if (self._settings['mul_symbol'].strip() in
-+                    ['', ' ', '\\', '\\,', '\\:', '\\;', '\\quad']):
-                 self._settings['mul_symbol_latex_numbers'] = \
-                     mul_symbol_table['dot']
-             else:

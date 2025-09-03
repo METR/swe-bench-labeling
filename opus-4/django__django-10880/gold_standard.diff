@@ -1,17 +1,3 @@
-From 2e6999ed7749f37ef80fbf1cecbbb1e9b8d665bf Mon Sep 17 00:00:00 2001
-From: Simon Charette <charette.s@gmail.com>
-Date: Sun, 20 Jan 2019 18:19:06 -0600
-Subject: [PATCH] Fixed #30120 -- Fixed a regression in distinct aggregate SQL
- generation.
-
-Refs #28658, regression introduced by bc05547cd8c1dd511c6b6a6c873a1bc63417b111.
-
-Thanks Claude for the report.
----
- django/db/models/aggregates.py | 2 +-
- tests/aggregation/tests.py     | 7 +++++++
- 2 files changed, 8 insertions(+), 1 deletion(-)
-
 diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
 index ac0b62d0bf85..ea88c54b0d1c 100644
 --- a/django/db/models/aggregates.py

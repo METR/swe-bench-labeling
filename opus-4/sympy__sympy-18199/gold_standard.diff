@@ -1,16 +1,5 @@
-From 9e58be336c838a1daac7e23a834636418de09d25 Mon Sep 17 00:00:00 2001
-From: Abhinav Anand <abhinav.anand2807@gmail.com>
-Date: Sun, 5 Jan 2020 03:14:58 +0530
-Subject: [PATCH 1/8] composite number for nthroot_mod
-
----
- sympy/ntheory/residue_ntheory.py     | 50 ++++++++++++++++++++++++++--
- sympy/ntheory/tests/test_residue.py  | 12 +++++--
- sympy/solvers/tests/test_solveset.py |  7 ++--
- 3 files changed, 60 insertions(+), 9 deletions(-)
-
 diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index 9a3052d4c3b7..715c89297305 100644
+index 9a3052d4c3b7..fd0acecd59ca 100644
 --- a/sympy/ntheory/residue_ntheory.py
 +++ b/sympy/ntheory/residue_ntheory.py
 @@ -2,6 +2,7 @@
@@ -35,16 +24,16 @@ index 9a3052d4c3b7..715c89297305 100644
 +    for p, e in f.items():
 +        tot_roots = set()
 +        if e == 1:
-+            root = nthroot_mod(a, n, p, True) or []
-+            for num in root:
-+                tot_roots.add(num)
++            tot_roots.update(nthroot_mod(a, n, p, True) or [])
 +        else:
-+            roots = nthroot_mod(a, n, p, True) or []
-+            for root in roots:
-+                diff = (n * pow(root, n-1)) % p
++            for root in nthroot_mod(a, n, p, True) or []:
++                rootn = pow(root, n)
++                diff = (rootn // (root or 1) * n) % p
 +                if diff != 0:
++                    ppow = p
 +                    for j in range(1, e):
-+                        root = (root - (pow(root, n) - a)* mod_inverse(diff, p)) % pow(p, j + 1)
++                        ppow *= p
++                        root = (root - (rootn - a) * mod_inverse(diff, p)) % ppow
 +                    tot_roots.add(root)
 +                else:
 +                    new_base = p
@@ -55,7 +44,7 @@ index 9a3052d4c3b7..715c89297305 100644
 +                        for k in roots_in_base:
 +                            if (pow(k, n) - a) % (new_base) != 0:
 +                                continue
-+                            while(k not in new_roots):
++                            while k not in new_roots:
 +                                new_roots.add(k)
 +                                k = (k + (new_base // p)) % new_base
 +                        roots_in_base = new_roots
@@ -87,21 +76,20 @@ index 9a3052d4c3b7..715c89297305 100644
          return _nthroot_mod1(a, n, p, all_roots)
      # The roots of ``x**n - a = 0 (mod p)`` are roots of
 diff --git a/sympy/ntheory/tests/test_residue.py b/sympy/ntheory/tests/test_residue.py
-index d4854547bee3..091539becd2c 100644
+index d4854547bee3..fdc09e3e715a 100644
 --- a/sympy/ntheory/tests/test_residue.py
 +++ b/sympy/ntheory/tests/test_residue.py
-@@ -162,7 +162,9 @@ def test_residue():
+@@ -162,7 +162,8 @@ def test_residue():
      assert is_nthpow_residue(31, 4, 41)
      assert not is_nthpow_residue(2, 2, 5)
      assert is_nthpow_residue(8547, 12, 10007)
 -    raises(NotImplementedError, lambda: nthroot_mod(29, 31, 74))
 +
 +    assert nthroot_mod(29, 31, 74) == [45]
-+
      assert nthroot_mod(1801, 11, 2663) == 44
      for a, q, p in [(51922, 2, 203017), (43, 3, 109), (1801, 11, 2663),
            (26118163, 1303, 33333347), (1499, 7, 2663), (595, 6, 2663),
-@@ -170,8 +172,12 @@ def test_residue():
+@@ -170,8 +171,12 @@ def test_residue():
          r = nthroot_mod(a, q, p)
          assert pow(r, q, p) == a
      assert nthroot_mod(11, 3, 109) is None
@@ -136,209 +124,3 @@ index 47eeebabd815..9cec0839aaef 100644
      # domain intersection
      assert solveset(3 - Mod(5*x - 8, 7), x, S.Naturals0) == \
              Intersection(ImageSet(Lambda(n, 7*n + 5), S.Integers), S.Naturals0)
-
-From c2b998030f3875d99a28998f0c797b3d64321cbf Mon Sep 17 00:00:00 2001
-From: Abhinav Anand <abhinav.anand2807@gmail.com>
-Date: Sun, 5 Jan 2020 20:01:14 +0530
-Subject: [PATCH 2/8] made suggested changes
-
----
- sympy/ntheory/residue_ntheory.py | 11 ++++-------
- 1 file changed, 4 insertions(+), 7 deletions(-)
-
-diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index 715c89297305..a6f1cf1442e9 100644
---- a/sympy/ntheory/residue_ntheory.py
-+++ b/sympy/ntheory/residue_ntheory.py
-@@ -753,13 +753,10 @@ def _nthroot_mod_composite(a, n, m):
-     for p, e in f.items():
-         tot_roots = set()
-         if e == 1:
--            root = nthroot_mod(a, n, p, True) or []
--            for num in root:
--                tot_roots.add(num)
-+            tot_roots.update(nthroot_mod(a, n, p, True) or [])
-         else:
--            roots = nthroot_mod(a, n, p, True) or []
--            for root in roots:
--                diff = (n * pow(root, n-1)) % p
-+            for root in nthroot_mod(a, n, p, True) or []:
-+                diff = (n * pow(root, n - 1)) % p
-                 if diff != 0:
-                     for j in range(1, e):
-                         root = (root - (pow(root, n) - a)* mod_inverse(diff, p)) % pow(p, j + 1)
-@@ -773,7 +770,7 @@ def _nthroot_mod_composite(a, n, m):
-                         for k in roots_in_base:
-                             if (pow(k, n) - a) % (new_base) != 0:
-                                 continue
--                            while(k not in new_roots):
-+                            while k not in new_roots:
-                                 new_roots.add(k)
-                                 k = (k + (new_base // p)) % new_base
-                         roots_in_base = new_roots
-
-From 7ba05033e48f45f360257cea69b9f8a0520a1ace Mon Sep 17 00:00:00 2001
-From: abhinav28071999 <41710346+abhinav28071999@users.noreply.github.com>
-Date: Tue, 7 Jan 2020 02:59:40 +0530
-Subject: [PATCH 3/8] minor change
-
----
- sympy/ntheory/tests/test_residue.py | 1 -
- 1 file changed, 1 deletion(-)
-
-diff --git a/sympy/ntheory/tests/test_residue.py b/sympy/ntheory/tests/test_residue.py
-index 091539becd2c..fdc09e3e715a 100644
---- a/sympy/ntheory/tests/test_residue.py
-+++ b/sympy/ntheory/tests/test_residue.py
-@@ -164,7 +164,6 @@ def test_residue():
-     assert is_nthpow_residue(8547, 12, 10007)
- 
-     assert nthroot_mod(29, 31, 74) == [45]
--
-     assert nthroot_mod(1801, 11, 2663) == 44
-     for a, q, p in [(51922, 2, 203017), (43, 3, 109), (1801, 11, 2663),
-           (26118163, 1303, 33333347), (1499, 7, 2663), (595, 6, 2663),
-
-From f5d6e8b23f5dd002a9f6579c6448000e07b3c050 Mon Sep 17 00:00:00 2001
-From: abhinav28071999 <41710346+abhinav28071999@users.noreply.github.com>
-Date: Wed, 8 Jan 2020 22:54:51 +0530
-Subject: [PATCH 4/8] made suggested changes
-
----
- sympy/ntheory/residue_ntheory.py | 7 +++++--
- 1 file changed, 5 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index a6f1cf1442e9..32210a44fdb2 100644
---- a/sympy/ntheory/residue_ntheory.py
-+++ b/sympy/ntheory/residue_ntheory.py
-@@ -756,10 +756,13 @@ def _nthroot_mod_composite(a, n, m):
-             tot_roots.update(nthroot_mod(a, n, p, True) or [])
-         else:
-             for root in nthroot_mod(a, n, p, True) or []:
--                diff = (n * pow(root, n - 1)) % p
-+                rootn = pow(root, n)
-+                diff = (rootn//root*n) % p
-                 if diff != 0:
-+                    ppow = p
-                     for j in range(1, e):
--                        root = (root - (pow(root, n) - a)* mod_inverse(diff, p)) % pow(p, j + 1)
-+                        ppow *= p
-+                        root = (root - (rootn - a)* mod_inverse(diff, p)) % ppow
-                     tot_roots.add(root)
-                 else:
-                     new_base = p
-
-From 9fcb418fa957705f557062cf034b2d52bfcf30a4 Mon Sep 17 00:00:00 2001
-From: abhinav28071999 <41710346+abhinav28071999@users.noreply.github.com>
-Date: Wed, 8 Jan 2020 23:31:44 +0530
-Subject: [PATCH 5/8] Root can be 0 , corrected the code
-
----
- sympy/ntheory/residue_ntheory.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index 32210a44fdb2..224995a2669b 100644
---- a/sympy/ntheory/residue_ntheory.py
-+++ b/sympy/ntheory/residue_ntheory.py
-@@ -756,13 +756,13 @@ def _nthroot_mod_composite(a, n, m):
-             tot_roots.update(nthroot_mod(a, n, p, True) or [])
-         else:
-             for root in nthroot_mod(a, n, p, True) or []:
--                rootn = pow(root, n)
--                diff = (rootn//root*n) % p
-+                rootn = pow(root, n - 1)
-+                diff = (rootn * n) % p
-                 if diff != 0:
-                     ppow = p
-                     for j in range(1, e):
-                         ppow *= p
--                        root = (root - (rootn - a)* mod_inverse(diff, p)) % ppow
-+                        root = (root - (rootn * root - a)* mod_inverse(diff, p)) % ppow
-                     tot_roots.add(root)
-                 else:
-                     new_base = p
-
-From 6ed39e4248e5ad424232689b79ee0fe9ed9ff9b6 Mon Sep 17 00:00:00 2001
-From: abhinav28071999 <41710346+abhinav28071999@users.noreply.github.com>
-Date: Thu, 9 Jan 2020 09:01:17 +0530
-Subject: [PATCH 6/8] Made suggested changes
-
----
- sympy/ntheory/residue_ntheory.py | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index 224995a2669b..12682b7e8efe 100644
---- a/sympy/ntheory/residue_ntheory.py
-+++ b/sympy/ntheory/residue_ntheory.py
-@@ -756,13 +756,13 @@ def _nthroot_mod_composite(a, n, m):
-             tot_roots.update(nthroot_mod(a, n, p, True) or [])
-         else:
-             for root in nthroot_mod(a, n, p, True) or []:
--                rootn = pow(root, n - 1)
--                diff = (rootn * n) % p
-+                rootn = pow(root, n)
-+                diff = (rootn * // (root or 1)) % p
-                 if diff != 0:
-                     ppow = p
-                     for j in range(1, e):
-                         ppow *= p
--                        root = (root - (rootn * root - a)* mod_inverse(diff, p)) % ppow
-+                        root = (root - (rootn - a)* mod_inverse(diff, p)) % ppow
-                     tot_roots.add(root)
-                 else:
-                     new_base = p
-
-From 52fd2e6f8b23763fc517265bd58d2dae36defbc7 Mon Sep 17 00:00:00 2001
-From: abhinav28071999 <41710346+abhinav28071999@users.noreply.github.com>
-Date: Thu, 9 Jan 2020 10:36:09 +0530
-Subject: [PATCH 7/8] fixed syntax error
-
----
- sympy/ntheory/residue_ntheory.py | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index 12682b7e8efe..c346970827f2 100644
---- a/sympy/ntheory/residue_ntheory.py
-+++ b/sympy/ntheory/residue_ntheory.py
-@@ -757,7 +757,7 @@ def _nthroot_mod_composite(a, n, m):
-         else:
-             for root in nthroot_mod(a, n, p, True) or []:
-                 rootn = pow(root, n)
--                diff = (rootn * // (root or 1)) % p
-+                diff = (rootn // (root or 1)) % p
-                 if diff != 0:
-                     ppow = p
-                     for j in range(1, e):
-
-From c885a6283eaf08c37487f17e9305b8c04dcd18af Mon Sep 17 00:00:00 2001
-From: abhinav28071999 <41710346+abhinav28071999@users.noreply.github.com>
-Date: Thu, 9 Jan 2020 11:17:00 +0530
-Subject: [PATCH 8/8] made changes to diff
-
----
- sympy/ntheory/residue_ntheory.py | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
-diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
-index c346970827f2..fd0acecd59ca 100644
---- a/sympy/ntheory/residue_ntheory.py
-+++ b/sympy/ntheory/residue_ntheory.py
-@@ -757,12 +757,12 @@ def _nthroot_mod_composite(a, n, m):
-         else:
-             for root in nthroot_mod(a, n, p, True) or []:
-                 rootn = pow(root, n)
--                diff = (rootn // (root or 1)) % p
-+                diff = (rootn // (root or 1) * n) % p
-                 if diff != 0:
-                     ppow = p
-                     for j in range(1, e):
-                         ppow *= p
--                        root = (root - (rootn - a)* mod_inverse(diff, p)) % ppow
-+                        root = (root - (rootn - a) * mod_inverse(diff, p)) % ppow
-                     tot_roots.add(root)
-                 else:
-                     new_base = p

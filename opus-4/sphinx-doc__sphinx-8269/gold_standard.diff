@@ -1,18 +1,3 @@
-From 5ea8ee133dfac71e58d1d6fb8f6b38a7ba249a7c Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Fran=C3=A7ois=20Freitag?= <mail@franek.fr>
-Date: Sat, 3 Oct 2020 12:59:47 +0200
-Subject: [PATCH] Fix #8268: make linkcheck report HTTP errors
-
----
- CHANGES                                       |  1 +
- sphinx/builders/linkcheck.py                  |  1 +
- .../roots/test-linkcheck-localserver/conf.py  |  2 ++
- .../test-linkcheck-localserver/index.rst      |  1 +
- tests/test_build_linkcheck.py                 | 36 +++++++++++++++++++
- 5 files changed, 41 insertions(+)
- create mode 100644 tests/roots/test-linkcheck-localserver/conf.py
- create mode 100644 tests/roots/test-linkcheck-localserver/index.rst
-
 diff --git a/CHANGES b/CHANGES
 index 22876d43b1c..7013a6d01d4 100644
 --- a/CHANGES

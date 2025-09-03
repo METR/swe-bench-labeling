@@ -1,15 +1,3 @@
-From 24b316536a7ee4c54a54f632de1852aecb4038c0 Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Thu, 25 Nov 2021 14:13:16 +0100
-Subject: [PATCH] Fixed #33303 -- Changed messages' level tags on MESSAGE_TAGS
- setting change.
-
----
- django/contrib/messages/apps.py | 11 +++++++++++
- tests/messages_tests/base.py    | 22 ++++------------------
- tests/messages_tests/tests.py   | 18 +++++++++++++++++-
- 3 files changed, 32 insertions(+), 19 deletions(-)
-
 diff --git a/django/contrib/messages/apps.py b/django/contrib/messages/apps.py
 index 0ff25d38851d..064b9a4bde8f 100644
 --- a/django/contrib/messages/apps.py

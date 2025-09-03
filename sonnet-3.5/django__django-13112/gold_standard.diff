@@ -1,17 +1,3 @@
-From d6949b9f7080a6f06957a6ae8a2bfb18872b28d0 Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Fri, 26 Jun 2020 06:41:22 +0200
-Subject: [PATCH] Fixed #31742 -- Fixed makemigrations crash on ForeignKey to
- an app with mixed case label.
-
-Regression in 9e1b6b8a66af4c2197e5b1b41eb9dbb36e4f6502.
-
-Thanks Ignacio Santolin for the report.
----
- django/db/models/fields/related.py |  6 +++++-
- tests/migrations/test_state.py     | 28 ++++++++++++++++++++++++++++
- 2 files changed, 33 insertions(+), 1 deletion(-)
-
 diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
 index c2aea9c7306e..397146a35496 100644
 --- a/django/db/models/fields/related.py

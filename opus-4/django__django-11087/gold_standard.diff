@@ -1,55 +1,5 @@
-From 26c4be2ebe918601c0a13d4abb3f3cab49107c73 Mon Sep 17 00:00:00 2001
-From: Simon Charette <charette.s@gmail.com>
-Date: Sat, 16 Mar 2019 19:30:29 -0400
-Subject: [PATCH 1/2] Refs #18676 -- Enabled fast-delete for m2m_changed
- senders.
-
-There's no reason to disable fast-delete when an intermediary
-many-to-many model has connected m2m_changed receivers because the
-signal is only sent when related manager's clear() and remove() methods
-are directly called.
-
-This must have been overlooked in 1cd6e04cd4f768bcd4385b75de433d497d938f82
-given no regression tests fail when m2m_changed is not taken into
-consideration to determine if fast-delete can be enabled.
----
- django/db/models/deletion.py | 3 +--
- 1 file changed, 1 insertion(+), 2 deletions(-)
-
 diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
-index 3a462f1c4c46..d886331fcf0b 100644
---- a/django/db/models/deletion.py
-+++ b/django/db/models/deletion.py
-@@ -136,8 +136,7 @@ def can_fast_delete(self, objs, from_field=None):
-         else:
-             return False
-         if (signals.pre_delete.has_listeners(model) or
--                signals.post_delete.has_listeners(model) or
--                signals.m2m_changed.has_listeners(model)):
-+                signals.post_delete.has_listeners(model)):
-             return False
-         # The use of from_field comes from the need to avoid cascade back to
-         # parent when parent delete is cascading to child.
-
-From f110de5c04818b8f915dcf65da37a50c1424c6e6 Mon Sep 17 00:00:00 2001
-From: Simon Charette <charette.s@gmail.com>
-Date: Tue, 19 Feb 2019 01:33:28 -0500
-Subject: [PATCH 2/2] Fixed #30191 -- Selected only referenced fields during
- cascade deletion.
-
-The non-referenced fields can only be deferred if no deletion signals
-receivers are connected for their respective model as connected as these
-receivers might expect all fields of the deleted model to be present.
-
-Thanks Ed Morley for the report.
----
- django/db/models/deletion.py | 29 +++++++++++++++++++++++++----
- tests/delete/models.py       | 17 +++++++++++++++++
- tests/delete/tests.py        | 36 +++++++++++++++++++++++++++++++++++-
- 3 files changed, 77 insertions(+), 5 deletions(-)
-
-diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
-index d886331fcf0b..d28e596b46dc 100644
+index 3a462f1c4c46..d28e596b46dc 100644
 --- a/django/db/models/deletion.py
 +++ b/django/db/models/deletion.py
 @@ -1,4 +1,5 @@
@@ -71,17 +21,18 @@ index d886331fcf0b..d28e596b46dc 100644
      def can_fast_delete(self, objs, from_field=None):
          """
          Determine if the objects in the given queryset-like or single object
-@@ -135,8 +142,7 @@ def can_fast_delete(self, objs, from_field=None):
+@@ -135,9 +142,7 @@ def can_fast_delete(self, objs, from_field=None):
              model = objs.model
          else:
              return False
 -        if (signals.pre_delete.has_listeners(model) or
--                signals.post_delete.has_listeners(model)):
+-                signals.post_delete.has_listeners(model) or
+-                signals.m2m_changed.has_listeners(model)):
 +        if self._has_signal_listeners(model):
              return False
          # The use of from_field comes from the need to avoid cascade back to
          # parent when parent delete is cascading to child.
-@@ -219,8 +225,23 @@ def collect(self, objs, source=None, nullable=False, collect_related=True,
+@@ -220,8 +225,23 @@ def collect(self, objs, source=None, nullable=False, collect_related=True,
                      sub_objs = self.related_objects(related, batch)
                      if self.can_fast_delete(sub_objs, from_field=field):
                          self.fast_deletes.append(sub_objs)

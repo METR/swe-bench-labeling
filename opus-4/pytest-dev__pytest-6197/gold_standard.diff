@@ -1,29 +1,17 @@
-From 176c7771fb4f3bd703bb6c9650cc32e31d548a2b Mon Sep 17 00:00:00 2001
-From: Anthony Sottile <asottile@umich.edu>
-Date: Fri, 15 Nov 2019 08:29:52 -0800
-Subject: [PATCH 1/2] Revert "fix bug with nonskipped first test in package
- (#5831)"
-
-This reverts commit 85288b53218d4e0037dce9c34bd37f86fa9e212d, reversing
-changes made to 5f9db8a01721e10162769b96b82794dd069bbaeb.
----
- AUTHORS                  |  1 -
- src/_pytest/python.py    | 24 ++++++------------------
- testing/test_skipping.py | 23 -----------------------
- 3 files changed, 6 insertions(+), 42 deletions(-)
-
-diff --git a/AUTHORS b/AUTHORS
-index d0e584f6367..e11400c1fa0 100644
---- a/AUTHORS
-+++ b/AUTHORS
-@@ -70,7 +70,6 @@ Daniel Hahler
- Daniel Nuri
- Daniel Wandschneider
- Danielle Jenkins
--Daniil Galiev
- Dave Hunt
- David Díaz-Barquero
- David Mohr
+diff --git a/changelog/6194.bugfix.rst b/changelog/6194.bugfix.rst
+new file mode 100644
+index 00000000000..92e6aec7828
+--- /dev/null
++++ b/changelog/6194.bugfix.rst
+@@ -0,0 +1 @@
++Fix incorrect discovery of non-test ``__init__.py`` files.
+diff --git a/changelog/6197.bugfix.rst b/changelog/6197.bugfix.rst
+new file mode 100644
+index 00000000000..9bd0a5a6510
+--- /dev/null
++++ b/changelog/6197.bugfix.rst
+@@ -0,0 +1 @@
++Revert "The first test in a package (``__init__.py``) marked with ``@pytest.mark.skip`` is now correctly skipped.".
 diff --git a/src/_pytest/python.py b/src/_pytest/python.py
 index 306e5f217ce..b8b365ad34d 100644
 --- a/src/_pytest/python.py
@@ -79,6 +67,35 @@ index 306e5f217ce..b8b365ad34d 100644
          this_path = self.fspath.dirpath()
          init_module = this_path.join("__init__.py")
          if init_module.check(file=1) and path_matches_patterns(
+diff --git a/testing/test_collection.py b/testing/test_collection.py
+index dee07d5c715..8050e80f989 100644
+--- a/testing/test_collection.py
++++ b/testing/test_collection.py
+@@ -1257,3 +1257,24 @@ def test_collector_respects_tbstyle(testdir):
+             "*= 1 error in *",
+         ]
+     )
++
++
++def test_does_not_eagerly_collect_packages(testdir):
++    testdir.makepyfile("def test(): pass")
++    pydir = testdir.mkpydir("foopkg")
++    pydir.join("__init__.py").write("assert False")
++    result = testdir.runpytest()
++    assert result.ret == ExitCode.OK
++
++
++def test_does_not_put_src_on_path(testdir):
++    # `src` is not on sys.path so it should not be importable
++    testdir.tmpdir.join("src/nope/__init__.py").ensure()
++    testdir.makepyfile(
++        "import pytest\n"
++        "def test():\n"
++        "    with pytest.raises(ImportError):\n"
++        "        import nope\n"
++    )
++    result = testdir.runpytest()
++    assert result.ret == ExitCode.OK
 diff --git a/testing/test_skipping.py b/testing/test_skipping.py
 index 371c3a4dbce..8bba479f1b0 100644
 --- a/testing/test_skipping.py
@@ -110,73 +127,3 @@ index 371c3a4dbce..8bba479f1b0 100644
 -    result = testdir.inline_run()
 -    _, skipped, _ = result.listoutcomes()
 -    assert len(skipped) == 2
-
-From 4e0f99260d438d750b55a0881110658b8bba5a4a Mon Sep 17 00:00:00 2001
-From: Anthony Sottile <asottile@umich.edu>
-Date: Fri, 15 Nov 2019 08:31:53 -0800
-Subject: [PATCH 2/2] Add regression tests for __init__.py breakage
-
----
- AUTHORS                    |  1 +
- changelog/6194.bugfix.rst  |  1 +
- changelog/6197.bugfix.rst  |  1 +
- testing/test_collection.py | 21 +++++++++++++++++++++
- 4 files changed, 24 insertions(+)
- create mode 100644 changelog/6194.bugfix.rst
- create mode 100644 changelog/6197.bugfix.rst
-
-diff --git a/AUTHORS b/AUTHORS
-index e11400c1fa0..d0e584f6367 100644
---- a/AUTHORS
-+++ b/AUTHORS
-@@ -70,6 +70,7 @@ Daniel Hahler
- Daniel Nuri
- Daniel Wandschneider
- Danielle Jenkins
-+Daniil Galiev
- Dave Hunt
- David Díaz-Barquero
- David Mohr
-diff --git a/changelog/6194.bugfix.rst b/changelog/6194.bugfix.rst
-new file mode 100644
-index 00000000000..92e6aec7828
---- /dev/null
-+++ b/changelog/6194.bugfix.rst
-@@ -0,0 +1 @@
-+Fix incorrect discovery of non-test ``__init__.py`` files.
-diff --git a/changelog/6197.bugfix.rst b/changelog/6197.bugfix.rst
-new file mode 100644
-index 00000000000..9bd0a5a6510
---- /dev/null
-+++ b/changelog/6197.bugfix.rst
-@@ -0,0 +1 @@
-+Revert "The first test in a package (``__init__.py``) marked with ``@pytest.mark.skip`` is now correctly skipped.".
-diff --git a/testing/test_collection.py b/testing/test_collection.py
-index dee07d5c715..8050e80f989 100644
---- a/testing/test_collection.py
-+++ b/testing/test_collection.py
-@@ -1257,3 +1257,24 @@ def test_collector_respects_tbstyle(testdir):
-             "*= 1 error in *",
-         ]
-     )
-+
-+
-+def test_does_not_eagerly_collect_packages(testdir):
-+    testdir.makepyfile("def test(): pass")
-+    pydir = testdir.mkpydir("foopkg")
-+    pydir.join("__init__.py").write("assert False")
-+    result = testdir.runpytest()
-+    assert result.ret == ExitCode.OK
-+
-+
-+def test_does_not_put_src_on_path(testdir):
-+    # `src` is not on sys.path so it should not be importable
-+    testdir.tmpdir.join("src/nope/__init__.py").ensure()
-+    testdir.makepyfile(
-+        "import pytest\n"
-+        "def test():\n"
-+        "    with pytest.raises(ImportError):\n"
-+        "        import nope\n"
-+    )
-+    result = testdir.runpytest()
-+    assert result.ret == ExitCode.OK

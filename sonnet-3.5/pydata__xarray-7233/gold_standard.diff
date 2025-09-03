@@ -1,95 +1,37 @@
-From be0749c197b09b1c820d4c19042895dc93d68c4b Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <thomas.nicholas@columbia.edu>
-Date: Thu, 27 Oct 2022 19:25:24 -0400
-Subject: [PATCH 1/7] test
-
----
- xarray/tests/test_coarsen.py | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
-
-diff --git a/xarray/tests/test_coarsen.py b/xarray/tests/test_coarsen.py
-index d44499856c6..c59e752c061 100644
---- a/xarray/tests/test_coarsen.py
-+++ b/xarray/tests/test_coarsen.py
-@@ -318,3 +318,15 @@ def test_coarsen_construct(dask: bool) -> None:
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 36c84e24ee5..10de49e23d3 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -61,6 +61,8 @@ Bug fixes
+   now reopens the file from scratch for h5netcdf and scipy netCDF backends,
+   rather than reusing a cached version (:issue:`4240`, :issue:`4862`).
+   By `Stephan Hoyer <https://github.com/shoyer>`_.
++- Fixed bug where :py:meth:`Dataset.coarsen.construct` would demote non-dimension coordinates to variables. (:pull:`7233`)
++  By `Tom Nicholas <https://github.com/TomNicholas>`_.
+ - Raise a TypeError when trying to plot empty data (:issue:`7156`, :pull:`7228`).
+   By `Michael Niklas <https://github.com/headtr1ck>`_.
  
-     with pytest.raises(ValueError):
-         ds.coarsen(time=12).construct(time=("bar",))
-+
-+
-+def test_coarsen_construct_keeps_all_coords():
-+    da = xr.DataArray(np.arange(24), dims=["time"])
-+    da = da.assign_coords(day=365 * da)
-+
-+    result = da.coarsen(time=12).construct(time=("year", "month"))
-+    assert list(da.coords) == list(result.coords)
-+
-+    ds = da.to_dataset(name="T")
-+    result = ds.coarsen(time=12).construct(time=("year", "month"))
-+    assert list(da.coords) == list(result.coords)
-
-From 498c90abbbba0aa43b9af37b32806686c89920b9 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <thomas.nicholas@columbia.edu>
-Date: Thu, 27 Oct 2022 19:35:19 -0400
-Subject: [PATCH 2/7] fix
-
----
- xarray/core/rolling.py | 4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
-
 diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
-index c194ec084db..d5b006be832 100644
+index c194ec084db..57a5456b70a 100644
 --- a/xarray/core/rolling.py
 +++ b/xarray/core/rolling.py
-@@ -973,7 +973,9 @@ def construct(
+@@ -973,7 +973,10 @@ def construct(
              else:
                  reshaped[key] = var
  
 -        should_be_coords = set(window_dim) & set(self.obj.coords)
++        # should handle window_dim being unindexed
 +        should_be_coords = (set(window_dim) & set(self.obj.coords)) | set(
 +            self.obj.coords
 +        )
          result = reshaped.set_coords(should_be_coords)
          if isinstance(self.obj, DataArray):
              return self.obj._from_temp_dataset(result)
-
-From 34ec8b73657581cb9bcaf6352f88062b72cbb294 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <thomas.nicholas@columbia.edu>
-Date: Thu, 27 Oct 2022 19:48:47 -0400
-Subject: [PATCH 3/7] whatsnew
-
----
- doc/whats-new.rst | 2 ++
- 1 file changed, 2 insertions(+)
-
-diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index 37ea949ab9d..6b96ee696df 100644
---- a/doc/whats-new.rst
-+++ b/doc/whats-new.rst
-@@ -57,6 +57,8 @@ Bug fixes
-   now reopens the file from scratch for h5netcdf and scipy netCDF backends,
-   rather than reusing a cached version (:issue:`4240`, :issue:`4862`).
-   By `Stephan Hoyer <https://github.com/shoyer>`_.
-+- Fixed bug where :py:meth:`Dataset.coarsen.construct` would demote non-dimension coordinates to variables. (:pull:`7233`)
-+  By `Tom Nicholas <https://github.com/TomNicholas>`_.
- 
- Documentation
- ~~~~~~~~~~~~~
-
-From e6cc06c3f3cc06a87904d791d5c462c4e8f07013 Mon Sep 17 00:00:00 2001
-From: Thomas Nicholas <thomas.nicholas@columbia.edu>
-Date: Thu, 27 Oct 2022 19:51:52 -0400
-Subject: [PATCH 4/7] group related tests into a class
-
----
- xarray/tests/test_coarsen.py | 158 ++++++++++++++++++-----------------
- 1 file changed, 83 insertions(+), 75 deletions(-)
-
 diff --git a/xarray/tests/test_coarsen.py b/xarray/tests/test_coarsen.py
-index c59e752c061..542f6815597 100644
+index d44499856c6..542f6815597 100644
 --- a/xarray/tests/test_coarsen.py
 +++ b/xarray/tests/test_coarsen.py
-@@ -250,83 +250,91 @@ def test_coarsen_da_reduce(da, window, name) -> None:
+@@ -250,71 +250,91 @@ def test_coarsen_da_reduce(da, window, name) -> None:
      assert_allclose(actual, expected)
  
  
@@ -185,18 +127,6 @@ index c59e752c061..542f6815597 100644
 -
 -    with pytest.raises(ValueError):
 -        ds.coarsen(time=12).construct(time=("bar",))
--
--
--def test_coarsen_construct_keeps_all_coords():
--    da = xr.DataArray(np.arange(24), dims=["time"])
--    da = da.assign_coords(day=365 * da)
--
--    result = da.coarsen(time=12).construct(time=("year", "month"))
--    assert list(da.coords) == list(result.coords)
--
--    ds = da.to_dataset(name="T")
--    result = ds.coarsen(time=12).construct(time=("year", "month"))
--    assert list(da.coords) == list(result.coords)
 +        expected["vartx"] = (
 +            ("x", "x_reshaped", "year", "month"),
 +            ds.vartx.data.reshape(2, 5, 4, 12),
@@ -256,79 +186,3 @@ index c59e752c061..542f6815597 100644
 +        ds = da.to_dataset(name="T")
 +        result = ds.coarsen(time=12).construct(time=("year", "month"))
 +        assert list(da.coords) == list(result.coords)
-
-From 8b65ee2a678bd061b972ee121448a930431fab45 Mon Sep 17 00:00:00 2001
-From: Deepak Cherian <dcherian@users.noreply.github.com>
-Date: Fri, 28 Oct 2022 10:27:00 -0600
-Subject: [PATCH 5/7] Update xarray/core/rolling.py
-
----
- xarray/core/rolling.py | 4 +---
- 1 file changed, 1 insertion(+), 3 deletions(-)
-
-diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
-index d5b006be832..049b7e1638e 100644
---- a/xarray/core/rolling.py
-+++ b/xarray/core/rolling.py
-@@ -973,9 +973,7 @@ def construct(
-             else:
-                 reshaped[key] = var
- 
--        should_be_coords = (set(window_dim) & set(self.obj.coords)) | set(
--            self.obj.coords
--        )
-+        should_be_coords = set(window_dim) | set(self.obj.coords)
-         result = reshaped.set_coords(should_be_coords)
-         if isinstance(self.obj, DataArray):
-             return self.obj._from_temp_dataset(result)
-
-From ff4e54da664c270a4b3acc25d1089969be8cfd24 Mon Sep 17 00:00:00 2001
-From: Deepak Cherian <dcherian@users.noreply.github.com>
-Date: Fri, 28 Oct 2022 10:31:32 -0600
-Subject: [PATCH 6/7] Update xarray/core/rolling.py
-
----
- xarray/core/rolling.py | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
-
-diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
-index 049b7e1638e..efa8e6924e6 100644
---- a/xarray/core/rolling.py
-+++ b/xarray/core/rolling.py
-@@ -973,7 +973,8 @@ def construct(
-             else:
-                 reshaped[key] = var
- 
--        should_be_coords = set(window_dim) | set(self.obj.coords)
-+        # should handle window_dim being unindexed
-+        should_be_coords = (set(window_dim) & set(self.obj.coords)) | set(self.obj.coords)
-         result = reshaped.set_coords(should_be_coords)
-         if isinstance(self.obj, DataArray):
-             return self.obj._from_temp_dataset(result)
-
-From 873356151fa3eca2efcb656d026b7aa3862a8cc2 Mon Sep 17 00:00:00 2001
-From: "pre-commit-ci[bot]"
- <66853113+pre-commit-ci[bot]@users.noreply.github.com>
-Date: Fri, 28 Oct 2022 16:34:42 +0000
-Subject: [PATCH 7/7] [pre-commit.ci] auto fixes from pre-commit.com hooks
-
-for more information, see https://pre-commit.ci
----
- xarray/core/rolling.py | 4 +++-
- 1 file changed, 3 insertions(+), 1 deletion(-)
-
-diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
-index efa8e6924e6..57a5456b70a 100644
---- a/xarray/core/rolling.py
-+++ b/xarray/core/rolling.py
-@@ -974,7 +974,9 @@ def construct(
-                 reshaped[key] = var
- 
-         # should handle window_dim being unindexed
--        should_be_coords = (set(window_dim) & set(self.obj.coords)) | set(self.obj.coords)
-+        should_be_coords = (set(window_dim) & set(self.obj.coords)) | set(
-+            self.obj.coords
-+        )
-         result = reshaped.set_coords(should_be_coords)
-         if isinstance(self.obj, DataArray):
-             return self.obj._from_temp_dataset(result)

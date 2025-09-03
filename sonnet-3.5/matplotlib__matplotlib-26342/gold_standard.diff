@@ -1,13 +1,3 @@
-From 917fdeb314133703225255765103ea4cc484c336 Mon Sep 17 00:00:00 2001
-From: Ruth Comer <ruth.comer@metoffice.gov.uk>
-Date: Tue, 18 Jul 2023 11:03:51 +0100
-Subject: [PATCH] ENH: Collection.set_paths
-
----
- lib/matplotlib/collections.py        |  7 ++-----
- lib/matplotlib/tests/test_contour.py | 10 +++++++++-
- 2 files changed, 11 insertions(+), 6 deletions(-)
-
 diff --git a/lib/matplotlib/collections.py b/lib/matplotlib/collections.py
 index da8f5bc8ce14..cb25ee022bfb 100644
 --- a/lib/matplotlib/collections.py

@@ -1,24 +1,13 @@
-From 2e219366c433deb56fd3311a9245cdbabac05ca6 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 12 Apr 2020 12:29:54 +0900
-Subject: [PATCH 1/2] Fix #7461: py domain: fails with IndexError for empty
- tuple in type annotation
-
----
- CHANGES                  |  2 ++
- sphinx/domains/python.py | 15 ++++++++++-----
- tests/test_domain_py.py  |  7 +++++++
- 3 files changed, 19 insertions(+), 5 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
-index 84d3c266944..31bc95082b7 100644
+index 84d3c266944..7a813f802d9 100644
 --- a/CHANGES
 +++ b/CHANGES
-@@ -16,6 +16,8 @@ Features added
+@@ -16,6 +16,9 @@ Features added
  Bugs fixed
  ----------
  
 +* #7461: py domain: fails with IndexError for empty tuple in type annotation
++* #7461: autodoc: empty tuple in type annotation is not shown correctly
 +
  Testing
  --------
@@ -49,6 +38,22 @@ index 07a66fe22a7..19da49ac644 100644
              return result
          else:
              raise SyntaxError  # unsupported syntax
+diff --git a/sphinx/pycode/ast.py b/sphinx/pycode/ast.py
+index 4d8aa8955ac..fb2a7152ddc 100644
+--- a/sphinx/pycode/ast.py
++++ b/sphinx/pycode/ast.py
+@@ -114,7 +114,10 @@ def unparse(node: ast.AST) -> str:
+     elif isinstance(node, ast.UnaryOp):
+         return "%s %s" % (unparse(node.op), unparse(node.operand))
+     elif isinstance(node, ast.Tuple):
+-        return ", ".join(unparse(e) for e in node.elts)
++        if node.elts:
++            return ", ".join(unparse(e) for e in node.elts)
++        else:
++            return "()"
+     elif sys.version_info > (3, 6) and isinstance(node, ast.Constant):
+         # this branch should be placed at last
+         return repr(node.value)
 diff --git a/tests/test_domain_py.py b/tests/test_domain_py.py
 index cc3d3cf5364..e330ba6349c 100644
 --- a/tests/test_domain_py.py
@@ -67,47 +72,6 @@ index cc3d3cf5364..e330ba6349c 100644
      doctree = _parse_annotation("Callable[[int, int], int]")
      assert_node(doctree, ([pending_xref, "Callable"],
                            [desc_sig_punctuation, "["],
-
-From c8355234ebc63258004ad06da6bcf9dd7b98fac3 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 12 Apr 2020 13:00:04 +0900
-Subject: [PATCH 2/2] Fix #7461: autodoc: empty tuple in type annotation is not
- shown correctly
-
----
- CHANGES                  | 1 +
- sphinx/pycode/ast.py     | 5 ++++-
- tests/test_pycode_ast.py | 1 +
- 3 files changed, 6 insertions(+), 1 deletion(-)
-
-diff --git a/CHANGES b/CHANGES
-index 31bc95082b7..7a813f802d9 100644
---- a/CHANGES
-+++ b/CHANGES
-@@ -17,6 +17,7 @@ Bugs fixed
- ----------
- 
- * #7461: py domain: fails with IndexError for empty tuple in type annotation
-+* #7461: autodoc: empty tuple in type annotation is not shown correctly
- 
- Testing
- --------
-diff --git a/sphinx/pycode/ast.py b/sphinx/pycode/ast.py
-index 4d8aa8955ac..fb2a7152ddc 100644
---- a/sphinx/pycode/ast.py
-+++ b/sphinx/pycode/ast.py
-@@ -114,7 +114,10 @@ def unparse(node: ast.AST) -> str:
-     elif isinstance(node, ast.UnaryOp):
-         return "%s %s" % (unparse(node.op), unparse(node.operand))
-     elif isinstance(node, ast.Tuple):
--        return ", ".join(unparse(e) for e in node.elts)
-+        if node.elts:
-+            return ", ".join(unparse(e) for e in node.elts)
-+        else:
-+            return "()"
-     elif sys.version_info > (3, 6) and isinstance(node, ast.Constant):
-         # this branch should be placed at last
-         return repr(node.value)
 diff --git a/tests/test_pycode_ast.py b/tests/test_pycode_ast.py
 index 117feb8f752..9b12d24d5f6 100644
 --- a/tests/test_pycode_ast.py

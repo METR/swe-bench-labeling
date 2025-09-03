@@ -1,14 +1,3 @@
-From aa94f7c899b98f547fc1d26797ba892c38eaf415 Mon Sep 17 00:00:00 2001
-From: RobertAKARobin <robertgfthomas@gmail.com>
-Date: Fri, 31 May 2019 12:05:37 -0500
-Subject: [PATCH] Fixed #30534 -- Fixed overriding a field's default in
- ModelForm.cleaned_data().
-
----
- django/forms/models.py     |  7 +++++--
- tests/model_forms/tests.py | 26 ++++++++++++++++++++++++++
- 2 files changed, 31 insertions(+), 2 deletions(-)
-
 diff --git a/django/forms/models.py b/django/forms/models.py
 index 5edbbd376f34..3ad8cea9b619 100644
 --- a/django/forms/models.py

@@ -1,13 +1,3 @@
-From 3ac0eae356b104cdc312d60f3a8c92a16d14ba74 Mon Sep 17 00:00:00 2001
-From: Abhishek Patidar <1e9abhi1e10@gmail.com>
-Date: Mon, 6 Feb 2023 00:43:38 +0530
-Subject: [PATCH] Fixes the evaluate=False for relational
-
----
- sympy/parsing/sympy_parser.py            | 23 +++++++++++++++++++++++
- sympy/parsing/tests/test_sympy_parser.py | 13 ++++++++++++-
- 2 files changed, 35 insertions(+), 1 deletion(-)
-
 diff --git a/sympy/parsing/sympy_parser.py b/sympy/parsing/sympy_parser.py
 index 52711d132478..130302099da4 100644
 --- a/sympy/parsing/sympy_parser.py

@@ -1,48 +1,21 @@
-From b66d545d2c52bcac4bb0de571ffb0bcb3b3fd182 Mon Sep 17 00:00:00 2001
-From: Matthew Pitkin <matthew.pitkin@ligo.org>
-Date: Thu, 14 Jul 2022 10:58:00 +0100
-Subject: [PATCH 1/4] Make HTML Table writer respect supplied output formatting
-  - Resolves #13451
-
----
- astropy/io/ascii/html.py | 7 +++++++
- 1 file changed, 7 insertions(+)
-
 diff --git a/astropy/io/ascii/html.py b/astropy/io/ascii/html.py
-index 266cf229cc2c..33c8fff417bc 100644
+index 266cf229cc2c..c5a110514588 100644
 --- a/astropy/io/ascii/html.py
 +++ b/astropy/io/ascii/html.py
-@@ -250,6 +250,12 @@ def end_line(self, lines):
-             return None
-         return last_index + 1
+@@ -349,11 +349,13 @@ def write(self, table):
+         cols = list(table.columns.values())
  
-+    def _set_col_formats(self, cols):
-+        """WRITE: set column formats."""
-+        for col in cols:
-+            if col.info.name in self.formats:
-+                col.info.format = self.formats[col.info.name]
-+
+         self.data.header.cols = cols
++        self.data.cols = cols
  
- class HTML(core.BaseReader):
-     """HTML format table.
-@@ -354,6 +360,7 @@ def write(self, table):
+         if isinstance(self.data.fill_values, tuple):
              self.data.fill_values = [self.data.fill_values]
  
          self.data._set_fill_values(cols)
-+        self.data._set_col_formats(cols)
++        self.data._set_col_formats()
  
          lines = []
  
-
-From 87d8b2f5f43a4d3e4eeee4b0f84b00147d17bcfb Mon Sep 17 00:00:00 2001
-From: Matthew Pitkin <matthew.pitkin@ligo.org>
-Date: Thu, 14 Jul 2022 11:38:06 +0100
-Subject: [PATCH 2/4] Add test for HTML Table formatting
-
----
- astropy/io/ascii/tests/test_html.py | 43 +++++++++++++++++++++++++++++
- 1 file changed, 43 insertions(+)
-
 diff --git a/astropy/io/ascii/tests/test_html.py b/astropy/io/ascii/tests/test_html.py
 index 0515efa06dac..dcfd2229bd48 100644
 --- a/astropy/io/ascii/tests/test_html.py
@@ -97,17 +70,6 @@ index 0515efa06dac..dcfd2229bd48 100644
  @pytest.mark.skipif('not HAS_BS4')
  def test_read_html_unicode():
      """
-
-From d5002202ecf1e43787680ded9d4f43146c352e87 Mon Sep 17 00:00:00 2001
-From: Matthew Pitkin <matthew.pitkin@ligo.org>
-Date: Thu, 14 Jul 2022 11:49:08 +0100
-Subject: [PATCH 3/4] Add changelog for #13453
-
----
- docs/changes/io.ascii/13453.bugfix.rst | 3 +++
- 1 file changed, 3 insertions(+)
- create mode 100644 docs/changes/io.ascii/13453.bugfix.rst
-
 diff --git a/docs/changes/io.ascii/13453.bugfix.rst b/docs/changes/io.ascii/13453.bugfix.rst
 new file mode 100644
 index 000000000000..658c4ed07e76
@@ -117,46 +79,3 @@ index 000000000000..658c4ed07e76
 +When writing out a :class:`~astropy.table.Table` to HTML format, the
 +``formats`` keyword argument to the :meth:`~astropy.table.Table.write` method
 +will now be applied.
-
-From 163783bff90213846d1b7f59f78ad49382642c67 Mon Sep 17 00:00:00 2001
-From: Matthew Pitkin <matthew.pitkin@ligo.org>
-Date: Thu, 14 Jul 2022 13:35:00 +0100
-Subject: [PATCH 4/4] Fix so that the preexiting _set_col_formats method can be
- used
-
----
- astropy/io/ascii/html.py | 9 ++-------
- 1 file changed, 2 insertions(+), 7 deletions(-)
-
-diff --git a/astropy/io/ascii/html.py b/astropy/io/ascii/html.py
-index 33c8fff417bc..c5a110514588 100644
---- a/astropy/io/ascii/html.py
-+++ b/astropy/io/ascii/html.py
-@@ -250,12 +250,6 @@ def end_line(self, lines):
-             return None
-         return last_index + 1
- 
--    def _set_col_formats(self, cols):
--        """WRITE: set column formats."""
--        for col in cols:
--            if col.info.name in self.formats:
--                col.info.format = self.formats[col.info.name]
--
- 
- class HTML(core.BaseReader):
-     """HTML format table.
-@@ -355,12 +349,13 @@ def write(self, table):
-         cols = list(table.columns.values())
- 
-         self.data.header.cols = cols
-+        self.data.cols = cols
- 
-         if isinstance(self.data.fill_values, tuple):
-             self.data.fill_values = [self.data.fill_values]
- 
-         self.data._set_fill_values(cols)
--        self.data._set_col_formats(cols)
-+        self.data._set_col_formats()
- 
-         lines = []
- 

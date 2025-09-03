@@ -1,17 +1,3 @@
-From dbd486aca29dc15e14306d34e2ce30c9bd7a79fe Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Mon, 3 Jan 2022 20:55:55 +0100
-Subject: [PATCH] Fixed #33408 -- Fixed adding primary keys/unique fields on
- SQLite.
-
-Regression in 2f73e5406d54cb8945e187eff302a3a3373350be.
-
-Thanks Alan Crosswell for the report.
----
- django/db/backends/sqlite3/schema.py | 13 +++++++++----
- tests/schema/tests.py                | 12 ++++++++++++
- 2 files changed, 21 insertions(+), 4 deletions(-)
-
 diff --git a/django/db/backends/sqlite3/schema.py b/django/db/backends/sqlite3/schema.py
 index 6752a8e3c0b5..3ff0a3f7dbc1 100644
 --- a/django/db/backends/sqlite3/schema.py

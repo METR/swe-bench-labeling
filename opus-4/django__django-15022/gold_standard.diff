@@ -1,20 +1,3 @@
-From 76ccce64cc3d66cfec075651c3d2239fda747dc2 Mon Sep 17 00:00:00 2001
-From: Jacob Walls <jacobtylerwalls@gmail.com>
-Date: Tue, 5 Oct 2021 21:38:15 -0400
-Subject: [PATCH] Fixed #16063 -- Adjusted admin changelist searches spanning
- multi-valued relationships.
-
-This reduces the likelihood of admin searches issuing queries with
-excessive joins.
----
- django/contrib/admin/options.py  |  4 ++-
- docs/ref/contrib/admin/index.txt | 32 ++++++++++++++++++++++++
- docs/releases/4.1.txt            | 20 +++++++++++++++
- docs/topics/db/queries.txt       |  2 ++
- tests/admin_changelist/admin.py  |  6 +++++
- tests/admin_changelist/tests.py  | 42 +++++++++++++++++++++++++++++---
- 6 files changed, 102 insertions(+), 4 deletions(-)
-
 diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
 index 66f3396a6b31..c5968a79ed90 100644
 --- a/django/contrib/admin/options.py

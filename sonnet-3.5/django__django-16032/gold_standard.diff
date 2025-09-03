@@ -1,16 +1,3 @@
-From 32797e7fbfb28c4cd2210aae37157267d237364f Mon Sep 17 00:00:00 2001
-From: DevilsAutumn <bhuvnesh875@gmail.com>
-Date: Tue, 6 Sep 2022 15:22:41 +0530
-Subject: [PATCH] Fixed #33975 -- Fixed __in lookup when rhs is a queryset with
- annotate() and alias().
-
-This fixes clearing selected fields.
----
- django/db/models/fields/related_lookups.py |  3 +--
- django/db/models/sql/query.py              |  8 ++-----
- tests/annotations/tests.py                 | 28 ++++++++++++++++++++++
- 3 files changed, 31 insertions(+), 8 deletions(-)
-
 diff --git a/django/db/models/fields/related_lookups.py b/django/db/models/fields/related_lookups.py
 index 1a845a1f7f1f..afea09b5a9ac 100644
 --- a/django/db/models/fields/related_lookups.py

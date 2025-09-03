@@ -1,15 +1,3 @@
-From e99a1e4b83f7e076b54942e5f8fde2364f2cd2e4 Mon Sep 17 00:00:00 2001
-From: Michael Waskom <mwaskom@gmail.com>
-Date: Sun, 9 Oct 2022 19:30:36 -0400
-Subject: [PATCH] Tweak nominal scale axes akin to categorical axes in classic
- seaborn
-
----
- doc/whatsnew/v0.12.1.rst |  8 +++++---
- seaborn/_core/plot.py    | 15 +++++++++++++--
- tests/_core/test_plot.py | 22 ++++++++++++++++++++++
- 3 files changed, 40 insertions(+), 5 deletions(-)
-
 diff --git a/doc/whatsnew/v0.12.1.rst b/doc/whatsnew/v0.12.1.rst
 index 6ba57d5b49..8c14a2f3bc 100644
 --- a/doc/whatsnew/v0.12.1.rst

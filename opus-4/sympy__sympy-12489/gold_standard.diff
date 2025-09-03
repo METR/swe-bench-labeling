@@ -1,23 +1,3 @@
-From ed73500adfd231d958d40b5218d515f588b60523 Mon Sep 17 00:00:00 2001
-From: Fabian Ball <fabian.ball@kit.edu>
-Date: Tue, 4 Apr 2017 09:31:05 +0200
-Subject: [PATCH 1/2] combinatorics.Permutation: Proper classmethods to allow
- inheritance
-
-The Permutation class lacked of a proper use of Python classmethods.
-This made it nearly impossible to create subclasses as several
-methods (including the constructor) explicitly returned new Permutation
-instances (instead instances of the actual subclass).
-Furthermore, tests are extended to check proper subclassing.
-
-Beware: The Permutation._af_new classmethod (staticmethod previously) is
-still used in some other modules to create Permutation instances.
-This probably should also be changed!
----
- sympy/combinatorics/permutations.py           | 84 +++++++++----------
- .../combinatorics/tests/test_permutations.py  | 43 ++++++++++
- 2 files changed, 85 insertions(+), 42 deletions(-)
-
 diff --git a/sympy/combinatorics/permutations.py b/sympy/combinatorics/permutations.py
 index 136ed5a47822..1ad2f1b2d71c 100644
 --- a/sympy/combinatorics/permutations.py
@@ -313,10 +293,10 @@ index 136ed5a47822..1ad2f1b2d71c 100644
      # global flag to control how permutations are printed
      # when True, Permutation([0, 2, 1, 3]) -> Cycle(1, 2)
 diff --git a/sympy/combinatorics/tests/test_permutations.py b/sympy/combinatorics/tests/test_permutations.py
-index 7f8cd572e749..36c49e187c1a 100644
+index 7f8cd572e749..073a047e2ef2 100644
 --- a/sympy/combinatorics/tests/test_permutations.py
 +++ b/sympy/combinatorics/tests/test_permutations.py
-@@ -217,6 +217,49 @@ def test_Permutation():
+@@ -217,6 +217,52 @@ def test_Permutation():
      assert b.cycle_structure == {2: 1, 3: 1, 1: 2}
  
  
@@ -340,6 +320,9 @@ index 7f8cd572e749..36c49e187c1a 100644
 +                return self._hashable_content() == other._hashable_content()
 +            else:
 +                return super(CustomPermutation, self).__eq__(other)
++
++        def __hash__(self):
++            return super(CustomPermutation, self).__hash__()
 +
 +    p = CustomPermutation([1, 2, 3, 0])
 +    q = Permutation([1, 2, 3, 0])
@@ -366,30 +349,3 @@ index 7f8cd572e749..36c49e187c1a 100644
  def test_josephus():
      assert Permutation.josephus(4, 6, 1) == Permutation([3, 1, 0, 2, 5, 4])
      assert Permutation.josephus(1, 5, 1).is_Identity
-
-From 49284182d90e45e728201c0129a7940097e977a1 Mon Sep 17 00:00:00 2001
-From: Fabian Ball <fabian.ball@kit.edu>
-Date: Tue, 4 Apr 2017 13:09:44 +0200
-Subject: [PATCH 2/2] sympy.Permutation: fixed test to be Python3 compatible
-
-The test which involves a CustomPermutation class as
-subclass of Pmerutation failed due to Python3 incompability
-(__eq__ was overridden but not __hash__).
----
- sympy/combinatorics/tests/test_permutations.py | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/sympy/combinatorics/tests/test_permutations.py b/sympy/combinatorics/tests/test_permutations.py
-index 36c49e187c1a..073a047e2ef2 100644
---- a/sympy/combinatorics/tests/test_permutations.py
-+++ b/sympy/combinatorics/tests/test_permutations.py
-@@ -238,6 +238,9 @@ def __eq__(self, other):
-             else:
-                 return super(CustomPermutation, self).__eq__(other)
- 
-+        def __hash__(self):
-+            return super(CustomPermutation, self).__hash__()
-+
-     p = CustomPermutation([1, 2, 3, 0])
-     q = Permutation([1, 2, 3, 0])
- 

@@ -1,18 +1,3 @@
-From 71902e0d9f93670c4f93ff9d66095b0e571be74b Mon Sep 17 00:00:00 2001
-From: Simon Charette <charette.s@gmail.com>
-Date: Fri, 19 Aug 2022 14:03:15 -0400
-Subject: [PATCH] Fixed #33938 -- Fixed migration crash for m2m with a through
- model in another app.
-
-Regression in aa4acc164d1247c0de515c959f7b09648b57dc42.
-
-Thanks bryangeplant for the report.
----
- django/db/migrations/autodetector.py  |  2 +-
- docs/releases/4.1.1.txt               |  3 ++
- tests/migrations/test_autodetector.py | 46 +++++++++++++++++++++++++++
- 3 files changed, 50 insertions(+), 1 deletion(-)
-
 diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
 index ad3243763072..eae09eb65a36 100644
 --- a/django/db/migrations/autodetector.py

@@ -1,15 +1,3 @@
-From 5362e08624c6745181944a10979da876934ea136 Mon Sep 17 00:00:00 2001
-From: Hasan Ramezani <hasan.r67@gmail.com>
-Date: Thu, 10 Sep 2020 14:34:04 +0200
-Subject: [PATCH] Fixed #31943 -- Fixed recreating
- QuerySet.values()/values_list() when using a pickled Query.
-
----
- django/db/models/query.py      |  2 ++
- docs/ref/models/querysets.txt  | 14 ++++++++++++++
- tests/queryset_pickle/tests.py | 24 +++++++++++++++++++++++-
- 3 files changed, 39 insertions(+), 1 deletion(-)
-
 diff --git a/django/db/models/query.py b/django/db/models/query.py
 index b48d0df9c000..85cd8311a7d2 100644
 --- a/django/db/models/query.py

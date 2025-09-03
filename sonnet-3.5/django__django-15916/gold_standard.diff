@@ -1,16 +1,3 @@
-From e03cdf76e78ea992763df4d3e16217d298929301 Mon Sep 17 00:00:00 2001
-From: Kamil Turek <kamil.turek@hotmail.com>
-Date: Thu, 4 Aug 2022 20:39:12 +0200
-Subject: [PATCH] Fixed #31721 -- Allowed ModelForm meta to specify form
- fields.
-
----
- django/forms/models.py           | 13 +++---------
- docs/releases/4.2.txt            |  6 +++++-
- docs/topics/forms/modelforms.txt | 22 ++++++++++++++++++--
- tests/model_forms/tests.py       | 35 ++++++++++++++++++++++++++++++++
- 4 files changed, 63 insertions(+), 13 deletions(-)
-
 diff --git a/django/forms/models.py b/django/forms/models.py
 index 192d9fad9405..89cb000271ca 100644
 --- a/django/forms/models.py

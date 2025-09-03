@@ -1,13 +1,3 @@
-From d058e70bc3d818b03cb15485baa864c9e1a7bcf8 Mon Sep 17 00:00:00 2001
-From: phausamann <peter.hausamann@tum.de>
-Date: Wed, 14 Nov 2018 14:05:20 +0100
-Subject: [PATCH 1/2] Fix clone failing for estimator types Fixes #12521
-
----
- sklearn/base.py            | 2 +-
- sklearn/tests/test_base.py | 8 ++++++++
- 2 files changed, 9 insertions(+), 1 deletion(-)
-
 diff --git a/sklearn/base.py b/sklearn/base.py
 index 56ffb18bf8b69..34998270cea88 100644
 --- a/sklearn/base.py
@@ -22,15 +12,16 @@ index 56ffb18bf8b69..34998270cea88 100644
              return copy.deepcopy(estimator)
          else:
 diff --git a/sklearn/tests/test_base.py b/sklearn/tests/test_base.py
-index ebcb389255cd3..435f912acd764 100644
+index ebcb389255cd3..5fc20ca85f5b7 100644
 --- a/sklearn/tests/test_base.py
 +++ b/sklearn/tests/test_base.py
-@@ -167,6 +167,14 @@ def test_clone_sparse_matrices():
+@@ -167,6 +167,15 @@ def test_clone_sparse_matrices():
          assert_array_equal(clf.empty.toarray(), clf_cloned.empty.toarray())
  
  
 +def test_clone_estimator_types():
-+    # Check that clone works for parameters that are types rather than instances
++    # Check that clone works for parameters that are types rather than
++    # instances
 +    clf = MyEstimator(empty=MyEstimator)
 +    clf2 = clone(clf)
 +
@@ -40,27 +31,3 @@ index ebcb389255cd3..435f912acd764 100644
  def test_repr():
      # Smoke test the repr of the base estimator.
      my_estimator = MyEstimator()
-
-From 24865b92cbd1a5c53315a079d5626c57c272735b Mon Sep 17 00:00:00 2001
-From: phausamann <peter.hausamann@tum.de>
-Date: Wed, 14 Nov 2018 15:12:11 +0100
-Subject: [PATCH 2/2] PEP8 compliance
-
----
- sklearn/tests/test_base.py | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
-
-diff --git a/sklearn/tests/test_base.py b/sklearn/tests/test_base.py
-index 435f912acd764..5fc20ca85f5b7 100644
---- a/sklearn/tests/test_base.py
-+++ b/sklearn/tests/test_base.py
-@@ -168,7 +168,8 @@ def test_clone_sparse_matrices():
- 
- 
- def test_clone_estimator_types():
--    # Check that clone works for parameters that are types rather than instances
-+    # Check that clone works for parameters that are types rather than
-+    # instances
-     clf = MyEstimator(empty=MyEstimator)
-     clf2 = clone(clf)
- 

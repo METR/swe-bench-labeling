@@ -1,15 +1,3 @@
-From 533b208775620b8303b00583aaf011b4e81e6535 Mon Sep 17 00:00:00 2001
-From: David Wobrock <david.wobrock@gmail.com>
-Date: Sun, 12 Apr 2020 23:59:34 +0200
-Subject: [PATCH] Fixed #29224 -- Fixed removing index_together indexes if
- exists unique_together constraint on the same fields.
-
----
- django/db/backends/base/schema.py   |  7 ++++++-
- tests/migrations/test_base.py       | 14 +++++++++++++-
- tests/migrations/test_operations.py | 23 +++++++++++++++++++++++
- 3 files changed, 42 insertions(+), 2 deletions(-)
-
 diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
 index 61f88401abff..2e2d7bbb6039 100644
 --- a/django/db/backends/base/schema.py

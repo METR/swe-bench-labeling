@@ -1,64 +1,3 @@
-From 1e7adefd0641e65a10b15dedf45f5cf7189ca46f Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Dani=C3=ABl=20van=20Noord?=
- <13665637+DanielNoord@users.noreply.github.com>
-Date: Tue, 19 Apr 2022 08:33:58 +0200
-Subject: [PATCH 1/2] Fix short -v flag
-
----
- pylint/config/utils.py      | 3 ++-
- tests/config/test_config.py | 7 +++++++
- 2 files changed, 9 insertions(+), 1 deletion(-)
-
-diff --git a/pylint/config/utils.py b/pylint/config/utils.py
-index 8c790416f0..c0b862b44e 100644
---- a/pylint/config/utils.py
-+++ b/pylint/config/utils.py
-@@ -207,6 +207,7 @@ def _enable_all_extensions(run: Run, value: str | None) -> None:
-     "--output": (True, _set_output),
-     "--load-plugins": (True, _add_plugins),
-     "--verbose": (False, _set_verbose_mode),
-+    "-v": (False, _set_verbose_mode),
-     "--enable-all-extensions": (False, _enable_all_extensions),
- }
- 
-@@ -218,7 +219,7 @@ def _preprocess_options(run: Run, args: Sequence[str]) -> list[str]:
-     i = 0
-     while i < len(args):
-         argument = args[i]
--        if not argument.startswith("--"):
-+        if not argument.startswith("-"):
-             processed_args.append(argument)
-             i += 1
-             continue
-diff --git a/tests/config/test_config.py b/tests/config/test_config.py
-index f91e6cbf41..712d291eda 100644
---- a/tests/config/test_config.py
-+++ b/tests/config/test_config.py
-@@ -100,3 +100,10 @@ def test_unknown_py_version(capsys: CaptureFixture) -> None:
-         Run([str(EMPTY_MODULE), "--py-version=the-newest"], exit=False)
-     output = capsys.readouterr()
-     assert "the-newest has an invalid format, should be a version string." in output.err
-+
-+
-+def test_short_verbose(capsys: CaptureFixture) -> None:
-+    """Check that we correctly handle the -v flag."""
-+    Run([str(EMPTY_MODULE), "-v"], exit=False)
-+    output = capsys.readouterr()
-+    assert "Using config file" in output.err
-
-From 2b56a7812c00288572737d52ee4c525fcfb054aa Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Dani=C3=ABl=20van=20Noord?=
- <13665637+DanielNoord@users.noreply.github.com>
-Date: Tue, 19 Apr 2022 10:31:04 +0200
-Subject: [PATCH 2/2] Do not show VERBOSE
-
----
- pylint/config/argument.py          | 8 ++++++++
- pylint/config/arguments_manager.py | 1 +
- pylint/config/utils.py             | 1 +
- pylint/lint/base_options.py        | 2 ++
- 4 files changed, 12 insertions(+)
-
 diff --git a/pylint/config/argument.py b/pylint/config/argument.py
 index 0bb732b55c..eb3ab4e19d 100644
 --- a/pylint/config/argument.py
@@ -95,7 +34,7 @@ index ea87de826f..1ba9a31e3a 100644
          elif isinstance(argument, _ExtendArgument):
              section_group.add_argument(
 diff --git a/pylint/config/utils.py b/pylint/config/utils.py
-index c0b862b44e..82845a93c3 100644
+index 8c790416f0..82845a93c3 100644
 --- a/pylint/config/utils.py
 +++ b/pylint/config/utils.py
 @@ -71,6 +71,7 @@ def _convert_option_to_argument(
@@ -106,6 +45,23 @@ index c0b862b44e..82845a93c3 100644
          )
      try:
          default = optdict["default"]
+@@ -207,6 +208,7 @@ def _enable_all_extensions(run: Run, value: str | None) -> None:
+     "--output": (True, _set_output),
+     "--load-plugins": (True, _add_plugins),
+     "--verbose": (False, _set_verbose_mode),
++    "-v": (False, _set_verbose_mode),
+     "--enable-all-extensions": (False, _enable_all_extensions),
+ }
+ 
+@@ -218,7 +220,7 @@ def _preprocess_options(run: Run, args: Sequence[str]) -> list[str]:
+     i = 0
+     while i < len(args):
+         argument = args[i]
+-        if not argument.startswith("--"):
++        if not argument.startswith("-"):
+             processed_args.append(argument)
+             i += 1
+             continue
 diff --git a/pylint/lint/base_options.py b/pylint/lint/base_options.py
 index c793cc85a1..a06214d044 100644
 --- a/pylint/lint/base_options.py
@@ -126,3 +82,18 @@ index c793cc85a1..a06214d044 100644
              },
          ),
          (
+diff --git a/tests/config/test_config.py b/tests/config/test_config.py
+index f91e6cbf41..712d291eda 100644
+--- a/tests/config/test_config.py
++++ b/tests/config/test_config.py
+@@ -100,3 +100,10 @@ def test_unknown_py_version(capsys: CaptureFixture) -> None:
+         Run([str(EMPTY_MODULE), "--py-version=the-newest"], exit=False)
+     output = capsys.readouterr()
+     assert "the-newest has an invalid format, should be a version string." in output.err
++
++
++def test_short_verbose(capsys: CaptureFixture) -> None:
++    """Check that we correctly handle the -v flag."""
++    Run([str(EMPTY_MODULE), "-v"], exit=False)
++    output = capsys.readouterr()
++    assert "Using config file" in output.err

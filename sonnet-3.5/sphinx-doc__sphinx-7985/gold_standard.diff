@@ -1,15 +1,3 @@
-From f95ba21f4a4dd1cade2f554b1d3afa7b322be1e4 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sun, 9 Feb 2020 20:22:22 +0900
-Subject: [PATCH] Close #5208: linkcheck: Support checks for local links
-
----
- CHANGES                              |  1 +
- sphinx/builders/linkcheck.py         | 17 +++++++++++++++--
- tests/roots/test-linkcheck/links.txt |  2 ++
- tests/test_build_linkcheck.py        | 13 ++++++++-----
- 4 files changed, 26 insertions(+), 7 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
 index bc932a7d48c..7af591708c3 100644
 --- a/CHANGES

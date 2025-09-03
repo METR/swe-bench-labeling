@@ -1,13 +1,3 @@
-From 36d54b7a142689e0f882338159bca879d8b6d783 Mon Sep 17 00:00:00 2001
-From: Chenyang Yan <memory.yancy@gmail.com>
-Date: Sun, 15 Aug 2021 10:48:23 +0800
-Subject: [PATCH] Fixed #33027 -- Made autoreloader pass -X options.
-
----
- django/utils/autoreload.py           |  5 +++++
- tests/utils_tests/test_autoreload.py | 16 ++++++++++++++++
- 2 files changed, 21 insertions(+)
-
 diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
 index cc65c043ab30..583c2be647ba 100644
 --- a/django/utils/autoreload.py

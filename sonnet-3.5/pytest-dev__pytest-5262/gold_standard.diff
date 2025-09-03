@@ -1,15 +1,3 @@
-From 4318698baeab38a413d8c3684248f95a2fed3979 Mon Sep 17 00:00:00 2001
-From: Anthony Sottile <asottile@umich.edu>
-Date: Tue, 14 May 2019 14:54:03 -0700
-Subject: [PATCH] Remove 'b' from sys.stdout.mode
-
----
- changelog/5257.bugfix.rst | 1 +
- src/_pytest/capture.py    | 4 ++++
- testing/test_capture.py   | 3 +++
- 3 files changed, 8 insertions(+)
- create mode 100644 changelog/5257.bugfix.rst
-
 diff --git a/changelog/5257.bugfix.rst b/changelog/5257.bugfix.rst
 new file mode 100644
 index 00000000000..5205190882d

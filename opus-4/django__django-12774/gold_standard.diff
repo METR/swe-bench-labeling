@@ -1,17 +1,3 @@
-From 447980e72ac01da1594dd3373a03ba40b7ee6f80 Mon Sep 17 00:00:00 2001
-From: Hannes Ljungberg <hannes@5monkeys.se>
-Date: Wed, 22 Apr 2020 11:36:03 +0200
-Subject: [PATCH] Fixed #31500 -- Fixed detecting of unique fields in
- QuerySet.in_bulk() when using Meta.constraints.
-
-Detection of unique fields now takes into account non-partial unique
-constraints.
----
- django/db/models/query.py | 12 +++++++++++-
- tests/lookup/models.py    |  5 +++++
- tests/lookup/tests.py     | 41 ++++++++++++++++++++++++++++++++++++++-
- 3 files changed, 56 insertions(+), 2 deletions(-)
-
 diff --git a/django/db/models/query.py b/django/db/models/query.py
 index d9c9b0db043a..c1aa35270127 100644
 --- a/django/db/models/query.py

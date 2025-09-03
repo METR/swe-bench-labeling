@@ -1,65 +1,3 @@
-From 71a936f9d84864a1420ce3ecc3de4a4908dff1e8 Mon Sep 17 00:00:00 2001
-From: Chris Jerdonek <chris.jerdonek@gmail.com>
-Date: Mon, 12 Apr 2021 08:41:39 +0200
-Subject: [PATCH 1/2] Refs #32416 -- Added
- LiveServerTestCase._make_connections_override() hook.
-
----
- django/test/testcases.py | 15 +++++++++++----
- 1 file changed, 11 insertions(+), 4 deletions(-)
-
-diff --git a/django/test/testcases.py b/django/test/testcases.py
-index 92f566b7b0a9..6ae27243b1fb 100644
---- a/django/test/testcases.py
-+++ b/django/test/testcases.py
-@@ -1553,21 +1553,28 @@ def allowed_host(cls):
-         return cls.host
- 
-     @classmethod
--    def setUpClass(cls):
--        super().setUpClass()
-+    def _make_connections_override(cls):
-         connections_override = {}
-         for conn in connections.all():
-             # If using in-memory sqlite databases, pass the connections to
-             # the server thread.
-             if conn.vendor == 'sqlite' and conn.is_in_memory_db():
--                # Explicitly enable thread-shareability for this connection
--                conn.inc_thread_sharing()
-                 connections_override[conn.alias] = conn
-+        return connections_override
- 
-+    @classmethod
-+    def setUpClass(cls):
-+        super().setUpClass()
-         cls._live_server_modified_settings = modify_settings(
-             ALLOWED_HOSTS={'append': cls.allowed_host},
-         )
-         cls._live_server_modified_settings.enable()
-+
-+        connections_override = cls._make_connections_override()
-+        for conn in connections_override.values():
-+            # Explicitly enable thread-shareability for this connection.
-+            conn.inc_thread_sharing()
-+
-         cls.server_thread = cls._create_server_thread(connections_override)
-         cls.server_thread.daemon = True
-         cls.server_thread.start()
-
-From 823a9e6bac38d38f7b0347497b833eec732bd384 Mon Sep 17 00:00:00 2001
-From: Chris Jerdonek <chris.jerdonek@gmail.com>
-Date: Sun, 14 Feb 2021 22:10:59 -0800
-Subject: [PATCH 2/2] Fixed #32416 -- Made ThreadedWSGIServer close connections
- after each thread.
-
-ThreadedWSGIServer is used by LiveServerTestCase.
----
- django/core/servers/basehttp.py        | 23 +++++++++
- django/db/backends/sqlite3/features.py |  1 +
- django/test/testcases.py               |  5 +-
- tests/servers/tests.py                 | 69 +++++++++++++++++++++++++-
- 4 files changed, 95 insertions(+), 3 deletions(-)
-
 diff --git a/django/core/servers/basehttp.py b/django/core/servers/basehttp.py
 index 14dab517c99b..6cc8a46778bf 100644
 --- a/django/core/servers/basehttp.py
@@ -114,7 +52,7 @@ index 6a7aa09fc9e9..ff3e3f47a9fa 100644
              })
          return skips
 diff --git a/django/test/testcases.py b/django/test/testcases.py
-index 6ae27243b1fb..53508cdb8abd 100644
+index 92f566b7b0a9..53508cdb8abd 100644
 --- a/django/test/testcases.py
 +++ b/django/test/testcases.py
 @@ -1513,11 +1513,12 @@ def run(self):
@@ -131,7 +69,40 @@ index 6ae27243b1fb..53508cdb8abd 100644
          )
  
      def terminate(self):
-@@ -1600,7 +1601,7 @@ def _create_server_thread(cls, connections_override):
+@@ -1553,21 +1554,28 @@ def allowed_host(cls):
+         return cls.host
+ 
+     @classmethod
+-    def setUpClass(cls):
+-        super().setUpClass()
++    def _make_connections_override(cls):
+         connections_override = {}
+         for conn in connections.all():
+             # If using in-memory sqlite databases, pass the connections to
+             # the server thread.
+             if conn.vendor == 'sqlite' and conn.is_in_memory_db():
+-                # Explicitly enable thread-shareability for this connection
+-                conn.inc_thread_sharing()
+                 connections_override[conn.alias] = conn
++        return connections_override
+ 
++    @classmethod
++    def setUpClass(cls):
++        super().setUpClass()
+         cls._live_server_modified_settings = modify_settings(
+             ALLOWED_HOSTS={'append': cls.allowed_host},
+         )
+         cls._live_server_modified_settings.enable()
++
++        connections_override = cls._make_connections_override()
++        for conn in connections_override.values():
++            # Explicitly enable thread-shareability for this connection.
++            conn.inc_thread_sharing()
++
+         cls.server_thread = cls._create_server_thread(connections_override)
+         cls.server_thread.daemon = True
+         cls.server_thread.start()
+@@ -1593,7 +1601,7 @@ def _create_server_thread(cls, connections_override):
      def _tearDownClassInternal(cls):
          # Terminate the live server's thread.
          cls.server_thread.terminate()

@@ -1,19 +1,3 @@
-From 3843b9670767658f5cde2609b85ff2fe91cbd27e Mon Sep 17 00:00:00 2001
-From: Aaron Meurer <asmeurer@gmail.com>
-Date: Sat, 26 Sep 2020 16:44:03 -0600
-Subject: [PATCH] Don't reuse the same dictionary in the yielded output of
- partitions()
-
-This was done for apparent performance reasons, but it isn't a big performance
-hit to copy the dictionary before yielding. Not copying is very
-counterintuitive, and can lead to bugs from consumers of the function.
-
-Fixes #20152.
----
- sympy/utilities/iterables.py            | 23 ++++-------------------
- sympy/utilities/tests/test_iterables.py | 16 ++++++++--------
- 2 files changed, 12 insertions(+), 27 deletions(-)
-
 diff --git a/sympy/utilities/iterables.py b/sympy/utilities/iterables.py
 index dd36dea304b5..1094ac977f15 100644
 --- a/sympy/utilities/iterables.py

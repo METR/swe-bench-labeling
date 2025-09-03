@@ -1,16 +1,3 @@
-From f1f24539d8c86f60d1e2951a19eb3178e15d6399 Mon Sep 17 00:00:00 2001
-From: Thomas Riccardi <thomas@deepomatic.com>
-Date: Thu, 8 Oct 2020 20:41:22 +0200
-Subject: [PATCH] Fixed #32094 -- Fixed flush() calls on management command
- self.stdout/err proxies.
-
----
- django/core/management/base.py                           | 4 ++++
- tests/user_commands/management/commands/outputwrapper.py | 8 ++++++++
- tests/user_commands/tests.py                             | 7 +++++++
- 3 files changed, 19 insertions(+)
- create mode 100644 tests/user_commands/management/commands/outputwrapper.py
-
 diff --git a/django/core/management/base.py b/django/core/management/base.py
 index e6cbf8c64fcb..463e4e8665ee 100644
 --- a/django/core/management/base.py

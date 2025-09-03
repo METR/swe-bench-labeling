@@ -1,16 +1,3 @@
-From 3ee0834a4652fb9eb8b69e09c3541901739021de Mon Sep 17 00:00:00 2001
-From: Aymeric Augustin <aymeric.augustin@m4x.org>
-Date: Sat, 8 Jun 2019 21:03:26 +0200
-Subject: [PATCH] Fixed #30556 -- Avoided useless query and hasher call in
- ModelBackend.authenticate() when credentials aren't provided.
-
-There's no need to fetch a user instance from the database unless
-a username and a password are provided as credentials.
----
- django/contrib/auth/backends.py        |  2 ++
- tests/auth_tests/test_auth_backends.py | 13 +++++++++++++
- 2 files changed, 15 insertions(+)
-
 diff --git a/django/contrib/auth/backends.py b/django/contrib/auth/backends.py
 index f4b1722757dc..a3765ae0f100 100644
 --- a/django/contrib/auth/backends.py

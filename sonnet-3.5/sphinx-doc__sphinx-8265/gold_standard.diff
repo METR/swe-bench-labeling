@@ -1,24 +1,11 @@
-From 785f4d695cfca0eeb537c92166808bc9f187d8c0 Mon Sep 17 00:00:00 2001
-From: Takeshi KOMIYA <i.tkomiya@gmail.com>
-Date: Sat, 3 Oct 2020 12:00:33 +0900
-Subject: [PATCH] Fix #7964: autodoc: Tuple in default value is wrongly
- rendered
-
-This implements tuple literal support to sphinx.pycode.ast.unparse().
----
- CHANGES                  |  1 +
- sphinx/pycode/ast.py     | 18 ++++++++++++++++--
- tests/test_pycode_ast.py |  2 +-
- 3 files changed, 18 insertions(+), 3 deletions(-)
-
 diff --git a/CHANGES b/CHANGES
-index 22876d43b1c..bfe8910d16b 100644
+index e30d42e43a8..9ef4dd27327 100644
 --- a/CHANGES
 +++ b/CHANGES
-@@ -34,6 +34,7 @@ Bugs fixed
-   by string not ending with blank lines
+@@ -35,6 +35,7 @@ Bugs fixed
  * #8142: autodoc: Wrong constructor signature for the class derived from
    typing.Generic
+ * #8157: autodoc: TypeError is raised when annotation has invalid __args__
 +* #7964: autodoc: Tuple in default value is wrongly rendered
  * #8192: napoleon: description is disappeared when it contains inline literals
  * #8142: napoleon: Potential of regex denial of service in google style docs

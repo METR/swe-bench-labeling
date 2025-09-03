@@ -1,35 +1,21 @@
-From 8c61b2478a313b8c6e26695d19c8c62b670a752a Mon Sep 17 00:00:00 2001
-From: Eisuke Kawashima <e-kwsm@users.noreply.github.com>
-Date: Sat, 3 Jul 2021 08:54:40 +0900
-Subject: [PATCH] Use `XDG_CACHE_HOME` for `PYLINTHOME`
-
-Closes #3878
----
- CONTRIBUTORS.txt            |  2 ++
- ChangeLog                   |  4 ++++
- doc/faq.rst                 |  9 +++++++--
- pylint/config/__init__.py   | 12 +++++++++++-
- setup.cfg                   |  6 +++++-
- tests/lint/unittest_lint.py |  3 ++-
- 6 files changed, 31 insertions(+), 5 deletions(-)
-
 diff --git a/CONTRIBUTORS.txt b/CONTRIBUTORS.txt
-index f1d54dbd5c..a6315f8d93 100644
+index c0865d0c6d..bfd895e16a 100644
 --- a/CONTRIBUTORS.txt
 +++ b/CONTRIBUTORS.txt
-@@ -521,3 +521,5 @@ contributors:
- * Yilei Yang: contributor
+@@ -522,4 +522,6 @@ contributors:
  
  * Marcin Kurczewski (rr-): contributor
-+
+ 
 +* Eisuke Kawashima (e-kwsm): contributor
++
+ * Daniel van Noord (DanielNoord): contributor
 diff --git a/ChangeLog b/ChangeLog
-index 540f6f372a..0fd7cd8051 100644
+index 047ee37095..b584d2384b 100644
 --- a/ChangeLog
 +++ b/ChangeLog
-@@ -9,6 +9,10 @@ Release date: TBA
- ..
-   Put new features here and also in 'doc/whatsnew/2.10.rst'
+@@ -21,6 +21,10 @@ Release date: TBA
+ 
+   Close #4120
  
 +* The default for ``PYLINTHOME`` is now the standard ``XDG_CACHE_HOME``, and pylint now uses ``appdirs``.
 +
@@ -120,7 +106,7 @@ index 62a3fd7a5f..146f9e69bb 100644
  ignore_missing_imports = True
  
 diff --git a/tests/lint/unittest_lint.py b/tests/lint/unittest_lint.py
-index 984e9759dd..5ef502c346 100644
+index 004c29281c..cd4f5667bb 100644
 --- a/tests/lint/unittest_lint.py
 +++ b/tests/lint/unittest_lint.py
 @@ -46,6 +46,7 @@

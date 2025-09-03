@@ -1,13 +1,3 @@
-From 59a130c6ddc4db11d0067efa530862f88f1e5687 Mon Sep 17 00:00:00 2001
-From: Jason Siefken <siefkenj@gmail.com>
-Date: Sun, 23 Jul 2017 10:46:08 -0500
-Subject: [PATCH] Fix matrix stacking for sparse matrices
-
----
- sympy/matrices/sparse.py            | 12 ++++++++----
- sympy/matrices/tests/test_sparse.py |  6 ++++++
- 2 files changed, 14 insertions(+), 4 deletions(-)
-
 diff --git a/sympy/matrices/sparse.py b/sympy/matrices/sparse.py
 index e6f36cdf354d..7701cbc17984 100644
 --- a/sympy/matrices/sparse.py

@@ -1,13 +1,18 @@
-From ed6db5354294b5492423027d60a60b787b6cdc42 Mon Sep 17 00:00:00 2001
-From: Mariusz Felisiak <felisiak.mariusz@gmail.com>
-Date: Fri, 18 Mar 2022 20:56:10 +0100
-Subject: [PATCH 1/2] Fixed isolation of
- FeaturesTests.test_supports_json_field_operational_error().
-
----
- tests/backends/sqlite/test_features.py | 5 +++--
- 1 file changed, 3 insertions(+), 2 deletions(-)
-
+diff --git a/django/core/serializers/base.py b/django/core/serializers/base.py
+index da85cb4b92ff..517d2cad851b 100644
+--- a/django/core/serializers/base.py
++++ b/django/core/serializers/base.py
+@@ -336,7 +336,9 @@ def build_instance(Model, data, db):
+         and hasattr(default_manager, "get_by_natural_key")
+         and hasattr(Model, "natural_key")
+     ):
+-        natural_key = Model(**data).natural_key()
++        obj = Model(**data)
++        obj._state.db = db
++        natural_key = obj.natural_key()
+         try:
+             data[Model._meta.pk.attname] = Model._meta.pk.to_python(
+                 default_manager.db_manager(db).get_by_natural_key(*natural_key).pk
 diff --git a/tests/backends/sqlite/test_features.py b/tests/backends/sqlite/test_features.py
 index 50ccbbd3ccf9..5bc891f5eed9 100644
 --- a/tests/backends/sqlite/test_features.py
@@ -24,36 +29,6 @@ index 50ccbbd3ccf9..5bc891f5eed9 100644
              side_effect=OperationalError(msg),
          ):
              with self.assertRaisesMessage(OperationalError, msg):
-
-From 4b8e4f506079419c7995107fad46416ee5add951 Mon Sep 17 00:00:00 2001
-From: =?UTF-8?q?Fran=C3=A7ois=20Granade?= <fgranade@lmad.eu>
-Date: Fri, 18 Mar 2022 11:17:54 +0100
-Subject: [PATCH 2/2] Fixed #33582 -- Fixed deserializing natural keys with
- foreing key dependencies in a multiple database setup.
-
----
- django/core/serializers/base.py               |  4 +++-
- .../fixtures/nk_with_foreign_key.json         | 15 ++++++++++++++
- tests/fixtures_regress/models.py              | 20 +++++++++++++++++++
- tests/fixtures_regress/tests.py               | 20 +++++++++++++++++++
- 4 files changed, 58 insertions(+), 1 deletion(-)
- create mode 100644 tests/fixtures_regress/fixtures/nk_with_foreign_key.json
-
-diff --git a/django/core/serializers/base.py b/django/core/serializers/base.py
-index da85cb4b92ff..517d2cad851b 100644
---- a/django/core/serializers/base.py
-+++ b/django/core/serializers/base.py
-@@ -336,7 +336,9 @@ def build_instance(Model, data, db):
-         and hasattr(default_manager, "get_by_natural_key")
-         and hasattr(Model, "natural_key")
-     ):
--        natural_key = Model(**data).natural_key()
-+        obj = Model(**data)
-+        obj._state.db = db
-+        natural_key = obj.natural_key()
-         try:
-             data[Model._meta.pk.attname] = Model._meta.pk.to_python(
-                 default_manager.db_manager(db).get_by_natural_key(*natural_key).pk
 diff --git a/tests/fixtures_regress/fixtures/nk_with_foreign_key.json b/tests/fixtures_regress/fixtures/nk_with_foreign_key.json
 new file mode 100644
 index 000000000000..3e24c189dfa5

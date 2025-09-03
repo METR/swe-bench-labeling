@@ -1,30 +1,106 @@
-From 55c3486b2c23fa2ddb7a60822d1ab407b8f47f47 Mon Sep 17 00:00:00 2001
-From: Benoit Bovy <benbovy@gmail.com>
-Date: Mon, 5 Sep 2022 16:38:54 +0200
-Subject: [PATCH 1/6] review reset_index + tests
-
-Restore old behavior, i.e.,
-
-- drop the multi-index dimension name (even if
-  drop=False) unless reset_index still returns a multi-index
-- rename the level coordinate to the dimension name if the multi-index
-  is reduced to a single index
-- drop the whole multi-index if its dimension coordinate is given as
-  argument
-
-Fix IndexVariable -> Variable conversion
----
- xarray/core/dataset.py         | 75 ++++++++++++++++++++++------------
- xarray/core/indexes.py         |  5 ++-
- xarray/tests/test_dataarray.py | 20 +++++----
- xarray/tests/test_dataset.py   | 34 ++++++++++++++-
- 4 files changed, 98 insertions(+), 36 deletions(-)
-
+diff --git a/doc/whats-new.rst b/doc/whats-new.rst
+index 36f523df240..47086a687b8 100644
+--- a/doc/whats-new.rst
++++ b/doc/whats-new.rst
+@@ -65,6 +65,9 @@ Bug fixes
+   By `András Gunyhó <https://github.com/mgunyho>`_.
+ - Avoid use of random numbers in `test_weighted.test_weighted_operations_nonequal_coords` (:issue:`6504`, :pull:`6961`).
+   By `Luke Conibear <https://github.com/lukeconibear>`_.
++- Fix multiple regression issues with :py:meth:`Dataset.set_index` and
++  :py:meth:`Dataset.reset_index` (:pull:`6992`)
++  By `Benoît Bovy <https://github.com/benbovy>`_.
+ - Raise a ``UserWarning`` when renaming a coordinate or a dimension creates a
+   non-indexed dimension coordinate, and suggest the user creating an index
+   either with ``swap_dims`` or ``set_index`` (:issue:`6607`, :pull:`6999`). By
 diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
-index c3717190df6..6b3ff10e560 100644
+index 620f32f8396..c500b537de3 100644
 --- a/xarray/core/dataset.py
 +++ b/xarray/core/dataset.py
-@@ -4107,35 +4107,60 @@ def reset_index(
+@@ -4026,10 +4026,11 @@ def set_index(
+         dim_coords = either_dict_or_kwargs(indexes, indexes_kwargs, "set_index")
+ 
+         new_indexes: dict[Hashable, Index] = {}
+-        new_variables: dict[Hashable, IndexVariable] = {}
+-        maybe_drop_indexes: list[Hashable] = []
+-        drop_variables: list[Hashable] = []
++        new_variables: dict[Hashable, Variable] = {}
++        drop_indexes: set[Hashable] = set()
++        drop_variables: set[Hashable] = set()
+         replace_dims: dict[Hashable, Hashable] = {}
++        all_var_names: set[Hashable] = set()
+ 
+         for dim, _var_names in dim_coords.items():
+             if isinstance(_var_names, str) or not isinstance(_var_names, Sequence):
+@@ -4044,16 +4045,19 @@ def set_index(
+                     + " variable(s) do not exist"
+                 )
+ 
+-            current_coord_names = self.xindexes.get_all_coords(dim, errors="ignore")
++            all_var_names.update(var_names)
++            drop_variables.update(var_names)
+ 
+-            # drop any pre-existing index involved
+-            maybe_drop_indexes += list(current_coord_names) + var_names
++            # drop any pre-existing index involved and its corresponding coordinates
++            index_coord_names = self.xindexes.get_all_coords(dim, errors="ignore")
++            all_index_coord_names = set(index_coord_names)
+             for k in var_names:
+-                maybe_drop_indexes += list(
++                all_index_coord_names.update(
+                     self.xindexes.get_all_coords(k, errors="ignore")
+                 )
+ 
+-            drop_variables += var_names
++            drop_indexes.update(all_index_coord_names)
++            drop_variables.update(all_index_coord_names)
+ 
+             if len(var_names) == 1 and (not append or dim not in self._indexes):
+                 var_name = var_names[0]
+@@ -4065,10 +4069,14 @@ def set_index(
+                     )
+                 idx = PandasIndex.from_variables({dim: var})
+                 idx_vars = idx.create_variables({var_name: var})
++
++                # trick to preserve coordinate order in this case
++                if dim in self._coord_names:
++                    drop_variables.remove(dim)
+             else:
+                 if append:
+                     current_variables = {
+-                        k: self._variables[k] for k in current_coord_names
++                        k: self._variables[k] for k in index_coord_names
+                     }
+                 else:
+                     current_variables = {}
+@@ -4083,8 +4091,17 @@ def set_index(
+             new_indexes.update({k: idx for k in idx_vars})
+             new_variables.update(idx_vars)
+ 
++        # re-add deindexed coordinates (convert to base variables)
++        for k in drop_variables:
++            if (
++                k not in new_variables
++                and k not in all_var_names
++                and k in self._coord_names
++            ):
++                new_variables[k] = self._variables[k].to_base_variable()
++
+         indexes_: dict[Any, Index] = {
+-            k: v for k, v in self._indexes.items() if k not in maybe_drop_indexes
++            k: v for k, v in self._indexes.items() if k not in drop_indexes
+         }
+         indexes_.update(new_indexes)
+ 
+@@ -4099,7 +4116,7 @@ def set_index(
+                 new_dims = [replace_dims.get(d, d) for d in v.dims]
+                 variables[k] = v._replace(dims=new_dims)
+ 
+-        coord_names = self._coord_names - set(drop_variables) | set(new_variables)
++        coord_names = self._coord_names - drop_variables | set(new_variables)
+ 
+         return self._replace_with_new_dims(
+             variables, coord_names=coord_names, indexes=indexes_
+@@ -4139,35 +4156,60 @@ def reset_index(
                  f"{tuple(invalid_coords)} are not coordinates with an index"
              )
  
@@ -109,17 +185,22 @@ index c3717190df6..6b3ff10e560 100644
  
          indexes = {k: v for k, v in self._indexes.items() if k not in drop_indexes}
          indexes.update(new_indexes)
-@@ -4145,7 +4170,7 @@ def reset_index(
+@@ -4177,9 +4219,11 @@ def reset_index(
          }
          variables.update(new_variables)
  
 -        coord_names = set(new_variables) | self._coord_names
 +        coord_names = self._coord_names - drop_variables
  
-         return self._replace(variables, coord_names=coord_names, indexes=indexes)
+-        return self._replace(variables, coord_names=coord_names, indexes=indexes)
++        return self._replace_with_new_dims(
++            variables, coord_names=coord_names, indexes=indexes
++        )
  
+     def reorder_levels(
+         self: T_Dataset,
 diff --git a/xarray/core/indexes.py b/xarray/core/indexes.py
-index 8ff0d40ff07..2dde1f1c312 100644
+index 6df5439b8a2..1150cb6b2f5 100644
 --- a/xarray/core/indexes.py
 +++ b/xarray/core/indexes.py
 @@ -717,8 +717,11 @@ def keep_levels(
@@ -136,10 +217,10 @@ index 8ff0d40ff07..2dde1f1c312 100644
  
      def reorder_levels(
 diff --git a/xarray/tests/test_dataarray.py b/xarray/tests/test_dataarray.py
-index 298840f3f66..92ced4e8181 100644
+index f27a6c07280..3b69f8e80fb 100644
 --- a/xarray/tests/test_dataarray.py
 +++ b/xarray/tests/test_dataarray.py
-@@ -1990,7 +1990,6 @@ def test_set_index(self) -> None:
+@@ -2007,7 +2007,6 @@ def test_set_index(self) -> None:
      def test_reset_index(self) -> None:
          indexes = [self.mindex.get_level_values(n) for n in self.mindex.names]
          coords = {idx.name: ("x", idx) for idx in indexes}
@@ -147,7 +228,7 @@ index 298840f3f66..92ced4e8181 100644
          expected = DataArray(self.mda.values, coords=coords, dims="x")
  
          obj = self.mda.reset_index("x")
-@@ -2001,16 +2000,19 @@ def test_reset_index(self) -> None:
+@@ -2018,16 +2017,19 @@ def test_reset_index(self) -> None:
          assert len(obj.xindexes) == 0
          obj = self.mda.reset_index(["x", "level_1"])
          assert_identical(obj, expected, check_default_indexes=False)
@@ -172,7 +253,7 @@ index 298840f3f66..92ced4e8181 100644
          obj = self.mda.reset_index("x", drop=True)
          assert_identical(obj, expected, check_default_indexes=False)
  
-@@ -2021,14 +2023,16 @@ def test_reset_index(self) -> None:
+@@ -2038,14 +2040,16 @@ def test_reset_index(self) -> None:
          # single index
          array = DataArray([1, 2], coords={"x": ["a", "b"]}, dims="x")
          obj = array.reset_index("x")
@@ -192,10 +273,35 @@ index 298840f3f66..92ced4e8181 100644
  
      def test_reorder_levels(self) -> None:
 diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
-index e0bc73ec044..03b99dd85c0 100644
+index fc2806c79c5..8e6d6aab9d0 100644
 --- a/xarray/tests/test_dataset.py
 +++ b/xarray/tests/test_dataset.py
-@@ -3225,7 +3225,6 @@ def test_reset_index(self) -> None:
+@@ -3237,12 +3237,31 @@ def test_set_index(self) -> None:
+         with pytest.raises(ValueError, match=r"dimension mismatch.*"):
+             ds.set_index(y="x_var")
+ 
++    def test_set_index_deindexed_coords(self) -> None:
++        # test de-indexed coordinates are converted to base variable
++        # https://github.com/pydata/xarray/issues/6969
++        one = ["a", "a", "b", "b"]
++        two = [1, 2, 1, 2]
++        three = ["c", "c", "d", "d"]
++        four = [3, 4, 3, 4]
++
++        mindex_12 = pd.MultiIndex.from_arrays([one, two], names=["one", "two"])
++        mindex_34 = pd.MultiIndex.from_arrays([three, four], names=["three", "four"])
++
++        ds = xr.Dataset(
++            coords={"x": mindex_12, "three": ("x", three), "four": ("x", four)}
++        )
++        actual = ds.set_index(x=["three", "four"])
++        expected = xr.Dataset(
++            coords={"x": mindex_34, "one": ("x", one), "two": ("x", two)}
++        )
++        assert_identical(actual, expected)
++
+     def test_reset_index(self) -> None:
+         ds = create_test_multiindex()
          mindex = ds["x"].to_index()
          indexes = [mindex.get_level_values(n) for n in mindex.names]
          coords = {idx.name: ("x", idx) for idx in indexes}
@@ -203,7 +309,7 @@ index e0bc73ec044..03b99dd85c0 100644
          expected = Dataset({}, coords=coords)
  
          obj = ds.reset_index("x")
-@@ -3240,9 +3239,40 @@ def test_reset_index_keep_attrs(self) -> None:
+@@ -3257,9 +3276,45 @@ def test_reset_index_keep_attrs(self) -> None:
          coord_1 = DataArray([1, 2], dims=["coord_1"], attrs={"attrs": True})
          ds = Dataset({}, {"coord_1": coord_1})
          obj = ds.reset_index("coord_1")
@@ -211,6 +317,11 @@ index e0bc73ec044..03b99dd85c0 100644
 +        assert ds.coord_1.attrs == obj.coord_1.attrs
          assert len(obj.xindexes) == 0
  
++    def test_reset_index_drop_dims(self) -> None:
++        ds = Dataset(coords={"x": [1, 2]})
++        reset = ds.reset_index("x", drop=True)
++        assert len(reset.dims) == 0
++
 +    @pytest.mark.parametrize(
 +        "arg,drop,dropped,converted,renamed",
 +        [
@@ -245,63 +356,11 @@ index e0bc73ec044..03b99dd85c0 100644
      def test_reorder_levels(self) -> None:
          ds = create_test_multiindex()
          mindex = ds["x"].to_index()
-
-From fde602e6787c669017f7b5a1e6feae9da03a817a Mon Sep 17 00:00:00 2001
-From: Benoit Bovy <benbovy@gmail.com>
-Date: Tue, 6 Sep 2022 09:12:57 +0200
-Subject: [PATCH 2/6] reset_index: fix dropped dimension(s)
-
----
- xarray/core/dataset.py       | 4 +++-
- xarray/tests/test_dataset.py | 5 +++++
- 2 files changed, 8 insertions(+), 1 deletion(-)
-
-diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
-index 6b3ff10e560..da585ab9bce 100644
---- a/xarray/core/dataset.py
-+++ b/xarray/core/dataset.py
-@@ -4172,7 +4172,9 @@ def drop_or_convert(var_names):
- 
-         coord_names = self._coord_names - drop_variables
- 
--        return self._replace(variables, coord_names=coord_names, indexes=indexes)
-+        return self._replace_with_new_dims(
-+            variables, coord_names=coord_names, indexes=indexes
-+        )
- 
-     def reorder_levels(
-         self: T_Dataset,
-diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
-index 03b99dd85c0..8bdeb6a2342 100644
---- a/xarray/tests/test_dataset.py
-+++ b/xarray/tests/test_dataset.py
-@@ -3242,6 +3242,11 @@ def test_reset_index_keep_attrs(self) -> None:
-         assert ds.coord_1.attrs == obj.coord_1.attrs
-         assert len(obj.xindexes) == 0
- 
-+    def test_reset_index_drop_dims(self) -> None:
-+        ds = Dataset(coords={"x": [1, 2]})
-+        reset = ds.reset_index("x", drop=True)
-+        assert len(reset.dims) == 0
-+
-     @pytest.mark.parametrize(
-         "arg,drop,dropped,converted,renamed",
-         [
-
-From b85247e13e6e58477db64de5236e93dfe8180ca7 Mon Sep 17 00:00:00 2001
-From: Benoit Bovy <benbovy@gmail.com>
-Date: Tue, 6 Sep 2022 09:13:45 +0200
-Subject: [PATCH 3/6] reset_index: fix other tests
-
----
- xarray/tests/test_groupby.py | 1 -
- 1 file changed, 1 deletion(-)
-
 diff --git a/xarray/tests/test_groupby.py b/xarray/tests/test_groupby.py
-index 3d096daedbc..9d656ad8c2f 100644
+index c0ac3261850..bb2f760f245 100644
 --- a/xarray/tests/test_groupby.py
 +++ b/xarray/tests/test_groupby.py
-@@ -537,7 +537,6 @@ def test_groupby_drops_nans() -> None:
+@@ -538,7 +538,6 @@ def test_groupby_drops_nans() -> None:
          .rename({"xy": "id"})
          .to_dataset()
          .reset_index("id", drop=True)
@@ -309,177 +368,3 @@ index 3d096daedbc..9d656ad8c2f 100644
          .assign(id=stacked.id.values)
          .dropna("id")
          .transpose(*actual2.dims)
-
-From 14b4f06a199944a5882355c9670b060051f2ff0d Mon Sep 17 00:00:00 2001
-From: Benoit Bovy <benbovy@gmail.com>
-Date: Tue, 6 Sep 2022 10:44:42 +0200
-Subject: [PATCH 4/6] review set_index
-
-- Convert the coordinates left unindexed from IndexVariable to Variable
-- Keep multi-index coordinates next to each other in a consistent order
----
- xarray/core/dataset.py       | 35 ++++++++++++++++++++++++-----------
- xarray/tests/test_dataset.py | 20 ++++++++++++++++++++
- 2 files changed, 44 insertions(+), 11 deletions(-)
-
-diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
-index da585ab9bce..0389a3a092d 100644
---- a/xarray/core/dataset.py
-+++ b/xarray/core/dataset.py
-@@ -3994,10 +3994,11 @@ def set_index(
-         dim_coords = either_dict_or_kwargs(indexes, indexes_kwargs, "set_index")
- 
-         new_indexes: dict[Hashable, Index] = {}
--        new_variables: dict[Hashable, IndexVariable] = {}
--        maybe_drop_indexes: list[Hashable] = []
--        drop_variables: list[Hashable] = []
-+        new_variables: dict[Hashable, Variable] = {}
-+        drop_indexes: set[Hashable] = set()
-+        drop_variables: set[Hashable] = set()
-         replace_dims: dict[Hashable, Hashable] = {}
-+        all_var_names: set[Hashable] = set()
- 
-         for dim, _var_names in dim_coords.items():
-             if isinstance(_var_names, str) or not isinstance(_var_names, Sequence):
-@@ -4012,16 +4013,19 @@ def set_index(
-                     + " variable(s) do not exist"
-                 )
- 
--            current_coord_names = self.xindexes.get_all_coords(dim, errors="ignore")
-+            all_var_names.update(var_names)
-+            drop_variables.update(var_names)
- 
--            # drop any pre-existing index involved
--            maybe_drop_indexes += list(current_coord_names) + var_names
-+            # drop any pre-existing index involved and its corresponding coordinates
-+            index_coord_names = self.xindexes.get_all_coords(dim, errors="ignore")
-+            all_index_coord_names = set(index_coord_names)
-             for k in var_names:
--                maybe_drop_indexes += list(
-+                all_index_coord_names.update(
-                     self.xindexes.get_all_coords(k, errors="ignore")
-                 )
- 
--            drop_variables += var_names
-+            drop_indexes.update(all_index_coord_names)
-+            drop_variables.update(all_index_coord_names)
- 
-             if len(var_names) == 1 and (not append or dim not in self._indexes):
-                 var_name = var_names[0]
-@@ -4036,7 +4040,7 @@ def set_index(
-             else:
-                 if append:
-                     current_variables = {
--                        k: self._variables[k] for k in current_coord_names
-+                        k: self._variables[k] for k in index_coord_names
-                     }
-                 else:
-                     current_variables = {}
-@@ -4051,8 +4055,17 @@ def set_index(
-             new_indexes.update({k: idx for k in idx_vars})
-             new_variables.update(idx_vars)
- 
-+        # re-add deindexed coordinates (convert to base variables)
-+        for k in drop_variables:
-+            if (
-+                k not in new_variables
-+                and k not in all_var_names
-+                and k in self._coord_names
-+            ):
-+                new_variables[k] = self._variables[k].to_base_variable()
-+
-         indexes_: dict[Any, Index] = {
--            k: v for k, v in self._indexes.items() if k not in maybe_drop_indexes
-+            k: v for k, v in self._indexes.items() if k not in drop_indexes
-         }
-         indexes_.update(new_indexes)
- 
-@@ -4067,7 +4080,7 @@ def set_index(
-                 new_dims = [replace_dims.get(d, d) for d in v.dims]
-                 variables[k] = v._replace(dims=new_dims)
- 
--        coord_names = self._coord_names - set(drop_variables) | set(new_variables)
-+        coord_names = self._coord_names - drop_variables | set(new_variables)
- 
-         return self._replace_with_new_dims(
-             variables, coord_names=coord_names, indexes=indexes_
-diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
-index 8bdeb6a2342..9be3bd06b2a 100644
---- a/xarray/tests/test_dataset.py
-+++ b/xarray/tests/test_dataset.py
-@@ -3220,6 +3220,26 @@ def test_set_index(self) -> None:
-         with pytest.raises(ValueError, match=r"dimension mismatch.*"):
-             ds.set_index(y="x_var")
- 
-+    def test_set_index_deindexed_coords(self) -> None:
-+        # test de-indexed coordinates are converted to base variable
-+        # https://github.com/pydata/xarray/issues/6969
-+        one = ["a", "a", "b", "b"]
-+        two = [1, 2, 1, 2]
-+        three = ["c", "c", "d", "d"]
-+        four = [3, 4, 3, 4]
-+
-+        mindex_12 = pd.MultiIndex.from_arrays([one, two], names=["one", "two"])
-+        mindex_34 = pd.MultiIndex.from_arrays([three, four], names=["three", "four"])
-+
-+        ds = xr.Dataset(
-+            coords={"x": mindex_12, "three": ("x", three), "four": ("x", four)}
-+        )
-+        actual = ds.set_index(x=["three", "four"])
-+        expected = xr.Dataset(
-+            coords={"x": mindex_34, "one": ("x", one), "two": ("x", two)}
-+        )
-+        assert_identical(actual, expected)
-+
-     def test_reset_index(self) -> None:
-         ds = create_test_multiindex()
-         mindex = ds["x"].to_index()
-
-From d94025aef36aec550e8beffbe80a27c11fcda0d1 Mon Sep 17 00:00:00 2001
-From: Benoit Bovy <benbovy@gmail.com>
-Date: Tue, 6 Sep 2022 12:29:23 +0200
-Subject: [PATCH 5/6] set_index with single index: preserve coord order
-
----
- xarray/core/dataset.py | 4 ++++
- 1 file changed, 4 insertions(+)
-
-diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
-index 0389a3a092d..99868d933a7 100644
---- a/xarray/core/dataset.py
-+++ b/xarray/core/dataset.py
-@@ -4037,6 +4037,10 @@ def set_index(
-                     )
-                 idx = PandasIndex.from_variables({dim: var})
-                 idx_vars = idx.create_variables({var_name: var})
-+
-+                # trick to preserve coordinate order in this case
-+                if dim in self._coord_names:
-+                    drop_variables.remove(dim)
-             else:
-                 if append:
-                     current_variables = {
-
-From 891a442bd153d59e99da34d12011bbb4bf88dc58 Mon Sep 17 00:00:00 2001
-From: Benoit Bovy <benbovy@gmail.com>
-Date: Tue, 6 Sep 2022 12:33:27 +0200
-Subject: [PATCH 6/6] update what's new
-
----
- doc/whats-new.rst | 3 +++
- 1 file changed, 3 insertions(+)
-
-diff --git a/doc/whats-new.rst b/doc/whats-new.rst
-index 9ce51e48983..884d0eb7bbb 100644
---- a/doc/whats-new.rst
-+++ b/doc/whats-new.rst
-@@ -59,6 +59,9 @@ Bug fixes
-   By `András Gunyhó <https://github.com/mgunyho>`_.
- - Avoid use of random numbers in `test_weighted.test_weighted_operations_nonequal_coords` (:issue:`6504`, :pull:`6961`).
-   By `Luke Conibear <https://github.com/lukeconibear>`_.
-+- Fix multiple regression issues with :py:meth:`Dataset.set_index` and
-+  :py:meth:`Dataset.reset_index` (:pull:`6992`)
-+  By `Benoît Bovy <https://github.com/benbovy>`_.
- 
- Documentation
- ~~~~~~~~~~~~~
